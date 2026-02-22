@@ -30,6 +30,7 @@ Lines are presented one at a time, hidden by default. You try to recall each lin
 | `c` | Mark as confident |
 | `h` | Hint (reveal one word at a time) |
 | `b` | Go back one line |
+| `f` | Go forward one line (without revealing) |
 | `g` | Go to a specific line number |
 | `v` | Enter review mode |
 | `x` | Enter test mode |
