@@ -289,7 +289,7 @@ def main(stdscr):
             stdscr.addstr(controls_y + 2, 2, "c      mark as confident   h  hint (reveal 1 word)")
             stdscr.addstr(controls_y + 3, 2, "v      review hard lines   x  test mode (hard lines)")
             stdscr.addstr(controls_y + 4, 2, "n      normal mode         g  go to line number")
-            stdscr.addstr(controls_y + 5, 2, "t      show stats summary  b  go back one line    q  quit")
+            stdscr.addstr(controls_y + 5, 2, "t      show stats summary  b  back  f  forward    q  quit")
             wc_status = "ON" if show_word_count else "OFF"
             pl_status = f"ON ({prev_lines_count})" if show_prev_lines else "OFF"
             stdscr.addstr(controls_y + 6, 2, f"w      word count [{wc_status}]     p  prev lines [{pl_status}]  +/- set count")
@@ -484,6 +484,29 @@ def main(stdscr):
             else:
                 if current > 0:
                     current -= 1
+                    revealed = False
+                    hints_shown = 0
+                    draw()
+
+        elif key == ord("f"):
+            if mode == "test":
+                if test_idx < len(test_queue) - 1:
+                    test_idx += 1
+                    record_view(test_queue[test_idx][2])
+                    revealed = False
+                    hints_shown = 0
+                    draw()
+            elif mode == "review":
+                if review_idx < len(review_queue) - 1:
+                    review_idx += 1
+                    record_view(review_queue[review_idx][0])
+                    revealed = False
+                    hints_shown = 0
+                    draw()
+            else:
+                if current < total - 1:
+                    current += 1
+                    record_view(lines[current][0])
                     revealed = False
                     hints_shown = 0
                     draw()
