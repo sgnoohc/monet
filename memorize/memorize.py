@@ -489,27 +489,28 @@ def main(stdscr):
                     draw()
 
         elif key == ord("f"):
-            if mode == "test":
-                if test_idx < len(test_queue) - 1:
-                    test_idx += 1
-                    record_view(test_queue[test_idx][2])
-                    revealed = False
-                    hints_shown = 0
-                    draw()
-            elif mode == "review":
-                if review_idx < len(review_queue) - 1:
-                    review_idx += 1
-                    record_view(review_queue[review_idx][0])
-                    revealed = False
-                    hints_shown = 0
-                    draw()
+            if not active or idx >= len(active):
+                continue
+            if not revealed:
+                revealed = True
+                hints_shown = 0
+                draw()
             else:
-                if current < total - 1:
-                    current += 1
-                    record_view(lines[current][0])
-                    revealed = False
-                    hints_shown = 0
-                    draw()
+                if mode == "test":
+                    if test_idx < len(test_queue) - 1:
+                        test_idx += 1
+                        record_view(test_queue[test_idx][2])
+                elif mode == "review":
+                    if review_idx < len(review_queue) - 1:
+                        review_idx += 1
+                        record_view(review_queue[review_idx][0])
+                else:
+                    if current < total - 1:
+                        current += 1
+                        record_view(lines[current][0])
+                revealed = False
+                hints_shown = 0
+                draw()
 
         elif key == ord("v"):
             mode = "review"
