@@ -4,6 +4,8 @@
 import curses
 import json
 import os
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -293,7 +295,7 @@ def main(stdscr):
             wc_status = "ON" if show_word_count else "OFF"
             pl_status = f"ON ({prev_lines_count})" if show_prev_lines else "OFF"
             stdscr.addstr(controls_y + 6, 2, f"w      word count [{wc_status}]     p  prev lines [{pl_status}]  +/- set count")
-            stdscr.addstr(controls_y + 7, 2, f"l      label mode [{number_display}]")
+            stdscr.addstr(controls_y + 7, 2, f"l      label mode [{number_display}]   e  edit line   E  edit file in vim")
 
         if show_stats_panel:
             draw_stats_panel(height, width)
@@ -582,6 +584,78 @@ def main(stdscr):
             if prev_lines_count > 1:
                 prev_lines_count -= 1
             draw()
+
+        elif key == ord("e"):
+            # Edit just the current line in vim
+            if active and idx < len(active):
+                orig_num, line_text = active[idx]
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tf:
+                    tf.write(line_text + "\n")
+                    tf_path = tf.name
+                curses.endwin()
+                subprocess.call(["vim", tf_path])
+                stdscr = curses.initscr()
+                curses.curs_set(0)
+                curses.noecho()
+                curses.cbreak()
+                stdscr.keypad(True)
+                curses.start_color()
+                curses.use_default_colors()
+                curses.init_pair(1, curses.COLOR_GREEN, -1)
+                curses.init_pair(2, curses.COLOR_YELLOW, -1)
+                curses.init_pair(3, curses.COLOR_RED, -1)
+                curses.init_pair(4, curses.COLOR_CYAN, -1)
+                curses.init_pair(5, curses.COLOR_MAGENTA, -1)
+                curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)
+                # Read edited line back
+                with open(tf_path, "r") as rf:
+                    new_text = rf.read().strip()
+                os.unlink(tf_path)
+                if new_text and new_text != line_text:
+                    # Update the text file
+                    with open(TEXT_FILE, "r") as rf:
+                        all_text = rf.readlines()
+                    all_text[orig_num - 1] = new_text + "\n"
+                    with open(TEXT_FILE, "w") as wf:
+                        wf.writelines(all_text)
+                    # Reload lines
+                    lines = load_lines()
+                    total = len(lines)
+                    if mode == "review":
+                        build_review_queue()
+                    elif mode == "test":
+                        build_test_queue()
+                draw()
+
+        elif key == ord("E"):
+            # Open the whole file in vim at the current line
+            if active and idx < len(active):
+                orig_num = active[idx][0]
+                curses.endwin()
+                subprocess.call(["vim", f"+{orig_num}", TEXT_FILE])
+                stdscr = curses.initscr()
+                curses.curs_set(0)
+                curses.noecho()
+                curses.cbreak()
+                stdscr.keypad(True)
+                curses.start_color()
+                curses.use_default_colors()
+                curses.init_pair(1, curses.COLOR_GREEN, -1)
+                curses.init_pair(2, curses.COLOR_YELLOW, -1)
+                curses.init_pair(3, curses.COLOR_RED, -1)
+                curses.init_pair(4, curses.COLOR_CYAN, -1)
+                curses.init_pair(5, curses.COLOR_MAGENTA, -1)
+                curses.init_pair(6, curses.COLOR_WHITE, curses.COLOR_BLUE)
+                # Reload lines since file may have changed
+                lines = load_lines()
+                total = len(lines)
+                if current >= total:
+                    current = max(0, total - 1)
+                if mode == "review":
+                    build_review_queue()
+                elif mode == "test":
+                    build_test_queue()
+                draw()
 
         elif key == curses.KEY_RESIZE:
             draw()
