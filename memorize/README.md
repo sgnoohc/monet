@@ -39,5 +39,7 @@ Lines are presented one at a time, hidden by default. You try to recall each lin
 | `w` | Toggle word count hint |
 | `p` | Toggle showing previous lines |
 | `+`/`-` | Adjust number of previous lines shown |
+| `e` | Edit current line in vim |
+| `E` | Edit full file in vim (jumps to current line) |
 | `l` | Cycle label mode (line number / item number / both) |
 | `q` | Quit |
