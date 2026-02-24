@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Interactive line-by-line memorization tool with statistics tracking."""
 
+import argparse
 import curses
 import json
 import os
@@ -9,8 +10,20 @@ import tempfile
 import time
 from pathlib import Path
 
-STATS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memorize_stats.json")
-TEXT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "text")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_TEXT_FILE = os.path.join(SCRIPT_DIR, "text")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Interactive line-by-line memorization tool.")
+    parser.add_argument("file", nargs="?", default=DEFAULT_TEXT_FILE,
+                        help="Text file to memorize (default: text)")
+    return parser.parse_args()
+
+
+args = parse_args()
+TEXT_FILE = os.path.abspath(args.file)
+STATS_FILE = os.path.splitext(TEXT_FILE)[0] + "_stats.json" if TEXT_FILE != DEFAULT_TEXT_FILE else os.path.join(SCRIPT_DIR, "memorize_stats.json")
 
 
 def load_lines():

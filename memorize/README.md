@@ -4,12 +4,19 @@ An interactive terminal-based memorization tool for line-by-line text recall pra
 
 ## Usage
 
-1. Place the text you want to memorize in a file called `text` in the same directory as `memorize.py`.
-2. Run:
+By default, it reads the `text` file in the same directory as `memorize.py`:
 
 ```bash
 python3 memorize.py
 ```
+
+To memorize a different file, pass it as an argument:
+
+```bash
+python3 memorize.py /path/to/my_speech.txt
+```
+
+When using a custom file, stats are saved alongside it (e.g. `my_speech_stats.json`).
 
 ## How It Works
 
