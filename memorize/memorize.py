@@ -311,7 +311,7 @@ def main(stdscr):
             stdscr.addstr(controls_y + 2, 2, "c      mark as confident   h  hint (reveal 1 word)")
             stdscr.addstr(controls_y + 3, 2, "v      review hard lines   x  test mode (hard lines)")
             stdscr.addstr(controls_y + 4, 2, "S      study mode          n  normal mode")
-            stdscr.addstr(controls_y + 5, 2, "g      go to line/item #   t  stats   b back  f fwd  q quit")
+            stdscr.addstr(controls_y + 5, 2, "g      go to line/item/search  t stats  b back  f fwd  q quit")
             wc_status = "ON" if show_word_count else "OFF"
             pl_status = f"ON ({prev_lines_count})" if show_prev_lines else "OFF"
             stdscr.addstr(controls_y + 6, 2, f"w      word count [{wc_status}]     p  prev lines [{pl_status}]  +/- set count")
@@ -636,7 +636,7 @@ def main(stdscr):
             draw(show_stats_panel=True)
 
         elif key == ord("g"):
-            stdscr.addstr(0, 0, " Go to (l)ine or (i)tem #? " + " " * 20, curses.color_pair(6))
+            stdscr.addstr(0, 0, " Go to (l)ine, (i)tem #, or (s)earch? " + " " * 20, curses.color_pair(6))
             stdscr.refresh()
             choice = stdscr.getch()
             if choice in (ord("l"), ord("i")):
@@ -677,6 +677,41 @@ def main(stdscr):
                             revealed = False
                             hints_shown = 0
                 except (ValueError, curses.error):
+                    pass
+                curses.noecho()
+                curses.curs_set(0)
+            elif choice == ord("s"):
+                height, width = stdscr.getmaxyx()
+                prompt = " Search: "
+                stdscr.addstr(0, 0, prompt + " " * (width - len(prompt) - 1), curses.color_pair(6))
+                stdscr.refresh()
+                curses.echo()
+                curses.curs_set(1)
+                try:
+                    inp = stdscr.getstr(0, len(prompt), 60).decode("utf-8").strip()
+                    if inp:
+                        query = inp.lower()
+                        # Search forward from current position, wrapping around
+                        start = idx + 1 if idx + 1 < len(active) else 0
+                        found = False
+                        for offset in range(len(active)):
+                            i = (start + offset) % len(active)
+                            if query in active[i][1].lower():
+                                if mode == "test":
+                                    test_idx = i
+                                elif mode == "review":
+                                    review_idx = i
+                                else:
+                                    current = i
+                                revealed = False
+                                hints_shown = 0
+                                found = True
+                                break
+                        if not found:
+                            stdscr.addstr(0, 0, " No match found. Press any key. " + " " * 20, curses.color_pair(3))
+                            stdscr.refresh()
+                            stdscr.getch()
+                except curses.error:
                     pass
                 curses.noecho()
                 curses.curs_set(0)
