@@ -1,0 +1,582 @@
+{
+  "1": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 13
+  },
+  "3": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "5": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "7": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 5
+  },
+  "8": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "9": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "10": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "11": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "12": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "13": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "14": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "15": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "16": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "17": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "18": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "20": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "21": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "22": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "23": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "24": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "25": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "26": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "27": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "28": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "29": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "30": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "32": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "33": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "34": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "35": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "36": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "37": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "38": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "39": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "40": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "41": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "42": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "43": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "44": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "45": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "46": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "47": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "48": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "49": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "50": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "51": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "52": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "53": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "54": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "55": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "56": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "57": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "58": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "59": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "60": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 4
+  },
+  "19": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "31": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "62": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 3
+  },
+  "64": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "66": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "68": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "70": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "72": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "74": {
+    "struggle": 1,
+    "confident": 0,
+    "views": 3
+  },
+  "76": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "78": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "80": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "82": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "84": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "86": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "88": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "90": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "92": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 2
+  },
+  "94": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "96": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "98": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "100": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "102": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "104": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "106": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "108": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "110": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "112": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "114": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "116": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "118": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "120": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "122": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "124": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "126": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "128": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "130": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "132": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "134": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "136": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "138": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "140": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "142": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "144": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "146": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "148": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "150": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "152": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "154": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "156": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "157": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "158": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "162": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "164": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "165": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "166": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "167": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "168": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "169": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "170": {
+    "struggle": 0,
+    "confident": 0,
+    "views": 1
+  },
+  "282": {
+    "struggle": 2,
+    "confident": 0,
+    "views": 0
+  }
+}
