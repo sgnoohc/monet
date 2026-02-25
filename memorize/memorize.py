@@ -85,7 +85,7 @@ def main(stdscr):
     total = len(lines)
     current = 0
     revealed = False
-    mode = "normal"  # "normal", "review", or "test"
+    mode = "normal"  # "normal", "review", "test", or "study"
     hints_shown = 0  # number of words revealed as hints
     show_word_count = True  # toggle: show word count in hidden hint
     show_prev_lines = False  # toggle: show previous lines above current
@@ -97,6 +97,8 @@ def main(stdscr):
     review_idx = 0
     test_queue = []  # list of (prev_orig_num, prev_text, orig_num, text)
     test_idx = 0
+
+    study_idx = 0
 
     def get_active_lines():
         if mode == "review":
@@ -161,6 +163,11 @@ def main(stdscr):
         height, width = stdscr.getmaxyx()
         active = get_active_lines()
 
+        if mode == "study":
+            draw_study_mode(height, width)
+            stdscr.refresh()
+            return
+
         if not active:
             stdscr.addstr(1, 2, "No lines to display.", curses.A_BOLD)
             if mode == "review":
@@ -192,7 +199,7 @@ def main(stdscr):
         views = get_views(orig_num)
 
         # Header
-        mode_labels = {"normal": "MEMORIZE", "review": "REVIEW MODE", "test": "TEST MODE"}
+        mode_labels = {"normal": "MEMORIZE", "review": "REVIEW MODE", "test": "TEST MODE", "study": "STUDY MODE"}
         mode_label = mode_labels[mode]
         progress = f"[{idx + 1}/{len(active)}]"
         header = f" {mode_label} {progress} "
@@ -303,8 +310,8 @@ def main(stdscr):
             stdscr.addstr(controls_y + 1, 2, "SPACE  reveal/next line    s  mark as struggling")
             stdscr.addstr(controls_y + 2, 2, "c      mark as confident   h  hint (reveal 1 word)")
             stdscr.addstr(controls_y + 3, 2, "v      review hard lines   x  test mode (hard lines)")
-            stdscr.addstr(controls_y + 4, 2, "n      normal mode         g  go to line number")
-            stdscr.addstr(controls_y + 5, 2, "t      show stats summary  b  back  f  forward    q  quit")
+            stdscr.addstr(controls_y + 4, 2, "S      study mode          n  normal mode")
+            stdscr.addstr(controls_y + 5, 2, "g      go to line/item #   t  stats   b back  f fwd  q quit")
             wc_status = "ON" if show_word_count else "OFF"
             pl_status = f"ON ({prev_lines_count})" if show_prev_lines else "OFF"
             stdscr.addstr(controls_y + 6, 2, f"w      word count [{wc_status}]     p  prev lines [{pl_status}]  +/- set count")
@@ -314,6 +321,59 @@ def main(stdscr):
             draw_stats_panel(height, width)
 
         stdscr.refresh()
+
+    def draw_study_mode(height, width):
+        nonlocal study_idx
+        if not lines:
+            stdscr.addstr(1, 2, "No lines to display.", curses.A_BOLD)
+            return
+
+        # Clamp study_idx
+        if study_idx < 0:
+            study_idx = 0
+        if study_idx >= len(lines):
+            study_idx = len(lines) - 1
+
+        # Header
+        progress = f"[{study_idx + 1}/{len(lines)}]"
+        header = f" STUDY MODE {progress} "
+        stdscr.addstr(0, 0, header.center(width), curses.color_pair(6) | curses.A_BOLD)
+
+        # Show all lines, scrolled so current line is visible
+        # Reserve lines for header (1) + gap (1) + controls (3)
+        usable = height - 5
+        # Calculate scroll offset so study_idx is visible
+        # We'll display lines starting from a scroll offset
+        half = usable // 2
+        scroll_start = max(0, study_idx - half)
+        if scroll_start + usable > len(lines):
+            scroll_start = max(0, len(lines) - usable)
+
+        y = 2
+        for i in range(scroll_start, min(scroll_start + usable, len(lines))):
+            orig_num, text = lines[i]
+            label = format_label(orig_num, i + 1)
+            prefix = f"{label}: "
+            max_text_w = width - len(prefix) - 4
+            display_text = text[:max_text_w] if max_text_w > 0 else ""
+            try:
+                if i == study_idx:
+                    # Highlight current line
+                    stdscr.addstr(y, 2, prefix, curses.color_pair(4) | curses.A_BOLD)
+                    stdscr.addstr(y, 2 + len(prefix), display_text, curses.A_BOLD | curses.A_REVERSE)
+                else:
+                    stdscr.addstr(y, 2, prefix, curses.color_pair(4))
+                    stdscr.addstr(y, 2 + len(prefix), display_text)
+            except curses.error:
+                pass
+            y += 1
+
+        # Controls at bottom
+        try:
+            controls_y = height - 2
+            stdscr.addstr(controls_y, 2, "SPACE/DOWN next  b/UP back  n normal mode  q quit", curses.A_DIM)
+        except curses.error:
+            pass
 
     def draw_stats_panel(height, width):
         panel_w = min(60, width - 4)
@@ -420,6 +480,25 @@ def main(stdscr):
     while True:
         key = stdscr.getch()
         active = get_active_lines()
+        if mode == "study":
+            if key == ord("q"):
+                break
+            elif key == ord("n"):
+                mode = "normal"
+                current = study_idx
+                revealed = False
+                hints_shown = 0
+            elif key in (ord(" "), curses.KEY_DOWN, ord("j")):
+                if study_idx < len(lines) - 1:
+                    study_idx += 1
+            elif key in (ord("b"), curses.KEY_UP, ord("k")):
+                if study_idx > 0:
+                    study_idx -= 1
+            elif key == curses.KEY_RESIZE:
+                pass
+            draw()
+            continue
+
         if mode == "test":
             idx = test_idx
         elif mode == "review":
@@ -547,33 +626,60 @@ def main(stdscr):
             hints_shown = 0
             draw()
 
+        elif key == ord("S"):
+            mode = "study"
+            study_idx = current
+            draw()
+
         elif key == ord("t"):
             show_stats = True
             draw(show_stats_panel=True)
 
         elif key == ord("g"):
-            stdscr.addstr(0, 0, " Go to line: " + " " * 20, curses.color_pair(6))
+            stdscr.addstr(0, 0, " Go to (l)ine or (i)tem #? " + " " * 20, curses.color_pair(6))
             stdscr.refresh()
-            curses.echo()
-            curses.curs_set(1)
-            try:
-                inp = stdscr.getstr(0, 14, 6).decode("utf-8").strip()
-                target = int(inp)
-                for i, (orig_num, _) in enumerate(active):
-                    if orig_num == target:
-                        if mode == "test":
-                            test_idx = i
-                        elif mode == "review":
-                            review_idx = i
-                        else:
-                            current = i
-                        revealed = False
-                        hints_shown = 0
-                        break
-            except (ValueError, curses.error):
-                pass
-            curses.noecho()
-            curses.curs_set(0)
+            choice = stdscr.getch()
+            if choice in (ord("l"), ord("i")):
+                if choice == ord("l"):
+                    prompt = " Go to line: "
+                else:
+                    prompt = " Go to item #: "
+                stdscr.addstr(0, 0, prompt + " " * 20, curses.color_pair(6))
+                stdscr.refresh()
+                curses.echo()
+                curses.curs_set(1)
+                try:
+                    inp = stdscr.getstr(0, len(prompt) + 1, 6).decode("utf-8").strip()
+                    target = int(inp)
+                    if choice == ord("l"):
+                        # Match by original line number
+                        for i, (orig_num, _) in enumerate(active):
+                            if orig_num == target:
+                                if mode == "test":
+                                    test_idx = i
+                                elif mode == "review":
+                                    review_idx = i
+                                else:
+                                    current = i
+                                revealed = False
+                                hints_shown = 0
+                                break
+                    else:
+                        # Match by item number (1-based index into active list)
+                        target_idx = target - 1
+                        if 0 <= target_idx < len(active):
+                            if mode == "test":
+                                test_idx = target_idx
+                            elif mode == "review":
+                                review_idx = target_idx
+                            else:
+                                current = target_idx
+                            revealed = False
+                            hints_shown = 0
+                except (ValueError, curses.error):
+                    pass
+                curses.noecho()
+                curses.curs_set(0)
             draw()
 
         elif key == ord("w"):
