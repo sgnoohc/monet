@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Chair Timer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* --- Setup Screen --- */
+  #setup {
+    padding: 2rem;
+    overflow-y: auto;
+    height: 100vh;
+    max-width: 900px;
+  }
+
+  #setup h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.5rem;
+    color: #e0e0ff;
+  }
+
+  .subtitle {
+    color: #888;
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .editor-area {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+
+  .editor-col {
+    flex: 1;
+    min-width: 350px;
+  }
+
+  .editor-col h2 {
+    font-size: 1rem;
+    color: #aaa;
+    margin-bottom: 0.5rem;
+  }
+
+  #md-input {
+    width: 100%;
+    min-height: 320px;
+    padding: 1rem;
+    border: 1px solid #444;
+    border-radius: 8px;
+    background: #16213e;
+    color: #e0e0e0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    resize: vertical;
+    tab-size: 4;
+  }
+
+  #md-input:focus { outline: none; border-color: #2980b9; }
+
+  .preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  .preview-table th {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 2px solid #444;
+    color: #999;
+    font-weight: 500;
+  }
+
+  .preview-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #333;
+  }
+
+  .parse-error {
+    color: #e74c3c;
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+  }
+
+  .parse-ok {
+    color: #27ae60;
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+  }
+
+  .btn {
+    padding: 0.6rem 1.5rem;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 1rem;
+    margin-right: 0.5rem;
+  }
+
+  .btn-start { background: #27ae60; color: white; font-size: 1.2rem; padding: 0.8rem 2.5rem; }
+  .btn-start:disabled { opacity: 0.4; cursor: default; }
+
+  .format-help {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: rgba(255,255,255,0.05);
+    border-radius: 8px;
+    font-size: 0.8rem;
+    color: #888;
+    line-height: 1.6;
+  }
+
+  .format-help code {
+    background: rgba(255,255,255,0.1);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    color: #bbb;
+  }
+
+  /* --- Timer Screen --- */
+  #timer-screen {
+    display: none;
+    flex-direction: column;
+    height: 100vh;
+    transition: background 0.5s;
+  }
+
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background: rgba(0,0,0,0.3);
+  }
+
+  .top-left {
+    display: flex;
+    align-items: baseline;
+    gap: 2rem;
+  }
+
+  .current-time {
+    font-size: 2.5rem;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scheduled-times {
+    font-size: 1.8rem;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    color: #aaa;
+  }
+
+  .scheduled-times .sched-label {
+    font-size: 0.85rem;
+    color: #777;
+    margin-right: 0.3rem;
+  }
+
+  .top-right {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .btn-back {
+    background: rgba(255,255,255,0.15);
+    color: #ccc;
+    border: none;
+    border-radius: 6px;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .main-display {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+  }
+
+  .timer-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .session-name {
+    font-size: 2.5rem;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 0.3rem;
+  }
+
+  .session-time-range {
+    font-size: 1.2rem;
+    opacity: 0.7;
+    margin-bottom: 1.5rem;
+  }
+
+  .countdown {
+    font-size: 18rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .countdown-label {
+    font-size: 1.5rem;
+    opacity: 0.6;
+    margin-top: 0.5rem;
+  }
+
+
+  /* Control buttons */
+  .controls {
+    display: flex;
+    gap: 1rem;
+    margin-top: 2.5rem;
+    align-items: center;
+  }
+
+  .btn-ctrl {
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 0.8rem 2rem;
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: 600;
+    transition: transform 0.1s, opacity 0.2s;
+  }
+
+  .btn-ctrl:hover { transform: scale(1.05); }
+  .btn-ctrl:active { transform: scale(0.97); }
+  .btn-ctrl:disabled { opacity: 0.3; cursor: default; transform: none; }
+
+  .btn-go { background: #27ae60; min-width: 160px; }
+  .btn-go.running { background: #e67e22; }
+  .btn-reset { background: #7f8c8d; }
+  .btn-speed { background: #8e44ad; font-size: 0.9rem; padding: 0.5rem 1rem; }
+  .btn-speed.active { background: #c0392b; }
+
+  .btn-nav {
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 0.7rem 1.5rem;
+    cursor: pointer;
+    font-size: 1.1rem;
+  }
+
+  .btn-nav:hover { background: rgba(255,255,255,0.25); }
+  .btn-nav:disabled { opacity: 0.3; cursor: default; }
+
+  .nav-sep {
+    width: 1px;
+    height: 2rem;
+    background: rgba(255,255,255,0.2);
+    margin: 0 0.5rem;
+  }
+
+  /* Schedule sidebar */
+  .schedule-bar {
+    display: flex;
+    gap: 0;
+    background: rgba(0,0,0,0.4);
+    overflow-x: auto;
+  }
+
+  .sched-item {
+    padding: 0.75rem 1.25rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    border-right: 1px solid rgba(255,255,255,0.1);
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.3s, background 0.3s;
+    flex-shrink: 0;
+  }
+
+  .sched-item:hover { opacity: 0.8; background: rgba(255,255,255,0.05); }
+  .sched-item.active { opacity: 1; background: rgba(255,255,255,0.1); }
+  .sched-item.past { opacity: 0.3; }
+
+  .sched-item .sched-time {
+    font-size: 0.75rem;
+    opacity: 0.7;
+  }
+
+  /* State colors */
+  .state-normal { background: #1a1a2e; }
+  .state-warning { background: #7d6608; }
+  .state-danger { background: #922b21; }
+  .state-over { background: #c0392b; animation: pulse-red 1s infinite; }
+
+  @keyframes pulse-red {
+    0%, 100% { background: #c0392b; }
+    50% { background: #e74c3c; }
+  }
+
+  .state-idle { background: #1a1a2e; }
+  .state-qa { background: #1a3a5c; }
+
+  .phase-indicator {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.05em;
+  }
+
+  .phase-talk { color: #5dade2; }
+  .phase-qa { color: #f39c12; }
+</style>
+</head>
+<body>
+
+<!-- ========== SETUP SCREEN ========== -->
+<div id="setup">
+  <h1>Session Chair Timer</h1>
+  <p class="subtitle">Configure your schedule using markdown below, then start the timer.</p>
+
+  <div class="editor-area">
+    <div class="editor-col">
+      <h2>Schedule (Markdown)</h2>
+      <textarea id="md-input" spellcheck="false">## Particles & Fields — AI/ML and Collider Physics
+
+| Time  | Duration | Session                                                                                          |
+|-------|----------|--------------------------------------------------------------------------------------------------|
+| 00:00 | 1+1 min  | TEST DUMMY — delete me after testing                                                             |
+
+| 15:30 | 10+2 min | Search for dark photons decaying to lepton jets at CMS — Vivienne Uenuma                         |
+| 15:42 | 10+2 min | Mass Agnostic Jet Assignment using Symmetry Preserving Attention Networks — Haoyang Li            |
+| 15:54 | 10+2 min | Jet charge identification with Transformers in the ATLAS experiment — Johannes Wagner             |
+| 16:06 | 10+2 min | Search for narrow resonance in b tagged high mass dijet distributions at 13.6 TeV — Aaron Mankel |
+| 16:18 | 10+2 min | Search for new physics using top quark pairs with a boosted Z or Higgs boson in EFT — Jonathan Samudio |
+| 16:30 | 10+2 min | Status and Performance of the CMS Electromagnetic Calorimeter in LHC Run 3 — Toyoko Orimoto     |
+| 16:42 | 10+2 min | New Collinearly Enhanced YFS Resummed Results from KKMChh vs LHC Data — Suvadeep Roy             |
+| 16:54 | 10+2 min | Anisotropic photon and dilepton yield in a thermalized QGP under magnetic fluctuations — Enrique Munoz |
+</textarea>
+      <div class="format-help">
+        <strong>Supported formats:</strong><br>
+        <strong>Table:</strong> <code>| 09:00 | 15 min | Session Name |</code> (column order auto-detected)<br>
+        <strong>Split timing:</strong> <code>| 09:00 | 10+2 min | Session Name |</code> (10 min talk + 2 min Q&amp;A)<br>
+        <strong>List:</strong> <code>- 09:00 | 15 min | Session Name</code> or <code>- 09:00, 15 min, Session Name</code><br>
+        <strong>Headings and blank lines are ignored.</strong> You can use <code>## Section</code> headings to organize.
+      </div>
+    </div>
+
+    <div class="editor-col">
+      <h2>Preview</h2>
+      <div id="preview"></div>
+      <div id="parse-status"></div>
+    </div>
+  </div>
+
+  <div style="margin-top:1.5rem;">
+    <button class="btn btn-start" id="btn-start" onclick="enterTimerScreen()">Start Timer</button>
+  </div>
+</div>
+
+<!-- ========== TIMER SCREEN ========== -->
+<div id="timer-screen">
+  <div class="top-bar">
+    <div class="top-left">
+      <div class="current-time" id="clock"></div>
+      <div class="scheduled-times">
+        <span class="sched-label">Scheduled</span>
+        <span id="top-sched-start"></span> &ndash; <span id="top-sched-end"></span>
+      </div>
+    </div>
+    <div class="top-right">
+      <span id="session-counter" style="color:#888; font-size:0.9rem;"></span>
+      <button class="btn-back" onclick="goBack()">Edit Schedule</button>
+    </div>
+  </div>
+
+  <div class="main-display">
+    <div class="timer-center">
+      <div class="session-name" id="sess-name"></div>
+      <div class="session-time-range" id="sess-range"></div>
+      <div class="phase-indicator" id="phase-indicator"></div>
+      <div class="countdown" id="countdown"></div>
+      <div class="countdown-label" id="countdown-label"></div>
+      <div class="controls">
+        <button class="btn-nav" id="btn-prev" onclick="prevSession()">Prev</button>
+        <div class="nav-sep"></div>
+        <button class="btn-ctrl btn-go" id="btn-go" onclick="toggleTimer()">Start</button>
+        <button class="btn-ctrl btn-reset" id="btn-reset" onclick="resetTimer()">Reset</button>
+        <button class="btn-ctrl btn-speed" id="btn-speed" onclick="cycleSpeed()">1x</button>
+        <div class="nav-sep"></div>
+        <button class="btn-nav" id="btn-next" onclick="nextSession()">Next</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="schedule-bar" id="schedule-bar"></div>
+</div>
+
+<script>
+  let sessions = [];
+  let currentIndex = 0;
+  let clockInterval = null;
+
+  // Timer state: 'idle' (not started), 'running', 'paused'
+  let timerState = 'idle';
+  let timerStartedAt = null;   // Date when timer was started/resumed
+  let elapsedBeforePause = 0;  // ms accumulated before current run
+  let speed = 1;
+  const speedOptions = [1, 5, 10, 30];
+
+  const mdInput = document.getElementById('md-input');
+
+  // --- Markdown Parsing ---
+
+  function parseMarkdown(text) {
+    const lines = text.split('\n');
+    const parsed = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (/^#{1,6}\s/.test(trimmed)) continue;
+      if (/^\|?\s*[-:]+\s*\|/.test(trimmed)) continue;
+      if (/^[-:]+$/.test(trimmed)) continue;
+
+      if (trimmed.includes('|')) {
+        const entry = parseDelimited(trimmed, '|');
+        if (entry) { parsed.push(entry); continue; }
+      }
+
+      if (/^[-*]\s/.test(trimmed)) {
+        const content = trimmed.replace(/^[-*]\s+/, '');
+        const sep = content.includes('|') ? '|' : ',';
+        const entry = parseDelimited(content, sep);
+        if (entry) { parsed.push(entry); continue; }
+      }
+    }
+
+    return parsed;
+  }
+
+  function parseDelimited(text, sep) {
+    const parts = text.split(sep).map(s => s.trim()).filter(s => s.length > 0);
+    if (parts.length < 2) return null;
+
+    let time = null, duration = null, qaDuration = 0, name = null;
+
+    for (const part of parts) {
+      if (!time && /^\d{1,2}:\d{2}$/.test(part)) {
+        time = part;
+      } else if (!duration && /^\d+\s*\+\s*\d+\s*(min|m|minutes?)?\s*$/i.test(part)) {
+        // 10+2 min format
+        const match = part.match(/^(\d+)\s*\+\s*(\d+)/);
+        duration = parseInt(match[1]);
+        qaDuration = parseInt(match[2]);
+      } else if (!duration && /^\d+\s*(min|m|minutes?)$/i.test(part)) {
+        duration = parseInt(part);
+      } else if (!duration && /^\d+$/.test(part) && parseInt(part) <= 480) {
+        duration = parseInt(part);
+      } else if (!name) {
+        name = part;
+      } else {
+        name += ' ' + part;
+      }
+    }
+
+    if (!time) return null;
+    if (!duration) duration = 20;
+    if (!name) name = 'Untitled Session';
+
+    return { time, duration, qaDuration: qaDuration || 0, name };
+  }
+
+  function buildSessions(parsed) {
+    return parsed.map(p => {
+      const totalDuration = p.duration + p.qaDuration;
+      const [h, m] = p.time.split(':').map(Number);
+      const start = new Date();
+      start.setHours(h, m, 0, 0);
+      const end = new Date(start.getTime() + totalDuration * 60000);
+      return {
+        name: p.name, start, end,
+        talkDuration: p.duration,
+        qaDuration: p.qaDuration,
+        duration: totalDuration,
+        startTime: p.time
+      };
+    }).sort((a, b) => a.start - b.start);
+  }
+
+  // --- Preview ---
+
+  function updatePreview() {
+    const text = mdInput.value;
+    const parsed = parseMarkdown(text);
+    const previewEl = document.getElementById('preview');
+    const statusEl = document.getElementById('parse-status');
+    const startBtn = document.getElementById('btn-start');
+
+    if (parsed.length === 0) {
+      previewEl.innerHTML = '<p style="color:#666; padding:1rem;">No sessions detected. Check the format.</p>';
+      statusEl.innerHTML = '<div class="parse-error">No valid sessions found</div>';
+      startBtn.disabled = true;
+      return;
+    }
+
+    const builtSessions = buildSessions(parsed);
+
+    let html = '<table class="preview-table"><thead><tr><th>Time</th><th>Duration</th><th>Session</th></tr></thead><tbody>';
+    for (const s of builtSessions) {
+      html += `<tr>
+        <td>${s.startTime} \u2013 ${formatTimeFromDate(s.end)}</td>
+        <td>${s.qaDuration ? s.talkDuration + '+' + s.qaDuration : s.duration} min</td>
+        <td>${escapeHtml(s.name)}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+
+    previewEl.innerHTML = html;
+    statusEl.innerHTML = `<div class="parse-ok">${parsed.length} session${parsed.length > 1 ? 's' : ''} detected</div>`;
+    startBtn.disabled = false;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function formatTimeFromDate(date) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  mdInput.addEventListener('input', updatePreview);
+
+  // --- Timer Logic ---
+
+  function getElapsedMs() {
+    if (timerState === 'running') {
+      return elapsedBeforePause + (Date.now() - timerStartedAt) * speed;
+    }
+    return elapsedBeforePause;
+  }
+
+  function cycleSpeed() {
+    // Bank current elapsed time before changing speed
+    if (timerState === 'running') {
+      elapsedBeforePause += (Date.now() - timerStartedAt) * speed;
+      timerStartedAt = Date.now();
+    }
+    const idx = speedOptions.indexOf(speed);
+    speed = speedOptions[(idx + 1) % speedOptions.length];
+    const btn = document.getElementById('btn-speed');
+    btn.textContent = speed + 'x';
+    btn.classList.toggle('active', speed > 1);
+  }
+
+  // Used only for schedule bar display, etc. Phase logic is in updateDisplay.
+  function getTotalRemainingSeconds() {
+    const s = sessions[currentIndex];
+    const totalMs = s.duration * 60000;
+    const elapsed = getElapsedMs();
+    return Math.ceil((totalMs - elapsed) / 1000);
+  }
+
+  function toggleTimer() {
+    if (timerState === 'idle' || timerState === 'paused') {
+      // Start or resume
+      timerState = 'running';
+      timerStartedAt = Date.now();
+      updateControls();
+    } else {
+      // Pause
+      elapsedBeforePause += (Date.now() - timerStartedAt);
+      timerStartedAt = null;
+      timerState = 'paused';
+      updateControls();
+    }
+  }
+
+  function resetTimer() {
+    timerState = 'idle';
+    timerStartedAt = null;
+    elapsedBeforePause = 0;
+    updateControls();
+    updateDisplay();
+  }
+
+  function selectSession(index) {
+    currentIndex = index;
+    resetTimer();
+    updateScheduleHighlights();
+  }
+
+  function prevSession() {
+    if (currentIndex > 0) selectSession(currentIndex - 1);
+  }
+
+  function nextSession() {
+    if (currentIndex < sessions.length - 1) selectSession(currentIndex + 1);
+  }
+
+  function updateControls() {
+    const goBtn = document.getElementById('btn-go');
+    if (timerState === 'running') {
+      goBtn.textContent = 'Pause';
+      goBtn.classList.add('running');
+    } else if (timerState === 'paused') {
+      goBtn.textContent = 'Resume';
+      goBtn.classList.remove('running');
+    } else {
+      goBtn.textContent = 'Start';
+      goBtn.classList.remove('running');
+    }
+  }
+
+  function updateScheduleHighlights() {
+    const items = document.querySelectorAll('.sched-item');
+    items.forEach((el, i) => {
+      el.classList.remove('active', 'past');
+      if (i === currentIndex) el.classList.add('active');
+      else if (i < currentIndex) el.classList.add('past');
+    });
+  }
+
+  function updateDisplay() {
+    const now = new Date();
+    const s = sessions[currentIndex];
+    const hasQA = s.qaDuration > 0;
+
+    // Clock and scheduled times
+    document.getElementById('clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('top-sched-start').textContent = formatTimeFromDate(s.start);
+    document.getElementById('top-sched-end').textContent = formatTimeFromDate(s.end);
+
+    // Session info
+    document.getElementById('sess-name').textContent = s.name;
+    const durLabel = hasQA ? `${s.talkDuration}+${s.qaDuration} min` : `${s.duration} min`;
+    document.getElementById('sess-range').textContent = `Scheduled ${s.startTime} \u2013 ${formatTimeFromDate(s.end)} (${durLabel})`;
+    document.getElementById('session-counter').textContent = `${currentIndex + 1} / ${sessions.length}`;
+
+    const screen = document.getElementById('timer-screen');
+    const phaseEl = document.getElementById('phase-indicator');
+    screen.classList.remove('state-normal', 'state-warning', 'state-danger', 'state-over', 'state-idle', 'state-qa');
+
+    if (timerState === 'idle') {
+      // Not started — show talk duration
+      document.getElementById('countdown').textContent = formatCountdown(s.talkDuration * 60);
+      document.getElementById('countdown-label').textContent = 'ready \u2014 press Start';
+      phaseEl.textContent = hasQA ? `TALK (${s.talkDuration} min) + Q&A (${s.qaDuration} min)` : '';
+      phaseEl.className = 'phase-indicator';
+      screen.classList.add('state-idle');
+    } else {
+      const elapsedMs = getElapsedMs();
+      const talkMs = s.talkDuration * 60000;
+      const totalMs = s.duration * 60000;
+
+      if (elapsedMs < talkMs) {
+        // --- Talk phase ---
+        const remainSec = Math.ceil((talkMs - elapsedMs) / 1000);
+        document.getElementById('countdown').textContent = formatCountdown(remainSec);
+        document.getElementById('countdown-label').textContent = timerState === 'paused' ? 'paused' : 'remaining';
+        phaseEl.textContent = hasQA ? 'TALK' : '';
+        phaseEl.className = 'phase-indicator phase-talk';
+
+        if (remainSec <= 60) {
+          screen.classList.add('state-danger');
+        } else if (remainSec <= 180) {
+          screen.classList.add('state-warning');
+        } else {
+          screen.classList.add('state-normal');
+        }
+      } else if (hasQA && elapsedMs < totalMs) {
+        // --- Q&A phase ---
+        const remainSec = Math.ceil((totalMs - elapsedMs) / 1000);
+        document.getElementById('countdown').textContent = formatCountdown(remainSec);
+        document.getElementById('countdown-label').textContent = timerState === 'paused' ? 'paused' : 'remaining';
+        phaseEl.textContent = 'Q&A';
+        phaseEl.className = 'phase-indicator phase-qa';
+
+        if (remainSec <= 30) {
+          screen.classList.add('state-danger');
+        } else if (remainSec <= 60) {
+          screen.classList.add('state-warning');
+        } else {
+          screen.classList.add('state-qa');
+        }
+      } else {
+        // --- Over time ---
+        const overSec = Math.floor((elapsedMs - totalMs) / 1000);
+        document.getElementById('countdown').textContent = '+' + formatCountdown(overSec);
+        document.getElementById('countdown-label').textContent = timerState === 'paused' ? 'OVER TIME (paused)' : 'OVER TIME';
+        phaseEl.textContent = '';
+        phaseEl.className = 'phase-indicator';
+        screen.classList.add('state-over');
+      }
+    }
+
+    // Nav buttons
+    document.getElementById('btn-prev').disabled = currentIndex === 0;
+    document.getElementById('btn-next').disabled = currentIndex === sessions.length - 1;
+
+    updateScheduleHighlights();
+  }
+
+  // --- Screen transitions ---
+
+  function enterTimerScreen() {
+    const parsed = parseMarkdown(mdInput.value);
+    if (parsed.length === 0) return;
+
+    sessions = buildSessions(parsed);
+    currentIndex = 0;
+    resetTimer();
+
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('timer-screen').style.display = 'flex';
+
+    buildScheduleBar();
+    updateDisplay();
+    clockInterval = setInterval(updateDisplay, 200);
+  }
+
+  function goBack() {
+    clearInterval(clockInterval);
+    resetTimer();
+    document.getElementById('setup').style.display = 'block';
+    document.getElementById('timer-screen').style.display = 'none';
+  }
+
+  function buildScheduleBar() {
+    const bar = document.getElementById('schedule-bar');
+    bar.innerHTML = '';
+    sessions.forEach((s, i) => {
+      const div = document.createElement('div');
+      div.className = 'sched-item';
+      div.innerHTML = `<div>${escapeHtml(s.name)}</div><div class="sched-time">${formatTimeFromDate(s.start)} - ${formatTimeFromDate(s.end)}</div>`;
+      div.onclick = () => selectSession(i);
+      bar.appendChild(div);
+    });
+  }
+
+  function formatCountdown(totalSec) {
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Only on timer screen
+    if (document.getElementById('timer-screen').style.display === 'none') return;
+
+    if (e.code === 'Space') {
+      e.preventDefault();
+      toggleTimer();
+    } else if (e.code === 'KeyR') {
+      resetTimer();
+    } else if (e.code === 'ArrowRight' || e.code === 'KeyN') {
+      nextSession();
+    } else if (e.code === 'ArrowLeft' || e.code === 'KeyP') {
+      prevSession();
+    }
+  });
+
+  // Init preview
+  updatePreview();
+</script>
+</body>
+</html>
