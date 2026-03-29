@@ -46,6 +46,21 @@ def sort_children(children, mode):
         return sorted(children, key=lambda n: n.name.lower(), reverse=True)
 
 
+def render_bar(fraction, width):
+    """Render a proportional ASCII bar using block characters."""
+    filled = fraction * width
+    full = int(filled)
+    remainder = filled - full
+    bar = '█' * full
+    if remainder > 0.75:
+        bar += '▓'
+    elif remainder > 0.5:
+        bar += '▒'
+    elif remainder > 0.25:
+        bar += '░'
+    return bar.ljust(width)
+
+
 class Node(object):
     __slots__ = ('name', 'size_kb', 'children', 'parent', 'path')
 
@@ -203,6 +218,7 @@ class DuViewer(object):
         self._history = []
         self._width = 80
         self._height = 24
+        self.show_bars = True
         self._needs_redraw = True
         self._rebuild_display()
 
@@ -273,7 +289,11 @@ class DuViewer(object):
         reset_attr()
 
         # Column header (row 2)
-        col_header = "%10s  %s" % ("SIZE", "NAME")
+        if self.show_bars:
+            bar_width = min(30, max(5, width - 30))
+            col_header = "%10s  %-*s  %s" % ("SIZE", bar_width, "BAR", "NAME")
+        else:
+            col_header = "%10s  %s" % ("SIZE", "NAME")
         move_cursor(2, 1)
         underline()
         _write(col_header[:width])
@@ -314,7 +334,14 @@ class DuViewer(object):
                 if len(node.children) > 0:
                     name += "/"
 
-                line = "%10s  %s%s" % (size_str, connector, name)
+                if self.show_bars:
+                    bar_width = min(30, max(5, width - 30))
+                    parent_size = self.current_dir.size_kb
+                    fraction = node.size_kb / parent_size if parent_size > 0 else 0
+                    bar = render_bar(fraction, bar_width)
+                    line = "%10s  %s  %s%s" % (size_str, bar, connector, name)
+                else:
+                    line = "%10s  %s%s" % (size_str, connector, name)
 
                 move_cursor(row, 1)
                 if idx == self.cursor_pos:
@@ -327,7 +354,7 @@ class DuViewer(object):
 
         # Status bar (last row)
         n_items = len(self.display_list)
-        status = "[q]uit [jk]move [l/Enter]enter [h]back [i]go-in [o]go-out [s]ort  %d items" % n_items
+        status = "[q]uit [jk]move [l/Enter]enter [h]back [i]go-in [o]go-out [s]ort [b]ars  %d items" % n_items
         move_cursor(height, 1)
         bold()
         _write(status[:width])
@@ -421,6 +448,10 @@ class DuViewer(object):
             self.scroll_offset = 0
             self._history = []
             self._rebuild_display()
+
+        elif key == 'b':
+            self.show_bars = not self.show_bars
+            self._needs_redraw = True
 
         elif key == 's':
             self.sort_mode = (self.sort_mode + 1) % 4
