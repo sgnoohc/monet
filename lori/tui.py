@@ -4,6 +4,7 @@
 import copy
 import curses
 import datetime
+import subprocess
 import sys
 from collections import namedtuple
 
@@ -12,6 +13,9 @@ from lori import (load_projects, save_projects, parse_date, today, fmt_date,
                   expand_events_for_date,
                   calc_free_time, parse_time, fmt_time, save_schedule,
                   day_name_to_int, get_work_hours, convert_event_time)
+from fetch_mail import (get_token_cache, save_token_cache, authenticate,
+                        connect_imap, fetch_email_list, fetch_email_body,
+                        set_flag)
 
 # ─── Data structures ─────────────────────────────────────────────────────────
 
@@ -23,10 +27,12 @@ DetailItem = namedtuple("DetailItem", ["kind", "index", "text", "selectable"])
 LEFT, RIGHT = 0, 1
 VIEW_PROJECTS, VIEW_TODAY, VIEW_WEEK, VIEW_MONTH = 0, 1, 2, 3
 VIEW_SCHED_DAY, VIEW_SCHED_WEEK, VIEW_SCHED_MONTH, VIEW_SCHED_NDAY = 4, 5, 6, 7
+VIEW_MAIL_INBOX = 8
 
-MODE_TASKS, MODE_CALENDAR = 0, 1
+MODE_TASKS, MODE_CALENDAR, MODE_MAIL = 0, 1, 2
 _TASK_VIEWS = [VIEW_PROJECTS, VIEW_TODAY, VIEW_WEEK, VIEW_MONTH]
 _CAL_VIEWS = [VIEW_SCHED_DAY, VIEW_SCHED_NDAY, VIEW_SCHED_WEEK, VIEW_SCHED_MONTH]
+_MAIL_VIEWS = [VIEW_MAIL_INBOX]
 
 # ─── Color pairs ──────────────────────────────────────────────────────────────
 
@@ -54,6 +60,20 @@ def _init_colors():
         curses.init_pair(C_NONWORK, 240, 236)  # gray on dark gray
     else:
         curses.init_pair(C_NONWORK, curses.COLOR_BLACK, curses.COLOR_BLUE)
+
+
+# ─── Task helpers ────────────────────────────────────────────────────────────
+
+def _task_text(t):
+    """Extract display text from a task (string or dict)."""
+    return t if isinstance(t, str) else t.get("desc", str(t))
+
+
+def _task_due(t):
+    """Extract due date string from a task, or None."""
+    if isinstance(t, dict):
+        return t.get("due")
+    return None
 
 
 # ─── ProjectBrowser ──────────────────────────────────────────────────────────
@@ -97,6 +117,16 @@ class ProjectBrowser:
 
         self.detail_items = []
         self._rebuild_detail()
+
+        # Mail state (lazy-loaded)
+        self.mail_imap = None
+        self.mail_emails = []
+        self.mail_body_lines = []
+        self.mail_body_uid = None
+        self.mail_body_scroll = 0
+        self.mail_unread_filter = False
+        self.mail_selected = set()
+
         self._calc_dimensions()
 
     # ─── Filtering ────────────────────────────────────────────────────────
@@ -134,6 +164,8 @@ class ProjectBrowser:
             self._rebuild_schedule_month()
         elif self.view_mode == VIEW_SCHED_NDAY:
             self._rebuild_schedule_nday()
+        elif self.view_mode == VIEW_MAIL_INBOX:
+            pass  # mail list managed by _mail_fetch_list()
 
     def _rebuild_timeline(self):
         td = today()
@@ -286,6 +318,9 @@ class ProjectBrowser:
     def _rebuild_detail(self):
         self.detail_items = []
 
+        if self.view_mode == VIEW_MAIL_INBOX:
+            return  # mail body handled separately
+
         if self.view_mode == VIEW_SCHED_DAY:
             self._rebuild_detail_sched_day()
             self._snap_right_cursor()
@@ -360,8 +395,12 @@ class ProjectBrowser:
                 self.detail_items.append(DetailItem("milestone", i, text, True))
                 # Tasks nested under this milestone
                 for j, t in enumerate(ms.get("tasks", [])):
-                    t_text = t if isinstance(t, str) else t.get("desc", str(t))
-                    self.detail_items.append(DetailItem("ms_task", (i, j), f"      · {t_text}", True))
+                    t_text = _task_text(t)
+                    t_due = _task_due(t)
+                    t_due_str = ""
+                    if t_due:
+                        t_due_str = f"  ({fmt_date(parse_date(t_due))})"
+                    self.detail_items.append(DetailItem("ms_task", (i, j), f"      · {t_text}{t_due_str}", True))
 
         # Tasks
         tasks = proj.get("tasks", [])
@@ -369,7 +408,12 @@ class ProjectBrowser:
             self.detail_items.append(DetailItem("blank", None, "", False))
             self.detail_items.append(DetailItem("header", None, "Tasks", False))
             for i, t in enumerate(tasks):
-                text = f"  · {t}"
+                t_text = _task_text(t)
+                t_due = _task_due(t)
+                t_due_str = ""
+                if t_due:
+                    t_due_str = f"  ({fmt_date(parse_date(t_due))})"
+                text = f"  · {t_text}{t_due_str}"
                 self.detail_items.append(DetailItem("task", i, text, True))
 
         # Notes
@@ -674,9 +718,11 @@ class ProjectBrowser:
 
     def _calc_dimensions(self):
         self.max_y, self.max_x = self.stdscr.getmaxyx()
-        # Left panel width: 70% for schedule grid views, 35% otherwise
+        # Left panel width: 70% for schedule grid views, 40% for mail, 35% otherwise
         if self.view_mode in (VIEW_SCHED_DAY, VIEW_SCHED_WEEK, VIEW_SCHED_NDAY):
             self.left_w = max(40, min(self.max_x * 70 // 100, self.max_x - 25))
+        elif self.view_mode == VIEW_MAIL_INBOX:
+            self.left_w = max(20, min(50, self.max_x * 40 // 100))
         else:
             self.left_w = max(20, min(40, self.max_x * 35 // 100))
         self.right_w = self.max_x - self.left_w - 3  # 3 for borders
@@ -718,6 +764,10 @@ class ProjectBrowser:
             filter_label = "Schedule"
         elif self.view_mode == VIEW_SCHED_MONTH:
             filter_label = self.sched_date.strftime("%B %Y")
+        elif self.view_mode == VIEW_MAIL_INBOX:
+            filter_label = f"Inbox ({len(self.mail_emails)})"
+            if self.mail_unread_filter:
+                filter_label += " [unread]"
         elif self.view_mode == VIEW_TODAY:
             filter_label = "Today"
         elif self.view_mode == VIEW_WEEK:
@@ -766,6 +816,11 @@ class ProjectBrowser:
                     rtitle = f" {entry['date'].strftime('%a %b %d')} "
             else:
                 rtitle = " Details "
+        elif self.view_mode == VIEW_MAIL_INBOX:
+            if self.mail_body_uid and self.mail_emails and self.left_cursor < len(self.mail_emails):
+                rtitle = f" {self.mail_emails[self.left_cursor]['subject'][:self.right_w - 4]} "
+            else:
+                rtitle = " Body "
         elif self.view_mode in (VIEW_TODAY, VIEW_WEEK, VIEW_MONTH):
             if self.timeline_items:
                 idx = min(self.left_cursor, len(self.timeline_items) - 1)
@@ -797,6 +852,9 @@ class ProjectBrowser:
             self._safe_addstr(bot_y + 2, 0, final[:w])
 
     def _draw_left_panel(self):
+        if self.view_mode == VIEW_MAIL_INBOX:
+            self._draw_left_panel_mail()
+            return
         if self.view_mode == VIEW_SCHED_DAY:
             self._draw_left_panel_sched_day()
             return
@@ -1627,6 +1685,17 @@ class ProjectBrowser:
         x_offset = self.left_w + 2
         max_w = self.right_w
 
+        if self.view_mode == VIEW_MAIL_INBOX:
+            if not self.mail_body_lines:
+                self._safe_addstr(1, x_offset, "Press Enter to read an email.", curses.A_DIM)
+                return
+            for i in range(self.content_h):
+                li = self.mail_body_scroll + i
+                if li >= len(self.mail_body_lines):
+                    break
+                self._safe_addstr(1 + i, x_offset, self.mail_body_lines[li][:max_w])
+            return
+
         if self.view_mode == VIEW_PROJECTS and not self.filtered:
             return
         if not self.detail_items:
@@ -1683,6 +1752,31 @@ class ProjectBrowser:
                         except ValueError:
                             pass
 
+            elif item.kind in ("task", "ms_task"):
+                t_obj = None
+                if item.kind == "task":
+                    tasks_list = proj.get("tasks", [])
+                    if item.index is not None and item.index < len(tasks_list):
+                        t_obj = tasks_list[item.index]
+                elif item.kind == "ms_task" and item.index is not None:
+                    mi, ti = item.index
+                    if mi < len(milestones):
+                        ms_tasks = milestones[mi].get("tasks", [])
+                        if ti < len(ms_tasks):
+                            t_obj = ms_tasks[ti]
+                if t_obj is not None:
+                    t_due = _task_due(t_obj)
+                    if t_due:
+                        try:
+                            due_d = parse_date(t_due)
+                            delta = (due_d - today()).days
+                            if delta < 0:
+                                color = curses.color_pair(C_RED)
+                            elif delta <= 7:
+                                color = curses.color_pair(C_YELLOW)
+                        except ValueError:
+                            pass
+
             # Highlight selectable row if cursor is on it
             if idx == self.right_cursor and item.selectable and self.focus == RIGHT:
                 attr = curses.A_REVERSE | curses.A_BOLD
@@ -1694,19 +1788,28 @@ class ProjectBrowser:
         w = self.max_x - 3
 
         _undo_hint = "  u undo" if self._undo_stack else ""
+        if self.view_mode == VIEW_MAIL_INBOX:
+            if self.focus == LEFT:
+                pos = f" {self.left_cursor + 1}/{len(self.mail_emails)}" if self.mail_emails else ""
+                hints = pos + " j/k:nav  Enter:read  x:select  X:all  T:tasks  u:unread  r:refresh  m:mark  g/G:top/end  c:tasks  q:quit"
+            else:
+                hints = " j/k:scroll  J/K:page  h/Esc:back  q:quit"
+            self._safe_addstr(bar_y, 1, hints[:w].ljust(w), curses.color_pair(C_STATUS_BAR))
+            return
+
         if self.focus == LEFT:
             if self.view_mode == VIEW_SCHED_DAY:
-                hints = " ↑↓ navigate  h/l day  t today  a add  e edit  x delete  y copy  p paste  o open" + _undo_hint + "  v view  c tasks  q quit"
+                hints = " ↑↓ navigate  h/l day  t today  a add  e edit  x delete  y copy  p paste  o open" + _undo_hint + "  v view  c tasks  M mail  q quit"
             elif self.view_mode == VIEW_SCHED_NDAY:
-                hints = f" j/k events  h/l day  Enter drill  a add  e edit  x del  y copy  p paste  o open  +/- days ({self.sched_nday_count})  t today" + _undo_hint + "  v view  q quit"
+                hints = f" j/k events  h/l day  Enter drill  a add  e edit  x del  y copy  p paste  o open  +/- days ({self.sched_nday_count})  t today" + _undo_hint + "  v view  c tasks  M mail  q quit"
             elif self.view_mode == VIEW_SCHED_WEEK:
-                hints = " j/k events  h/l day  Enter drill  a add  e edit  x del  y copy  p paste  o open  t today" + _undo_hint + "  v view  c tasks  q quit"
+                hints = " j/k events  h/l day  Enter drill  a add  e edit  x del  y copy  p paste  o open  t today" + _undo_hint + "  v view  c tasks  M mail  q quit"
             elif self.view_mode == VIEW_SCHED_MONTH:
-                hints = " ↑↓ navigate  Enter day  h/l month  t today" + _undo_hint + "  v view  c tasks  q quit"
+                hints = " ↑↓ navigate  Enter day  h/l month  t today" + _undo_hint + "  v view  c tasks  M mail  q quit"
             elif self.view_mode in (VIEW_TODAY, VIEW_WEEK, VIEW_MONTH):
-                hints = " ↑↓ navigate  Enter/→ details  d done  r reschedule  x delete" + _undo_hint + "  i inbox  v view  c cal  q quit"
+                hints = " ↑↓ navigate  Enter/→ details  d done  r reschedule  x delete" + _undo_hint + "  i inbox  v view  c cal  M mail  q quit"
             else:
-                hints = " ↑↓ navigate  Enter/→ details  v view  s sort  a add  x delete  A archive" + _undo_hint + "  f filter  i inbox  c cal  q quit"
+                hints = " ↑↓ navigate  Enter/→ details  v view  s sort  a add  x delete  A archive" + _undo_hint + "  f filter  i inbox  c cal  M mail  q quit"
         else:
             # Context-sensitive hints for right panel
             parts = [" ↑↓ navigate  ←/Esc back"]
@@ -1721,7 +1824,7 @@ class ProjectBrowser:
                         parts.append("d done  r reschedule")
                     parts.append("x delete")
                 elif item.kind in ("task", "ms_task"):
-                    parts.append("d done  x delete  J/K reorder")
+                    parts.append("d done  r reschedule  x delete  J/K reorder")
                     proj = self._current_project()
                     if proj and proj.get("name", "").lower() == "inbox":
                         parts.append("m move")
@@ -1738,6 +1841,14 @@ class ProjectBrowser:
             self.stdscr.addnstr(y, x, text, self.max_x - x - 1, attr)
         except curses.error:
             pass
+
+    def _show_loading(self, msg):
+        """Draw a centered loading message and refresh immediately."""
+        h, w = self.max_y, self.max_x
+        y = h // 2
+        self._safe_addstr(y, 0, " " * (w - 1))
+        self._safe_addstr(y, max(0, (w - len(msg)) // 2), msg, curses.A_BOLD)
+        self.stdscr.refresh()
 
     # ─── Navigation ───────────────────────────────────────────────────────
 
@@ -2297,7 +2408,7 @@ class ProjectBrowser:
         elif item.kind == "task":
             tasks = proj.get("tasks", [])
             if 0 <= item.index < len(tasks):
-                desc = tasks[item.index]
+                desc = _task_text(tasks[item.index])
                 if not self._modal_confirm("Delete", f"Delete task '{desc}'?"):
                     return
                 tasks.pop(item.index)
@@ -2309,7 +2420,7 @@ class ProjectBrowser:
             ms = proj["milestones"][ms_idx]
             tasks = ms.get("tasks", [])
             if 0 <= t_idx < len(tasks):
-                desc = tasks[t_idx] if isinstance(tasks[t_idx], str) else tasks[t_idx].get("desc", "")
+                desc = _task_text(tasks[t_idx])
                 if not self._modal_confirm("Delete", f"Delete task '{desc}'?"):
                     return
                 tasks.pop(t_idx)
@@ -2319,7 +2430,48 @@ class ProjectBrowser:
     def action_reschedule(self):
         item = self._current_detail_item()
         proj = self._current_project()
-        if not item or not proj or item.kind != "milestone":
+        if not item or not proj:
+            return
+
+        if item.kind in ("task", "ms_task"):
+            # Reschedule task due date
+            if item.kind == "task":
+                tasks = proj.get("tasks", [])
+                if not (0 <= item.index < len(tasks)):
+                    return
+                t = tasks[item.index]
+                current_due = _task_due(t) or "none"
+                new_date_str = self._modal_input_date("Reschedule Task",
+                    f"New due date ({current_due}): ",
+                    body_lines=[f"Task: {_task_text(t)}"])
+                if not new_date_str:
+                    return
+                # Convert plain string to dict if needed
+                if isinstance(t, str):
+                    tasks[item.index] = {"desc": t, "due": new_date_str}
+                else:
+                    t["due"] = new_date_str
+            else:  # ms_task
+                ms_idx, t_idx = item.index
+                ms = proj["milestones"][ms_idx]
+                tasks = ms.get("tasks", [])
+                if not (0 <= t_idx < len(tasks)):
+                    return
+                t = tasks[t_idx]
+                current_due = _task_due(t) or "none"
+                new_date_str = self._modal_input_date("Reschedule Task",
+                    f"New due date ({current_due}): ",
+                    body_lines=[f"Task: {_task_text(t)}"])
+                if not new_date_str:
+                    return
+                if isinstance(t, str):
+                    tasks[t_idx] = {"desc": t, "due": new_date_str}
+                else:
+                    t["due"] = new_date_str
+            self._save_and_rebuild()
+            return
+
+        if item.kind != "milestone":
             return
 
         ms = proj["milestones"][item.index]
@@ -2410,14 +2562,20 @@ class ProjectBrowser:
                 desc = self._modal_input("Add Task", "Description: ")
             if not desc:
                 return
+            due_str = self._modal_input_date("Task Due Date",
+                "Due date (blank for none): ", body_lines=[f"Task: {desc}"])
+            if due_str:
+                task_obj = {"desc": desc, "due": due_str}
+            else:
+                task_obj = desc
             if ms_target:
                 if "tasks" not in ms_target:
                     ms_target["tasks"] = []
-                ms_target["tasks"].append(desc)
+                ms_target["tasks"].append(task_obj)
             else:
                 if "tasks" not in proj:
                     proj["tasks"] = []
-                proj["tasks"].append(desc)
+                proj["tasks"].append(task_obj)
             self._save_and_rebuild()
 
     def action_inbox_add(self):
@@ -2439,7 +2597,8 @@ class ProjectBrowser:
         item = self._current_detail_item()
         if not item or item.kind != "task":
             return
-        task_text = proj["tasks"][item.index]
+        task_obj = proj["tasks"][item.index]
+        task_display = _task_text(task_obj)
 
         # Build list of active target projects (excluding Inbox)
         targets = [p for p in self.projects
@@ -2475,10 +2634,10 @@ class ProjectBrowser:
         if choice == "t":
             if "tasks" not in target:
                 target["tasks"] = []
-            target["tasks"].append(task_text)
+            target["tasks"].append(task_obj)
         elif choice == "m":
             due_str = self._modal_input("Milestone Due Date", "Due: ",
-                [f"Milestone: {task_text}", "", "Format: YYYY-MM-DD"])
+                [f"Milestone: {task_display}", "", "Format: YYYY-MM-DD"])
             if not due_str:
                 return
             try:
@@ -2487,7 +2646,7 @@ class ProjectBrowser:
                 return
             if "milestones" not in target:
                 target["milestones"] = []
-            target["milestones"].append({"name": task_text, "due": str(due), "done": False})
+            target["milestones"].append({"name": task_display, "due": str(due), "done": False})
 
         proj["tasks"].pop(item.index)
         self._save_and_rebuild()
@@ -3294,6 +3453,331 @@ class ProjectBrowser:
         ms["due"] = str(new_date)
         self._save_and_rebuild()
 
+    # ─── Mail integration ──────────────────────────────────────────────────
+
+    def _mail_connect(self):
+        """Lazy IMAP connect / reconnect."""
+        if self.mail_imap:
+            try:
+                self.mail_imap.noop()
+                return
+            except Exception:
+                pass
+        self._show_loading("Connecting to mail server...")
+        cache = get_token_cache()
+        token, username = authenticate(cache)
+        save_token_cache(cache)
+        self.mail_imap = connect_imap(token, username)
+
+    def _mail_fetch_list(self):
+        self._mail_connect()
+        self._show_loading("Fetching emails...")
+        self.mail_emails = fetch_email_list(
+            self.mail_imap, unread=self.mail_unread_filter, top=100)
+
+    def _mail_open(self):
+        if not self.mail_emails:
+            return
+        em = self.mail_emails[self.left_cursor]
+        uid = em["uid"]
+        if uid != self.mail_body_uid:
+            self._show_loading("Loading email...")
+            self._mail_connect()
+            body = fetch_email_body(self.mail_imap, uid)
+            self.mail_body_lines = []
+            for raw_line in body.splitlines():
+                while len(raw_line) > self.right_w - 1:
+                    self.mail_body_lines.append(raw_line[:self.right_w - 1])
+                    raw_line = raw_line[self.right_w - 1:]
+                self.mail_body_lines.append(raw_line)
+            self.mail_body_uid = uid
+            self.mail_body_scroll = 0
+        self.focus = RIGHT
+
+    def _mail_toggle_seen(self):
+        if not self.mail_emails:
+            return
+        em = self.mail_emails[self.left_cursor]
+        self._show_loading("Updating flag...")
+        self._mail_connect()
+        self.mail_imap.select("INBOX", readonly=False)
+        set_flag(self.mail_imap, em["uid"], "\\Seen", enable=not em["isRead"])
+        self.mail_imap.select("INBOX", readonly=True)
+        em["isRead"] = not em["isRead"]
+
+    def _mail_scroll_list(self, delta):
+        if not self.mail_emails:
+            return
+        self.left_cursor = max(0, min(len(self.mail_emails) - 1, self.left_cursor + delta))
+        if self.left_cursor < self.left_scroll:
+            self.left_scroll = self.left_cursor
+        elif self.left_cursor >= self.left_scroll + self.content_h:
+            self.left_scroll = self.left_cursor - self.content_h + 1
+
+    def _draw_left_panel_mail(self):
+        if not self.mail_emails:
+            self._safe_addstr(1, 1, "No emails.".ljust(self.left_w), curses.A_DIM)
+            self._safe_addstr(2, 1, "Press 'r' to refresh.".ljust(self.left_w), curses.A_DIM)
+            return
+
+        for i in range(self.content_h):
+            idx = self.left_scroll + i
+            if idx >= len(self.mail_emails):
+                break
+            y = i + 1
+            em = self.mail_emails[idx]
+
+            is_sel = em["uid"] in self.mail_selected
+            if is_sel:
+                dot = "[*]"
+            elif not em["isRead"]:
+                dot = "● "
+            else:
+                dot = "  "
+
+            frm = em["from"]
+            if "<" in frm:
+                frm = frm.split("<")[0].strip().strip('"')
+            if not frm:
+                frm = em["from"]
+
+            date = em["date"]
+            for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z",
+                        "%a, %d %b %Y %H:%M:%S %Z"):
+                try:
+                    from datetime import datetime as _dt
+                    dt = _dt.strptime(date.strip(), fmt)
+                    date = dt.strftime("%m/%d %H:%M")
+                    break
+                except (ValueError, ImportError):
+                    continue
+            else:
+                date = date[:11]
+
+            subj = em["subject"] or "(no subject)"
+
+            avail = self.left_w - 2
+            prefix_w = len(dot)
+            date_w = len(date)
+            from_w = min(15, max(8, avail // 4))
+            subj_w = avail - prefix_w - from_w - 1 - date_w - 1
+            if subj_w < 5:
+                subj_w = avail - prefix_w - date_w - 1
+                from_w = 0
+
+            line = dot
+            line += subj[:subj_w].ljust(subj_w)
+            if from_w > 0:
+                line += " " + frm[:from_w].ljust(from_w)
+            line += " " + date
+
+            is_selected = (idx == self.left_cursor)
+            attr = 0
+            if is_selected and self.focus == LEFT:
+                attr = curses.A_REVERSE
+            elif is_selected:
+                attr = curses.A_REVERSE | curses.A_DIM
+            if not em["isRead"]:
+                attr |= curses.A_BOLD
+
+            self._safe_addstr(y, 1, line[:self.left_w].ljust(self.left_w), attr)
+
+    def _mail_extract_items(self):
+        """Use Claude CLI to extract tasks and events from selected emails."""
+        import os
+        import re
+
+        if not self.mail_selected:
+            return
+        choice = self._modal_choice("Model", "Choose model:",
+                                    [("h", "Haiku"), ("s", "Sonnet")])
+        if choice is None:
+            return
+        model_map = {"h": "claude-haiku-4-5-20251001", "s": "claude-sonnet-4-6"}
+        model = model_map[choice]
+
+        self._show_loading("Extracting tasks & events with Claude...")
+
+        today_str = str(today())
+        all_tasks = []
+        all_events = []
+        # Strip CLAUDECODE env var to avoid nesting error
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+        for em in self.mail_emails:
+            if em["uid"] not in self.mail_selected:
+                continue
+            self._mail_connect()
+            body = fetch_email_body(self.mail_imap, em["uid"])
+            preview = body[:2000] if body else ""
+            prompt = (
+                f"Subject: {em['subject']}\n"
+                f"From: {em['from']}\n\n"
+                f"{preview}\n\n"
+                f"Extract action items and calendar events from this email.\n"
+                f"Today's date is {today_str}.\n\n"
+                f"Output format (one item per line):\n"
+                f"TASK|description|YYYY-MM-DD    (with deadline)\n"
+                f"TASK|description|              (no deadline)\n"
+                f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|location\n"
+                f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|\n\n"
+                f"Rules:\n"
+                f"- TASK = something someone needs to do\n"
+                f"- EVENT = something happening at a specific date/time (meeting, call, deadline)\n"
+                f"- Resolve relative dates (\"next Tuesday\") relative to today\n"
+                f"- If event has no clear time, use 09:00-10:00\n"
+                f"- If no actionable items, return NONE"
+            )
+            try:
+                result = subprocess.run(
+                    ["claude", "-p", "--model", model],
+                    input=prompt, capture_output=True, text=True, timeout=120,
+                    env=env,
+                )
+                text = result.stdout.strip()
+                if text and text.upper() != "NONE":
+                    for line in text.splitlines():
+                        line = line.strip()
+                        if not line or line.upper() == "NONE":
+                            continue
+                        parts = line.split("|")
+                        if len(parts) >= 2 and parts[0].strip().upper() == "TASK":
+                            desc = parts[1].strip()
+                            due = parts[2].strip() if len(parts) > 2 else ""
+                            if desc:
+                                if due:
+                                    all_tasks.append({"desc": desc, "due": due})
+                                else:
+                                    all_tasks.append(desc)
+                        elif len(parts) >= 4 and parts[0].strip().upper() == "EVENT":
+                            title = parts[1].strip()
+                            date_s = parts[2].strip()
+                            start_s = parts[3].strip() if len(parts) > 3 else "09:00"
+                            end_s = parts[4].strip() if len(parts) > 4 else "10:00"
+                            loc = parts[5].strip() if len(parts) > 5 else ""
+                            if title and date_s:
+                                ev = {
+                                    "title": title,
+                                    "date": date_s,
+                                    "start": start_s or "09:00",
+                                    "end": end_s or "10:00",
+                                }
+                                if loc:
+                                    ev["location"] = loc
+                                all_events.append(ev)
+                        else:
+                            # Fallback: old line-by-line task parsing
+                            line = re.sub(r"^[\d]+[.)]\s*", "", line)
+                            line = line.lstrip("-•* ")
+                            if line and line.upper() != "NONE":
+                                all_tasks.append(line)
+            except Exception:
+                pass
+
+        if not all_tasks and not all_events:
+            self._modal_input("Info", "No items found", ["No actionable items extracted."])
+            self.mail_selected.clear()
+            return
+
+        # Show confirmation with counts
+        summary_parts = []
+        if all_tasks:
+            summary_parts.append(f"{len(all_tasks)} task(s)")
+        if all_events:
+            summary_parts.append(f"{len(all_events)} event(s)")
+        summary = f"Add {' and '.join(summary_parts)}?"
+        if not self._modal_confirm("Confirm Items", summary):
+            return
+
+        # Store tasks in Inbox
+        if all_tasks:
+            inbox = self._get_or_create_inbox()
+            for t in all_tasks:
+                inbox.setdefault("tasks", []).append(t)
+
+        # Store events in schedule
+        if all_events:
+            self.schedule.extend(all_events)
+            save_schedule(self.schedule)
+
+        self._save_and_rebuild()
+        self.mail_selected.clear()
+
+    def _handle_mail_keys(self, key):
+        """Handle keys when focused on mail list (left panel)."""
+        if key in (ord("j"), curses.KEY_DOWN):
+            self._mail_scroll_list(1)
+        elif key in (ord("k"), curses.KEY_UP):
+            self._mail_scroll_list(-1)
+        elif key == ord("J"):
+            self._mail_scroll_list(self.content_h // 2)
+        elif key == ord("K"):
+            self._mail_scroll_list(-self.content_h // 2)
+        elif key in (10, 13, ord("l"), curses.KEY_RIGHT):
+            self._mail_open()
+        elif key == ord("x"):
+            if self.mail_emails:
+                uid = self.mail_emails[self.left_cursor]["uid"]
+                if uid in self.mail_selected:
+                    self.mail_selected.discard(uid)
+                else:
+                    self.mail_selected.add(uid)
+                self._mail_scroll_list(1)
+        elif key == ord("X"):
+            if self.mail_emails:
+                all_uids = {em["uid"] for em in self.mail_emails}
+                if self.mail_selected >= all_uids:
+                    self.mail_selected.clear()
+                else:
+                    self.mail_selected = all_uids
+        elif key == ord("T"):
+            self._mail_extract_items()
+        elif key == ord("u"):
+            self.mail_unread_filter = not self.mail_unread_filter
+            self._mail_fetch_list()
+            self.left_cursor = min(self.left_cursor, max(0, len(self.mail_emails) - 1))
+            self.left_scroll = 0
+            self.mail_body_lines = []
+            self.mail_body_uid = None
+            self.mail_body_scroll = 0
+            self.mail_selected.clear()
+        elif key == ord("r"):
+            self._mail_fetch_list()
+            self.left_cursor = min(self.left_cursor, max(0, len(self.mail_emails) - 1))
+            self.left_scroll = 0
+            self.mail_body_lines = []
+            self.mail_body_uid = None
+            self.mail_body_scroll = 0
+            self.mail_selected.clear()
+        elif key == ord("m"):
+            self._mail_toggle_seen()
+        elif key == ord("g"):
+            self.left_cursor = 0
+            self.left_scroll = 0
+        elif key == ord("G"):
+            if self.mail_emails:
+                self.left_cursor = len(self.mail_emails) - 1
+                self.left_scroll = max(0, len(self.mail_emails) - self.content_h)
+        elif key == ord("c"):
+            self._toggle_mode()
+        elif key == ord("v"):
+            self._cycle_view()
+
+    def _handle_mail_right_keys(self, key):
+        """Handle keys when focused on mail body (right panel)."""
+        if key in (ord("j"), curses.KEY_DOWN):
+            max_scroll = max(0, len(self.mail_body_lines) - self.content_h)
+            self.mail_body_scroll = min(max_scroll, self.mail_body_scroll + 1)
+        elif key in (ord("k"), curses.KEY_UP):
+            self.mail_body_scroll = max(0, self.mail_body_scroll - 1)
+        elif key == ord("J"):
+            max_scroll = max(0, len(self.mail_body_lines) - self.content_h)
+            self.mail_body_scroll = min(max_scroll, self.mail_body_scroll + self.content_h // 2)
+        elif key == ord("K"):
+            self.mail_body_scroll = max(0, self.mail_body_scroll - self.content_h // 2)
+        elif key in (ord("h"), 27, curses.KEY_LEFT):
+            self.focus = LEFT
+
     # ─── Main loop ────────────────────────────────────────────────────────
 
     def run(self):
@@ -3311,7 +3795,25 @@ class ProjectBrowser:
                 continue
 
             if key == ord("q"):
+                if self.mail_imap:
+                    try:
+                        self.mail_imap.logout()
+                    except Exception:
+                        pass
                 break
+
+            # Global: M → mail mode
+            if key == ord("M"):
+                self._enter_mail_mode()
+                continue
+
+            # Mail mode handles its own keys
+            if self.mode == MODE_MAIL:
+                if self.focus == LEFT:
+                    self._handle_mail_keys(key)
+                else:
+                    self._handle_mail_right_keys(key)
+                continue
 
             # Filter toggle
             if key == ord("f"):
@@ -3338,6 +3840,8 @@ class ProjectBrowser:
                 self._handle_right_keys(key)
 
     def _left_item_count(self):
+        if self.view_mode == VIEW_MAIL_INBOX:
+            return len(self.mail_emails)
         if self.view_mode == VIEW_SCHED_DAY:
             return len(self.sched_day_items)
         if self.view_mode == VIEW_SCHED_NDAY:
@@ -3352,7 +3856,12 @@ class ProjectBrowser:
 
     def _cycle_view(self):
         """Cycle v within the current mode's view list."""
-        views = _CAL_VIEWS if self.mode == MODE_CALENDAR else _TASK_VIEWS
+        if self.mode == MODE_MAIL:
+            views = _MAIL_VIEWS
+        elif self.mode == MODE_CALENDAR:
+            views = _CAL_VIEWS
+        else:
+            views = _TASK_VIEWS
         idx = views.index(self.view_mode) if self.view_mode in views else 0
         self.view_mode = views[(idx + 1) % len(views)]
         self.left_cursor = 0
@@ -3371,7 +3880,7 @@ class ProjectBrowser:
     _CAL_VIEW_LABELS = {v: k for k, v in _CAL_VIEW_NAMES.items()}
 
     def _toggle_mode(self):
-        """Switch between task mode and calendar mode."""
+        """Toggle: Tasks ↔ Calendar. Use M for mail."""
         if self.mode == MODE_TASKS:
             self.mode = MODE_CALENDAR
             default_view = self.config.get("calendar_view", "day")
@@ -3379,6 +3888,23 @@ class ProjectBrowser:
         else:
             self.mode = MODE_TASKS
             self.view_mode = VIEW_PROJECTS
+        self.left_cursor = 0
+        self.left_scroll = 0
+        self.right_cursor = 0
+        self.right_scroll = 0
+        self.focus = LEFT
+        self._rebuild_filtered()
+        self._rebuild_detail()
+
+    def _enter_mail_mode(self):
+        """Switch to mail mode."""
+        if self.mode == MODE_MAIL:
+            return
+        self.mode = MODE_MAIL
+        self.view_mode = VIEW_MAIL_INBOX
+        if not self.mail_emails:
+            self._mail_connect()
+            self._mail_fetch_list()
         self.left_cursor = 0
         self.left_scroll = 0
         self.right_cursor = 0

@@ -79,6 +79,20 @@ def save_locations(locs):
     save_yaml(LOCATIONS_FILE, locs)
 
 
+# ─── Task helpers ─────────────────────────────────────────────────────────────
+
+def _task_text(t):
+    """Extract display text from a task (string or dict)."""
+    return t if isinstance(t, str) else t.get("desc", str(t))
+
+
+def _task_due(t):
+    """Extract due date string from a task, or None."""
+    if isinstance(t, dict):
+        return t.get("due")
+    return None
+
+
 # ─── Date/time utilities ─────────────────────────────────────────────────────
 
 def today():
@@ -802,12 +816,22 @@ def print_full_briefing(config, projects, events, td, days_ahead):
     for p in active:
         tasks = p.get("tasks", [])
         if tasks:
-            task = tasks[0] if isinstance(tasks[0], str) else tasks[0].get("desc", str(tasks[0]))
-            actions.append((task, p["name"]))
+            t = tasks[0]
+            task = _task_text(t)
+            due_s = _task_due(t)
+            due_info = ""
+            if due_s:
+                due_d = parse_date(due_s)
+                days = (due_d - td).days
+                if days < 0:
+                    due_info = f" ({-days}d overdue)"
+                else:
+                    due_info = f" (due {fmt_date(due_d)})"
+            actions.append((task, pname := p["name"], due_info))
     if actions:
         print("NEXT ACTIONS")
-        for task, pname in actions[:6]:
-            print(f"  * {task} [{pname}]")
+        for task, pname, due_info in actions[:6]:
+            print(f"  * {task}{due_info} [{pname}]")
         print()
 
     print("═" * w)
@@ -963,14 +987,32 @@ def cmd_show(args):
                 rescheduled = f" [rescheduled {m['rescheduled']}]"
             print(f"    [{check}] {m['name']}{due_str}{rescheduled}")
             for t in m.get("tasks", []):
-                task_str = t if isinstance(t, str) else t.get("desc", str(t))
-                print(f"          · {task_str}")
+                task_str = _task_text(t)
+                t_due_s = _task_due(t)
+                t_due_info = ""
+                if t_due_s:
+                    t_due_d = parse_date(t_due_s)
+                    t_days = (t_due_d - td).days
+                    if t_days < 0:
+                        t_due_info = f" ({-t_days}d overdue)"
+                    else:
+                        t_due_info = f" (due {fmt_date(t_due_d)})"
+                print(f"          · {task_str}{t_due_info}")
 
     if p.get("tasks"):
         print(f"\n  Tasks:")
         for i, t in enumerate(p["tasks"], 1):
-            task_str = t if isinstance(t, str) else t.get("desc", str(t))
-            print(f"    {i}. {task_str}")
+            task_str = _task_text(t)
+            due_s = _task_due(t)
+            due_info = ""
+            if due_s:
+                due_d = parse_date(due_s)
+                days = (due_d - td).days
+                if days < 0:
+                    due_info = f" ({-days}d overdue)"
+                else:
+                    due_info = f" (due {fmt_date(due_d)})"
+            print(f"    {i}. {task_str}{due_info}")
 
     if p.get("notes"):
         print(f"\n  Notes: {p['notes']}")
@@ -1123,9 +1165,13 @@ def cmd_add_task(args):
     p = matches[0]
     if "tasks" not in p:
         p["tasks"] = []
-    p["tasks"].append(args.desc)
+    if getattr(args, "due", None):
+        p["tasks"].append({"desc": args.desc, "due": args.due})
+    else:
+        p["tasks"].append(args.desc)
     save_projects(projects)
-    print(f"  Added task to {p['name']}: {args.desc}")
+    due_str = f" (due {args.due})" if getattr(args, "due", None) else ""
+    print(f"  Added task to {p['name']}: {args.desc}{due_str}")
 
 
 def cmd_add_milestone(args):
@@ -1952,17 +1998,22 @@ def _fetch_hpc():
     avery-b has no GPUs, so has_gpu=False for it.
     """
     results = []
+    last_updated = ""
     for qos in ["avery", "avery-b"]:
         try:
             r = requests.get(f"https://sgnoohc.github.io/hpg_librarian/data_{qos}.json", timeout=10)
             if r.status_code == 200:
                 data = r.json()
-                obs = data.get("observables", {})
+                # Track most recent last_updated across QOS fetches
+                lu = data.get("metadata", {}).get("last_updated", "")
+                if lu > last_updated:
+                    last_updated = lu
+                obs = data.get("observables_snapshot", {})
                 thresholds = data.get("thresholds", {})
                 ncpus_thresh = thresholds.get("NCPUS", 0)
                 ngpus_thresh = thresholds.get("NGPUS", 0)
                 has_gpu = qos != "avery-b" and ngpus_thresh > 0
-                # Sum all users' values per hour for NCPUS
+                # Sum all users' values per time step for NCPUS
                 ncpus_users = obs.get("NCPUS", {})
                 n = 0
                 for vals in ncpus_users.values():
@@ -1981,14 +2032,25 @@ def _fetch_hpc():
                         for i, v in enumerate(vals):
                             if v is not None:
                                 ngpus_total[i] += v
-                ncpus_current = ncpus_total[-1] if ncpus_total else 0
-                ngpus_current = ngpus_total[-1] if ngpus_total else 0
-                ncpus_24h = ncpus_total[-24:] if len(ncpus_total) >= 24 else ncpus_total
-                ngpus_24h = ngpus_total[-24:] if len(ngpus_total) >= 24 else ngpus_total
+                # Last snapshot entry can be 0 (partial); walk back to find last real value
+                ncpus_current = 0
+                for _i in range(len(ncpus_total)-1, max(len(ncpus_total)-5, -1), -1):
+                    if ncpus_total[_i] > 0:
+                        ncpus_current = ncpus_total[_i]; break
+                ngpus_current = 0
+                if ngpus_total:
+                    for _i in range(len(ngpus_total)-1, max(len(ngpus_total)-5, -1), -1):
+                        if ngpus_total[_i] > 0:
+                            ngpus_current = ngpus_total[_i]; break
+                # Snapshot has ~1 point/min; grab last ~24h (1440 pts) and downsample to ~48 points
+                tail = min(1440, len(ncpus_total))
+                step = max(1, tail // 48)
+                ncpus_24h = ncpus_total[-tail::step]
+                ngpus_24h = ngpus_total[-tail::step] if ngpus_total else []
                 results.append((qos, ncpus_current, ngpus_current, ncpus_24h, ngpus_24h, ncpus_thresh, ngpus_thresh, has_gpu))
         except Exception:
             pass
-    return results
+    return results, last_updated
 
 
 def _fetch_entertainment():
@@ -2178,10 +2240,10 @@ def generate_dashboard_html(target_date=None):
                     flo = round(wr["daily"]["temperature_2m_min"][fi])
                     fc = wr["daily"]["weather_code"][fi]
                     _, femoji = wmo_weather.get(fc, ("", "🌤️"))
-                    weather_html += f"""<div style="flex:1; min-width:70px; padding:8px; background:rgba(255,255,255,0.06); border-radius:10px; text-align:center;">
-                      <div style="font-size:18px;">{femoji}</div>
-                      <div style="font-size:11px; font-weight:600; color:rgba(255,255,255,0.7);">{fdate}</div>
-                      <div style="font-size:13px; color:#a29bfe; font-weight:600;">{fhi}°/{flo}°</div>
+                    weather_html += f"""<div style="flex:1; min-width:70px; padding:10px; background:rgba(255,255,255,0.06); border-radius:10px; text-align:center;">
+                      <div style="font-size:26px;">{femoji}</div>
+                      <div style="font-size:13px; font-weight:600; color:rgba(255,255,255,0.7);">{fdate}</div>
+                      <div style="font-size:17px; color:#a29bfe; font-weight:600;">{fhi}°/{flo}°</div>
                     </div>"""
                 weather_html += "</div></div>"
 
@@ -2212,12 +2274,12 @@ def generate_dashboard_html(target_date=None):
                         hprec = h_precip[hi] if hi < len(h_precip) else 0
                         hws = round(h_wind[hi]) if hi < len(h_wind) else 0
                         prec_tag = f'<div style="font-size:8px; color:#74b9ff;">{round(hprec)}%</div>' if hprec and hprec > 0 else ''
-                        hourly_items += f'''<div style="min-width:48px; padding:6px 4px; text-align:center; flex-shrink:0;">
-                          <div style="font-size:9px; color:rgba(255,255,255,0.45); font-weight:600;">{hr_label}</div>
-                          <div style="font-size:16px; margin:2px 0;">{hemoji}</div>
+                        hourly_items += f'''<div style="min-width:52px; padding:6px 4px; text-align:center; flex-shrink:0;">
+                          <div style="font-size:10px; color:rgba(255,255,255,0.45); font-weight:600;">{hr_label}</div>
+                          <div style="font-size:22px; margin:2px 0;">{hemoji}</div>
                           {prec_tag}
-                          <div style="font-size:12px; font-weight:600; color:rgba(255,255,255,0.85);">{htemp}°</div>
-                          <div style="font-size:8px; color:rgba(255,255,255,0.3);">{hws}mph</div>
+                          <div style="font-size:13px; font-weight:600; color:rgba(255,255,255,0.85);">{htemp}°</div>
+                          <div style="font-size:9px; color:rgba(255,255,255,0.3);">{hws}mph</div>
                         </div>'''
                     # Temp sparkline for 24h
                     h_temp_slice = [h_temps[i] for i in range(start_idx, min(start_idx + 24, len(h_temps)))]
@@ -2254,7 +2316,18 @@ def generate_dashboard_html(target_date=None):
     pg_title, pg_url, pg_text, pg_essays = _fetch_pg_essay(td)
 
     # HiPerGator usage
-    hpc_data = _fetch_hpc()
+    hpc_data, hpc_updated_raw = _fetch_hpc()
+    hpc_updated_fmt = ""
+    if hpc_updated_raw:
+        try:
+            from datetime import datetime as _dt
+            import re as _re2
+            # Fix timezone offset: -0400 → -04:00 for fromisoformat
+            _fixed = _re2.sub(r'([+-]\d{2})(\d{2})$', r'\1:\2', hpc_updated_raw)
+            _hpc_ts = _dt.fromisoformat(_fixed)
+            hpc_updated_fmt = _hpc_ts.strftime("%-I:%M %p")
+        except Exception:
+            hpc_updated_fmt = hpc_updated_raw[:16]
 
     # Background — YouTube aerial video IDs (muted, looped, no controls)
     aerial_videos = [
@@ -2324,6 +2397,105 @@ def generate_dashboard_html(target_date=None):
         ("1GIG2SFlAPM", "Great Barrier Reef 4K Drone"),
         # --- Grand Canyon ---
         ("4Y8eHOp9ah4", "Grand Canyon by Drone 4K"),
+        # --- Apple TV / macOS Sonoma Screensavers ---
+        ("2DDfL6uOUOw", "Apple TV · Flying Over Shaikh Zaid Road Dubai"),
+        ("33LrIL2jsO8", "Apple TV · Far Out 4hr 4K"),
+        ("_7vUD0QzLs8", "Apple TV · Over Northern China toward Korea"),
+        ("8IGpCHVQu4I", "Apple TV · Over Yosemite National Park"),
+        ("4lyrOQpviZY", "Apple TV · Central Park New York"),
+        ("fOZAK-0ZFuA", "Apple TV · Iceland Landscape 4K"),
+        ("y0dYqbYkqAw", "Apple TV · Yosemite National Park 4K"),
+        ("kRrnR5bsqh8", "Apple TV · Iceland Landscape to Sky Snow 4K"),
+        ("xXeNCjACEPY", "Apple TV · WWDC23 Apple Logo"),
+        ("m2RWBs7KtlE", "Apple TV · Palau Jellyfish Ballet"),
+        ("_wzOzMB_7cw", "Apple TV · California Kelp Forest Underwater"),
+        ("i_ykeAE-aTo", "Apple TV · Barracuda Battery Underwater"),
+        ("jOcyh0BrQOY", "Apple TV · Los Angeles Airport Cityscape 4K"),
+        ("k5F3FdpPFgE", "Apple TV · London Evening Flyover"),
+        ("1nJ35CXmOC8", "Apple TV · Los Angeles Sunset Cityscape"),
+        ("VQHlFpWqh5Y", "Apple TV · Dubai Skyline Drone 4K"),
+        ("0dMP-WIiaEs", "Apple TV · Sonoma Horizon"),
+        ("SCgPjb3-W4I", "Apple TV · Sonoma Clouds"),
+        ("brxH36Se9mg", "Apple TV · Sonoma Evening"),
+        ("Qw4zFYlgeXU", "Apple TV · Sonoma River"),
+        ("tDoZJ3aKp28", "Apple TV · California Wildflowers"),
+        ("M0o5xB0QqTs", "Apple TV · Oregon Sunset Landscape"),
+        ("rGbbhEi9a2A", "Apple TV · Captivating Oregon Coastline"),
+        ("EyrS2hN3dGY", "Apple TV · Utah Evening"),
+        ("0KZpNO3TqcQ", "Apple TV · Utah Monument Valley"),
+        ("qTl2KWHg7E8", "Apple TV · Utah Cathedral Canyon"),
+        ("pIh_teWB6qI", "Apple TV · Utah Factory Butte"),
+        ("QEJ38Uxtwks", "Apple TV · Utah Lake Powell"),
+        ("mnzRlq0E6gE", "Apple TV · Utah Olympia Bar"),
+        ("_bg2rmR3bBE", "Apple TV · Grand Canyon Evening"),
+        ("DB0QQFFqJ2s", "Apple TV · Grand Canyon Sediment"),
+        ("Xvlvh-nEJ7U", "Apple TV · Grand Canyon Sunset Splendor"),
+        ("Ga2d6iG6w8Y", "Apple TV · Arizona Coal Mine Canyon"),
+        ("_fLz5a3yCK8", "Apple TV · California Temblor Range"),
+        ("iemO_vyViQA", "Apple TV · California Carrizo Plain"),
+        ("QabXLfEHKIw", "Apple TV · Redwoods From Above"),
+        ("odTsAdzWbdc", "Apple TV · Redwoods River Serene"),
+        ("BRN5_p1Sp2s", "Apple TV · Hawaiian Valley Serenity"),
+        ("HDR8O3PVHTE", "Apple TV · Hawaii Coastline"),
+        ("QNHiFR-XNkQ", "Apple TV · Hawaii Dark Clouds"),
+        ("Ocig-YX1erc", "Apple TV · Tahiti Waves Mist"),
+        ("iEGqyHTObIQ", "Apple TV · Patagonia Lake Tranquility"),
+        ("b9S3vIGVmpQ", "Apple TV · Patagonia River Landscapes"),
+        ("rzlNJ2B9rCk", "Apple TV · Icelandic Coastline Serenity"),
+        ("EZu4qcxSjzc", "Apple TV · Icelandic Lake Reflections"),
+        ("gay1MXagJPQ", "Apple TV · Icelandic Riverbed Serenity"),
+        ("CZyGGGcPzWw", "Apple TV · Icelandic Fjord Exploration"),
+        ("7KeJXMB3rWQ", "Apple TV · Greenland Glacier Snow"),
+        ("S28gXu3AAZw", "Apple TV · Greenland Tranquil Evening"),
+        ("3DUHlmZc8vU", "Apple TV · Fjord From Above"),
+        ("lNVbulZdNDI", "Apple TV · China Mountain Cliffs"),
+        ("tRhERyMsb6Q", "Apple TV · China Silhouette Elegance"),
+        ("nDDBDl2o_7Y", "Apple TV · China Paddy Field Beauty"),
+        ("BNOv4e7JsGQ", "Apple TV · Great Wall of China"),
+        ("TeRPBNdKH5w", "Apple TV · Great Wall of China Daylight"),
+        ("OTa_i_IIGRw", "Apple TV · Flying Over Hong Kong Skyline"),
+        ("vlwQNLVTOqE", "Apple TV · Hong Kong at Night"),
+        ("W88q50t1-mA", "Apple TV · Hong Kong Horizon Cityscape"),
+        ("lSpYLG87c_Q", "Apple TV · Flying Over New York at Night"),
+        ("SZiXmtlJ5B4", "Apple TV · New York Midtown Cityscape"),
+        ("Mvpy5-pal3U", "Apple TV · Flying by Hollywood Sign LA"),
+        ("qEk1SdjvhXI", "Apple TV · San Francisco at Night"),
+        ("M_azCfuFeAE", "Apple TV · San Francisco Fog"),
+        ("sDQgk9xlFxU", "Apple TV · San Francisco Ferry Building"),
+        ("4FemBZfe4uY", "Apple TV · San Francisco Ferry Building New"),
+        ("Qe_ITuAhikQ", "Apple TV · Fly-by Golden Gate Bridge"),
+        ("-kvR5DHjf2g", "Apple TV · Night in Burj Khalifa Dubai"),
+        ("H6x9Vo-j-g8", "Apple TV · Dubai Creek Harbour"),
+        ("XwgKXJwJ4og", "Apple TV · Dubai Creek Old Dubai"),
+        ("ng0SF4oaGfE", "Apple TV · London Skyline"),
+        ("i0_OIFAoiBo", "Apple TV · Los Angeles at Night"),
+        ("kVOjy6qKXS0", "Apple TV · Africa from Above"),
+        ("8eEBzCuuqhM", "Apple TV · South Africa / Red Sea Coral"),
+        ("WNA8jDc2Ewg", "Apple TV · West Africa Earth"),
+        ("iOKf8dSnJA8", "Apple TV · North Africa Earth"),
+        ("m7YkeOYtrKg", "Apple TV · East Asia Earth"),
+        ("LBhZdTRj-g4", "Apple TV · North Atlantic"),
+        ("o7AKfPoMcV0", "Apple TV · Middle Eastern Tapestry Earth"),
+        ("PFWpuFhZNDI", "Apple TV · Caribbean Dreamscape Earth"),
+        ("cSsB_7qIB6U", "Apple TV · Caribbean Sea Earth"),
+        ("Qf6s2vr_oh4", "Apple TV · Southern Europe Midnight"),
+        ("UTCeMwFPZLQ", "Apple TV · Space View China at Night"),
+        ("-pU8niIVazo", "Apple TV · Earth Caribbean Islands"),
+        ("vzdWCEs7b1Q", "Apple TV · Earth Australia"),
+        ("UzLaaSEhEdw", "Apple TV · Earth California"),
+        ("ZIux5d_AodI", "Apple TV · Earth Southern California"),
+        ("fLXhx_dWNhk", "Apple TV · Earth Europe Night"),
+        ("TOOuAEahgq8", "Apple TV · Palau Jellyfish Blue Underwater"),
+        ("Zde6DJpRUkI", "Apple TV · Alaskan Jellyfish Dark Underwater"),
+        ("YKbVobKw_SY", "Apple TV · Alaskan Jellyfish Light Underwater"),
+        ("bLQJ0kUJmOI", "Apple TV · Jack School Underwater Ballet"),
+        ("HGXqb0I_4DU", "Apple TV · Kelp Dark Mystique Underwater"),
+        ("OCN63pIirAg", "Apple TV · Bumpheads Underwater"),
+        ("TsQIMbmudJA", "Apple TV · California Dolphin Pod Underwater"),
+        ("G5ZKcG7AJdU", "Apple TV · Cownose Rays Underwater"),
+        ("2-Gw44GymkE", "Apple TV · Grey Reef Sharks Underwater"),
+        ("7xQYpisKF6o", "Apple TV · Sea Stars Underwater"),
+        ("183PAc9ibWc", "Apple TV · Seal Pod Underwater Odyssey"),
     ]
     video_idx = td.timetuple().tm_yday % len(aerial_videos)
     video_id = aerial_videos[video_idx][0]
@@ -2368,10 +2540,12 @@ def generate_dashboard_html(target_date=None):
             time_str += f"–{fmt_time(parse_time(end))}"
         # ISO datetime for JS countdown (e.g. "2026-03-31T14:00")
         start_iso = f"{td.isoformat()}T{parsed_start.strftime('%H:%M')}" if parsed_start else ""
+        parsed_end = parse_time(end) if end else None
+        end_iso = f"{td.isoformat()}T{parsed_end.strftime('%H:%M')}" if parsed_end else ""
 
         loc_raw = ev.get("location", "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
         events_html += f"""
-          <div class="ev-row" data-start="{start_iso}" data-location="{loc_raw}" style="display:flex; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+          <div class="ev-row" data-start="{start_iso}" data-end="{end_iso}" data-location="{loc_raw}" style="display:flex; align-items:center; padding:7px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
             <div style="min-width:100px; color:#a29bfe; font-weight:600; font-size:13px; font-variant-numeric:tabular-nums;">{time_str}</div>
             <div class="ev-title" style="flex:1; color:rgba(255,255,255,0.92); font-size:14px;">{title}</div>
             <div class="ev-countdown" style="display:none; color:#ff6b6b; font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; min-width:50px; text-align:right; animation:blink 1s step-end infinite;"></div>
@@ -2414,7 +2588,7 @@ def generate_dashboard_html(target_date=None):
     cal_end_hour = 21
     cal_hours = cal_end_hour - cal_start_hour
     hour_px = 44
-    cal_num_days = 7  # generate 7 days, show 4 at a time
+    cal_num_days = 14  # generate 14 days, show 4 at a time (adjustable)
 
     # Time gutter labels
     time_gutter = ""
@@ -2433,7 +2607,7 @@ def generate_dashboard_html(target_date=None):
         _, day_mins = calc_free_time(day_evts, config, date=d)
         week_total_free += day_mins
         is_td = (d == td)
-        vis = "flex:1; min-width:0;" if i < 4 else "flex:1; min-width:0; display:none;"
+        vis = "flex:1; min-width:0;" if i < 2 else "flex:1; min-width:0; display:none;"
 
         # JS label data
         cal_day_labels_js.append(f'"{d.strftime("%b %-d")}"')
@@ -2514,7 +2688,7 @@ def generate_dashboard_html(target_date=None):
                 </div></div>'''
 
         col_bg = "background:rgba(162,155,254,0.04);" if is_td else ""
-        col_vis = "" if i < 4 else "display:none;"
+        col_vis = "" if i < 2 else "display:none;"
         day_columns += f'<div class="cal-col" data-day="{i}" style="flex:1; min-width:0; position:relative; {col_bg} border-left:1px solid rgba(255,255,255,0.04); {col_vis}">{grid_lines}{event_blocks}</div>'
 
     week_free_hours = week_total_free / 60
@@ -2848,7 +3022,7 @@ def generate_dashboard_html(target_date=None):
   /* ── Ambient left side ── */
   .ambient {{
     position: fixed; bottom: 50px; left: 50px; z-index:2;
-    max-width: 500px;
+    max-width: 720px;
     text-shadow: 0 2px 20px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
   }}
   /* ── Panels right side ── */
@@ -2884,7 +3058,7 @@ def generate_dashboard_html(target_date=None):
   .nbtn {{
     background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.1);
     color:rgba(255,255,255,0.6); width:26px; height:26px; border-radius:7px;
-    cursor:pointer; font-size:11px; display:inline-flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:11px; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;
   }}
   .nbtn:hover {{ background:rgba(162,155,254,0.3); color:#fff; }}
   .reorder-btn {{
@@ -2893,6 +3067,32 @@ def generate_dashboard_html(target_date=None):
     cursor:pointer; font-size:14px; align-items:center; justify-content:center; margin-left:auto;
   }}
   .reorder-btn:active {{ background:rgba(162,155,254,0.4); color:#fff; }}
+  #notepad-area {{
+    width:100%; box-sizing:border-box; background:rgba(255,255,255,0.04);
+    border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:rgba(255,255,255,0.85);
+    font-family:'JetBrains Mono',monospace; font-size:13px; padding:10px 12px;
+    resize:none; outline:none; transition:border-color 0.2s;
+    flex:1 1 auto; min-height:120px;
+  }}
+  [data-wid="notepad"] {{ display:flex; flex-direction:column; overflow:hidden !important; }}
+  #notepad-area:focus {{ border-color:rgba(162,155,254,0.5); }}
+  #notepad-area::placeholder {{ color:rgba(255,255,255,0.25); }}
+  #notepad-status {{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:6px; font-family:'JetBrains Mono',monospace; font-size:11px;
+    color:rgba(255,255,255,0.35);
+  }}
+  #notepad-status > span {{ display:flex; align-items:center; gap:5px; }}
+  .sync-dot {{
+    display:inline-block; width:6px; height:6px; border-radius:50%;
+    background:#ffeaa7; transition:background 0.3s;
+  }}
+  #notepad-mic.mic-on {{ background:rgba(255,71,87,0.4); border-color:rgba(255,71,87,0.6); color:#ff4757; animation:mic-pulse 1s infinite; }}
+  #notepad-tts.tts-on {{ background:rgba(85,239,196,0.3); border-color:rgba(85,239,196,0.5); color:#55efc4; }}
+  @keyframes mic-pulse {{ 0%,100% {{ opacity:1; }} 50% {{ opacity:0.5; }} }}
+  .sync-dot.synced {{ background:#55efc4; }}
+  .sync-dot.saving {{ background:#ffeaa7; }}
+  .sync-dot.error {{ background:#ff7675; }}
   .drag.dragging {{ position:fixed; z-index:100; cursor:grabbing; box-shadow:0 12px 48px rgba(0,0,0,0.5); transition:none; }}
   .drag-handle:active {{ cursor:grabbing; }}
   .glass .resize-h {{
@@ -2928,9 +3128,12 @@ def generate_dashboard_html(target_date=None):
     width:8px; height:8px; border-right:2px solid rgba(255,255,255,0.25); border-bottom:2px solid rgba(255,255,255,0.25);
     border-radius:0 0 2px 0;
   }}
-  .snap-guide {{
-    position:fixed; background:rgba(162,155,254,0.4); z-index:999; pointer-events:none;
+  .col-guide {{
+    position:fixed; border-left:2px dashed rgba(162,155,254,0.25);
+    top:0; bottom:0; z-index:99; pointer-events:none;
+    transition:border-color 0.15s;
   }}
+  .col-guide.active {{ border-color:rgba(162,155,254,0.6); }}
   @keyframes blink {{
     0%, 100% {{ opacity:1; }}
     50% {{ opacity:0.3; }}
@@ -2956,20 +3159,20 @@ def generate_dashboard_html(target_date=None):
   }}
   #big-countdown .cd-time {{
     font-family:'JetBrains Mono',monospace;
-    font-size:min(20vw, 200px); font-weight:700; letter-spacing:-4px;
-    color:#fff; text-shadow:0 0 60px rgba(255,80,80,0.6), 0 0 120px rgba(255,60,60,0.3);
+    font-size:min(30vw, 340px); font-weight:700; letter-spacing:-6px;
+    color:#fff; text-shadow:0 0 80px rgba(255,80,80,0.6), 0 0 160px rgba(255,60,60,0.3);
     line-height:1;
   }}
   #big-countdown .cd-label {{
     font-family:'JetBrains Mono',monospace;
-    font-size:min(3vw, 28px); font-weight:500;
-    color:rgba(255,255,255,0.6); margin-top:12px;
+    font-size:min(4vw, 42px); font-weight:500;
+    color:rgba(255,255,255,0.6); margin-top:16px;
     max-width:80vw; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }}
   #big-countdown .cd-location {{
     font-family:'JetBrains Mono',monospace;
-    font-size:min(2.5vw, 22px); font-weight:400;
-    color:rgba(255,255,255,0.45); margin-top:8px;
+    font-size:min(3vw, 32px); font-weight:400;
+    color:rgba(255,255,255,0.45); margin-top:10px;
     max-width:80vw; text-align:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }}
   #big-countdown .cd-location a {{
@@ -3017,42 +3220,80 @@ def generate_dashboard_html(target_date=None):
     .reorder-btn {{ display:inline-flex !important; }}
     #vid-select {{ display:none !important; }}
     #grid-btn {{ display:none !important; }}
-    #clock {{ font-size:48px !important; }}
+    .desktop-only {{ display:none !important; }}
+    #clock {{ font-size:42px !important; letter-spacing:-1px !important; }}
+    .ambient {{ padding:16px 14px 12px !important; }}
+    .ambient .drag-handle > div:last-child {{ font-size:16px !important; margin-top:2px !important; }}
+    #w-block {{ margin-top:12px !important; gap:8px !important; }}
+    #w-emoji {{ font-size:28px !important; }}
+    #w-temp {{ font-size:22px !important; }}
+    #w-desc {{ font-size:13px !important; }}
+    #w-hilo {{ font-size:12px !important; margin-top:1px !important; }}
+    .ambient div[style*="max-width:630px"] {{ margin-top:14px !important; }}
+    .ambient div[style*="max-width:630px"] > div:first-child {{ font-size:14px !important; line-height:1.4 !important; }}
+    .ambient div[style*="max-width:630px"] > div:last-child {{ font-size:12px !important; margin-top:3px !important; }}
+    #last-updated {{ font-size:10px !important; }}
+    .ambient button {{ font-size:10px !important; padding:3px 10px !important; }}
+    #now-meeting {{ margin-top:10px !important; padding:8px 12px !important; }}
+    #now-meeting > div:first-child {{ font-size:9px !important; }}
+    #now-meeting-title {{ font-size:14px !important; }}
+    #now-meeting-link {{ font-size:13px !important; }}
+    #now-meeting-remaining {{ font-size:11px !important; }}
     #big-countdown .cd-time {{ font-size:min(15vw,120px) !important; }}
     #big-countdown .cd-label {{ font-size:min(3.5vw,18px) !important; }}
     #big-countdown .cd-location {{ font-size:min(3vw,16px) !important; }}
   }}
 </style>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script>
+  firebase.initializeApp({{
+    apiKey: "AIzaSyDjN9Cx0HvLjYqvt6deDB837tu5pTQptIo",
+    databaseURL: "https://dashboard-46d6b-default-rtdb.firebaseio.com"
+  }});
+</script>
 </head>
 <body>
 
-<!-- Video background -->
-<div class="video-bg">
-  <iframe src="https://www.youtube.com/embed/{video_id}?autoplay=1&mute=1&loop=1&playlist={video_id}&controls=0&showinfo=0&modestbranding=1&rel=0&disablekb=1&fs=0&iv_load_policy=3&start=30"
-    frameborder="0" allow="autoplay; encrypted-media" loading="lazy"></iframe>
-  <img src="{fallback_img}" alt="" style="z-index:-1;">
-</div>
+<!-- Video background (desktop only — mobile skips iframe+img for fast load) -->
+<div class="video-bg" id="video-bg"></div>
 <div class="overlay"></div>
+<script>
+if (window.innerWidth > 768) {{
+  var vbg = document.getElementById('video-bg');
+  vbg.innerHTML = '<iframe src="https://www.youtube.com/embed/{video_id}?autoplay=1&mute=1&loop=1&playlist={video_id}&controls=0&showinfo=0&modestbranding=1&rel=0&disablekb=1&fs=0&iv_load_policy=3&start=30" frameborder="0" allow="autoplay; encrypted-media" loading="lazy"></iframe><img src="{fallback_img}" alt="" style="z-index:-1;">';
+}}
+</script>
 
 <!-- ═══ Ambient left: clock, date, weather, quote ═══ -->
 <div class="ambient drag" data-wid="ambient">
   <div class="drag-handle" style="cursor:grab;">
-    <div id="clock" style="font-size:72px; font-weight:300; letter-spacing:-2px; line-height:1;">{now().strftime("%-I:%M")}</div>
-    <div style="font-size:20px; font-weight:400; color:rgba(255,255,255,0.75); margin-top:4px;">{td.strftime("%A, %B %-d, %Y")}</div>
+    <div id="clock" style="font-size:108px; font-weight:300; letter-spacing:-3px; line-height:1;">{now().strftime("%-I:%M")}</div>
+    <div style="font-size:30px; font-weight:400; color:rgba(255,255,255,0.75); margin-top:6px;">{td.strftime("%A, %B %-d, %Y")}</div>
+  </div>
+  <div id="now-meeting" style="display:none; margin-top:16px; padding:12px 18px; background:rgba(85,239,196,0.08); border:1px solid rgba(85,239,196,0.2); border-radius:12px; max-width:630px;">
+    <div style="font-family:'JetBrains Mono',monospace; font-size:13px; color:#55efc4; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;">&#9679; Now in progress</div>
+    <div id="now-meeting-title" style="font-size:22px; font-weight:600; color:rgba(255,255,255,0.9);"></div>
+    <div id="now-meeting-link" style="font-size:20px; margin-top:6px;"></div>
+    <div id="now-meeting-remaining" style="font-family:'JetBrains Mono',monospace; font-size:16px; color:rgba(255,255,255,0.4); margin-top:6px;"></div>
   </div>
 
-  {"" if not w_temp else f'''<div id="w-block" style="display:flex; align-items:center; gap:10px; margin-top:18px;">
-    <span id="w-emoji" style="font-size:36px;">{w_emoji}</span>
+  {"" if not w_temp else f'''<div id="w-block" style="display:flex; align-items:center; gap:14px; margin-top:24px;">
+    <span id="w-emoji" style="font-size:54px;">{w_emoji}</span>
     <div>
-      <span id="w-temp" style="font-size:28px; font-weight:600;">{w_temp}°F</span>
-      <span id="w-desc" style="font-size:15px; color:rgba(255,255,255,0.6); margin-left:8px;">{w_desc}</span>
+      <span id="w-temp" style="font-size:42px; font-weight:600;">{w_temp}°F</span>
+      <span id="w-desc" style="font-size:22px; color:rgba(255,255,255,0.6); margin-left:10px;">{w_desc}</span>
     </div>
   </div>
-  <div id="w-hilo" style="font-size:13px; color:rgba(255,255,255,0.4); margin-top:2px;">H:{w_hi}° L:{w_lo}° · {location}</div>'''}
+  <div id="w-hilo" style="font-size:20px; color:rgba(255,255,255,0.4); margin-top:3px;">H:{w_hi}° L:{w_lo}° · {location}</div>'''}
 
-  <div style="margin-top:24px; max-width:420px;">
-    <div style="font-size:16px; font-weight:400; color:rgba(255,255,255,0.7); line-height:1.5; font-style:italic;">"{quote_text}"</div>
-    <div style="font-size:13px; color:rgba(255,255,255,0.35); margin-top:4px;">— {quote_author}</div>
+  <div style="margin-top:32px; max-width:630px;">
+    <div style="font-size:24px; font-weight:400; color:rgba(255,255,255,0.7); line-height:1.5; font-style:italic;">"{quote_text}"</div>
+    <div style="font-size:20px; color:rgba(255,255,255,0.35); margin-top:6px;">— {quote_author}</div>
+  </div>
+  <div style="margin-top:16px; display:flex; align-items:center; gap:10px;">
+    <span id="last-updated" style="font-family:'JetBrains Mono',monospace; font-size:15px; color:rgba(255,255,255,0.25); letter-spacing:0.05em;"></span>
+    <button onclick="location.reload()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:rgba(255,255,255,0.4); font-family:'JetBrains Mono',monospace; font-size:14px; padding:5px 14px; border-radius:8px; cursor:pointer; letter-spacing:0.05em; text-transform:uppercase; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.15)';this.style.color='rgba(255,255,255,0.7)';" onmouseout="this.style.background='rgba(255,255,255,0.08)';this.style.color='rgba(255,255,255,0.4)';">&#8635; Refresh</button>
   </div>
 </div>
 
@@ -3101,7 +3342,9 @@ def generate_dashboard_html(target_date=None):
   <div class="glass drag" data-wid="hpc" style="padding:12px 16px;">
     <div class="stitle drag-handle" style="color:#06b6d4; cursor:grab;">
       &#128421; HIPERGATOR
-      <button onclick="toggleHPC()" class="nbtn" style="margin-left:auto; font-size:9px;" id="hpc-btn" title="Expand/collapse">−</button>{_rb}
+      <span id="hpc-updated" style="font-size:9px; color:rgba(255,255,255,0.3); font-weight:400; margin-left:6px;">{"Updated " + hpc_updated_fmt if hpc_updated_fmt else ""}</span>
+      <button onclick="refreshHPC()" class="nbtn" style="margin-left:auto; font-size:9px;" id="hpc-refresh-btn" title="Refresh data">&#8635;</button>
+      <button onclick="toggleHPC()" class="nbtn" style="font-size:9px;" id="hpc-btn" title="Expand/collapse">−</button>{_rb}
     </div>
     <div id="hpc-compact" style="display:none;">{hpc_compact_html}</div>
     <div id="hpc-full">{hpc_expanded_html}</div>
@@ -3155,6 +3398,10 @@ def generate_dashboard_html(target_date=None):
       <div class="stitle drag-handle" style="color:#a29bfe; margin-bottom:0; cursor:grab;">&#128197; <span id="cal-range"></span></div>
       <div style="display:flex; gap:4px; align-items:center;">
         <span style="font-family:'JetBrains Mono',monospace; font-size:10px; color:rgba(255,255,255,0.3);">{week_free_hours:.1f}h</span>
+        <button class="nbtn" onclick="calDays(-1)" title="Show fewer days" style="font-size:11px; padding:2px 5px;">−</button>
+        <span id="cal-days-count" style="font-family:'JetBrains Mono',monospace; font-size:9px; color:rgba(255,255,255,0.35); min-width:14px; text-align:center;"></span>
+        <button class="nbtn" onclick="calDays(1)" title="Show more days" style="font-size:11px; padding:2px 5px;">+</button>
+        <span style="width:4px;"></span>
         <button class="nbtn" onclick="calNav(-1)">&#9664;</button>
         <button class="nbtn" onclick="calNav(1)">&#9654;</button>{_rb}
       </div>
@@ -3195,6 +3442,19 @@ def generate_dashboard_html(target_date=None):
     <div class="stitle drag-handle" style="color:#74b9ff; cursor:grab;">&#9881; PROJECTS · {len(active)}{_rb_first}</div>
     {projects_html}
   </div>'''}
+
+  <!-- Notepad -->
+  <div class="glass drag" data-wid="notepad" style="padding:12px 16px; display:flex; flex-direction:column; min-height:280px;">
+    <div class="stitle drag-handle" style="color:#81ecec; cursor:grab;">&#128221; NOTEPAD
+      <button id="notepad-tts" class="nbtn" style="margin-left:auto;" title="Read aloud incoming text">&#128263;</button>
+      <button id="notepad-mic" class="nbtn" title="Voice input">&#127908;</button>
+    </div>
+    <textarea id="notepad-area" placeholder="Type anything... syncs across devices" spellcheck="false"></textarea>
+    <div id="notepad-status">
+      <span><span class="sync-dot" id="notepad-dot"></span><span id="notepad-sync-text">Connecting...</span></span>
+      <span id="notepad-timestamp"></span>
+    </div>
+  </div>
 
   <!-- Hourly Weather -->
   {hourly_html}
@@ -3242,6 +3502,13 @@ def generate_dashboard_html(target_date=None):
     onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
     onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
     title="Auto-grid layout">&#9638;</button>
+  <button id="split-btn" onclick="autoGridSplit()" style="width:36px; height:36px; border-radius:50%;
+    background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:16px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;"
+    onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
+    onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
+    title="Split grid layout (halves left, fulls right)">&#9707;</button>
   <button onclick="resetWidgets()" style="width:36px; height:36px; border-radius:50%;
     background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
     border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:14px;
@@ -3249,10 +3516,46 @@ def generate_dashboard_html(target_date=None):
     onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
     onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
     title="Reset widget positions">&#8634;</button>
+  <span style="width:1px; height:20px; background:rgba(255,255,255,0.1); margin:0 2px;" class="desktop-only"></span>
+  <span class="desktop-only" style="font-size:8px; font-family:'JetBrains Mono',monospace; color:rgba(255,255,255,0.25); margin-right:2px; line-height:1.2; text-align:right;">LAYOUTS<br><span style="color:rgba(255,255,255,0.18);">shift=save</span></span>
+  <button id="slot-1" onclick="onLayoutSlot(1,event)" style="width:28px; height:28px; border-radius:50%;
+    background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:11px;
+    font-family:'JetBrains Mono',monospace;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;"
+    onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
+    onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
+    title="Load layout 1 (Shift+click to save)" class="desktop-only">1</button>
+  <button id="slot-2" onclick="onLayoutSlot(2,event)" style="width:28px; height:28px; border-radius:50%;
+    background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:11px;
+    font-family:'JetBrains Mono',monospace;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;"
+    onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
+    onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
+    title="Load layout 2 (Shift+click to save)" class="desktop-only">2</button>
+  <button id="slot-3" onclick="onLayoutSlot(3,event)" style="width:28px; height:28px; border-radius:50%;
+    background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:11px;
+    font-family:'JetBrains Mono',monospace;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;"
+    onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
+    onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
+    title="Load layout 3 (Shift+click to save)" class="desktop-only">3</button>
 </div>
 
 <script>
 (function() {{
+  // ── Last-updated timestamp ──
+  (function() {{
+    var d = new Date();
+    var h = d.getHours() % 12 || 12;
+    var m = String(d.getMinutes()).padStart(2, '0');
+    var ampm = d.getHours() >= 12 ? 'pm' : 'am';
+    var el = document.getElementById('last-updated');
+    if (el) el.textContent = 'Last updated ' + h + ':' + m + ampm;
+  }})();
+
   // ── Live clock ──
   var countdownActive = false;
   function updateClock() {{
@@ -3362,8 +3665,52 @@ def generate_dashboard_html(target_date=None):
       updateClock();
     }}
   }}
+
+  // ── In-progress meeting indicator near clock ──
+  var nowMtg = document.getElementById('now-meeting');
+  var nowMtgTitle = document.getElementById('now-meeting-title');
+  var nowMtgLink = document.getElementById('now-meeting-link');
+  var nowMtgRemaining = document.getElementById('now-meeting-remaining');
+  function updateNowMeeting() {{
+    var now = new Date();
+    var active = null;
+    document.querySelectorAll('.ev-row[data-start]').forEach(function(row) {{
+      var s = row.dataset.start, e = row.dataset.end;
+      if (!s || !e) return;
+      var start = new Date(s), end = new Date(e);
+      if (now >= start && now < end) {{
+        var titleEl = row.querySelector('.ev-title');
+        var title = titleEl ? titleEl.textContent : '';
+        var loc = row.dataset.location || '';
+        var remaining = end - now;
+        if (!active || start > new Date(active.start)) {{
+          active = {{ title: title, loc: loc, start: s, end: end, remaining: remaining }};
+        }}
+      }}
+    }});
+    if (active) {{
+      nowMtg.style.display = '';
+      nowMtgTitle.textContent = active.title;
+      var mins = Math.floor(active.remaining / 60000);
+      var secs = Math.floor((active.remaining % 60000) / 1000);
+      nowMtgRemaining.textContent = mins + ':' + String(secs).padStart(2, '0') + ' remaining';
+      if (active.loc && /^https?:\/\//i.test(active.loc)) {{
+        var lbl = /zoom\.us/i.test(active.loc) ? 'Zoom' : /meet\.google/i.test(active.loc) ? 'Meet' : /teams\.microsoft/i.test(active.loc) ? 'Teams' : 'Link';
+        nowMtgLink.innerHTML = '<a href="' + active.loc + '" target="_blank" style="color:#a29bfe; text-decoration:underline; pointer-events:auto;">' + lbl + ' — Join Meeting</a>';
+      }} else if (active.loc) {{
+        nowMtgLink.textContent = active.loc;
+      }} else {{
+        nowMtgLink.innerHTML = '';
+      }}
+    }} else {{
+      nowMtg.style.display = 'none';
+    }}
+  }}
+
   updateCountdowns();
+  updateNowMeeting();
   setInterval(updateCountdowns, 1000);
+  setInterval(updateNowMeeting, 1000);
 
   // ── Auto-reload page every 5 min for fresh data ──
   // (meta refresh handles this, but as backup)
@@ -3411,7 +3758,8 @@ def generate_dashboard_html(target_date=None):
   // ── Calendar navigation ──
   var calLabels = [{cal_labels_js}];
   var calStart = 0;
-  var calShow = 4;
+  var calShow = 2;
+  try {{ var _cs = parseInt(localStorage.getItem('lori-cal-days')); if (_cs >= 1 && _cs <= {cal_num_days}) calShow = _cs; }} catch(e) {{}}
   var calTotal = {cal_num_days};
 
   function updateCal() {{
@@ -3421,6 +3769,8 @@ def generate_dashboard_html(target_date=None):
     }});
     var r = document.getElementById('cal-range');
     if (r) r.textContent = calLabels[calStart] + ' – ' + calLabels[Math.min(calStart + calShow - 1, calTotal - 1)];
+    var dc = document.getElementById('cal-days-count');
+    if (dc) dc.textContent = calShow + 'd';
   }}
   updateCal();
 
@@ -3428,8 +3778,48 @@ def generate_dashboard_html(target_date=None):
     calStart = Math.max(0, Math.min(calTotal - calShow, calStart + dir));
     updateCal();
   }};
+  window.calDays = function(dir) {{
+    calShow = Math.max(1, Math.min(calTotal, calShow + dir));
+    calStart = Math.max(0, Math.min(calTotal - calShow, calStart));
+    try {{ localStorage.setItem('lori-cal-days', calShow); }} catch(e) {{}}
+    updateCal();
+  }};
 
-  // ── Toggle expand/collapse helpers ──
+  // ── Current time red bar in calendar ──
+  var CAL_START_H = {cal_start_hour}, CAL_HOURS = {cal_hours};
+  function updateTimeBar() {{
+    var now = new Date();
+    var mins = now.getHours() * 60 + now.getMinutes() - CAL_START_H * 60;
+    var totalMins = CAL_HOURS * 60;
+    // Find today's column (data-day="0")
+    var col = document.querySelector('.cal-col[data-day="0"]');
+    if (!col) return;
+    var bar = document.getElementById('cal-now-bar');
+    if (mins < 0 || mins > totalMins) {{
+      if (bar) bar.style.display = 'none';
+      return;
+    }}
+    var pct = mins / totalMins * 100;
+    if (!bar) {{
+      bar = document.createElement('div');
+      bar.id = 'cal-now-bar';
+      bar.style.cssText = 'position:absolute; left:0; right:0; height:2px; background:#ff4757; z-index:10; pointer-events:none;';
+      // Red dot on left edge
+      var dot = document.createElement('div');
+      dot.style.cssText = 'position:absolute; left:-4px; top:-3px; width:8px; height:8px; background:#ff4757; border-radius:50%;';
+      bar.appendChild(dot);
+      col.appendChild(bar);
+    }}
+    bar.style.display = '';
+    bar.style.top = pct.toFixed(2) + '%';
+  }}
+  updateTimeBar();
+  setInterval(updateTimeBar, 30000);
+
+  // ── Toggle expand/collapse helpers with persistence ──
+  var TOGGLE_KEY = 'lori-toggle-states';
+  function _loadToggles() {{ try {{ return JSON.parse(localStorage.getItem(TOGGLE_KEY)) || {{}}; }} catch(e) {{ return {{}}; }} }}
+  function _saveToggle(id, expanded) {{ try {{ var s = _loadToggles(); s[id] = expanded; localStorage.setItem(TOGGLE_KEY, JSON.stringify(s)); }} catch(e) {{}} }}
   function _toggle(compactId, fullId, btnId) {{
     var c = document.getElementById(compactId);
     var f = document.getElementById(fullId);
@@ -3439,15 +3829,131 @@ def generate_dashboard_html(target_date=None):
       c.style.display = 'none';
       f.style.display = '';
       if (b) b.textContent = '−';
+      _saveToggle(fullId, true);
     }} else {{
       c.style.display = '';
       f.style.display = 'none';
       if (b) b.textContent = '+';
+      _saveToggle(fullId, false);
     }}
   }}
+  // Restore saved toggle states on load
+  (function() {{
+    var saved = _loadToggles();
+    Object.keys(saved).forEach(function(fullId) {{
+      var f = document.getElementById(fullId);
+      if (!f) return;
+      var compactId = fullId.replace('-full', '-compact');
+      var btnId = fullId.replace('-full', '-btn');
+      var c = document.getElementById(compactId);
+      var b = document.getElementById(btnId);
+      if (!c) return;
+      if (saved[fullId]) {{
+        c.style.display = 'none';
+        f.style.display = '';
+        if (b) b.textContent = '−';
+      }} else {{
+        c.style.display = '';
+        f.style.display = 'none';
+        if (b) b.textContent = '+';
+      }}
+    }});
+  }})()
   window.toggleNews = function() {{ _toggle('news-compact', 'news-full', 'news-btn'); }};
   window.toggleStocks = function() {{ _toggle('stocks-compact', 'stocks-full', 'stocks-btn'); }};
   window.toggleHPC = function() {{ _toggle('hpc-compact', 'hpc-full', 'hpc-btn'); }};
+
+  // ── HPC live refresh ──
+  window.refreshHPC = function() {{
+    var btn = document.getElementById('hpc-refresh-btn');
+    if (btn) btn.textContent = '...';
+    var urls = [
+      'https://sgnoohc.github.io/hpg_librarian/data_avery.json',
+      'https://sgnoohc.github.io/hpg_librarian/data_avery-b.json'
+    ];
+    Promise.all(urls.map(function(u) {{ return fetch(u).then(function(r) {{ return r.json(); }}); }}))
+      .then(function(jsons) {{
+        var compactH = '', expandedH = '', lastUp = '';
+        jsons.forEach(function(data, idx) {{
+          var qos = idx === 0 ? 'avery' : 'avery-b';
+          var hasGpu = idx === 0;
+          var obs = data.observables_snapshot || {{}};
+          var thr = data.thresholds || {{}};
+          var ncT = thr.NCPUS || 0, ngT = thr.NGPUS || 0;
+          if (hasGpu && ngT === 0) hasGpu = false;
+          var lu = (data.metadata || {{}}).last_updated || '';
+          if (lu > lastUp) lastUp = lu;
+          // Sum per-user NCPUS from snapshot
+          var ncUsers = obs.NCPUS || {{}};
+          var n = 0, ncTot = [];
+          for (var u in ncUsers) {{ n = ncUsers[u].length; break; }}
+          for (var i = 0; i < n; i++) ncTot.push(0);
+          for (var u in ncUsers) {{ var v = ncUsers[u]; for (var i = 0; i < v.length; i++) if (v[i] != null) ncTot[i] += v[i]; }}
+          var ngTot = [];
+          if (hasGpu) {{
+            var ngUsers = obs.NGPUS || {{}};
+            for (var i = 0; i < n; i++) ngTot.push(0);
+            for (var u in ngUsers) {{ var v = ngUsers[u]; for (var i = 0; i < v.length; i++) if (v[i] != null) ngTot[i] += v[i]; }}
+          }}
+          // Last snapshot can be 0 (partial); walk back to find last real value
+          var ncCur = 0;
+          for (var j = ncTot.length-1; j >= Math.max(0, ncTot.length-5); j--) {{ if (ncTot[j] > 0) {{ ncCur = ncTot[j]; break; }} }}
+          var ngCur = 0;
+          if (ngTot.length) {{ for (var j = ngTot.length-1; j >= Math.max(0, ngTot.length-5); j--) {{ if (ngTot[j] > 0) {{ ngCur = ngTot[j]; break; }} }} }}
+          // Snapshot has ~1pt/min; grab last ~24h (1440 pts), downsample to ~48
+          var tail = Math.min(1440, ncTot.length);
+          var step = Math.max(1, Math.floor(tail / 48));
+          var nc24 = [], ng24 = [];
+          for (var i = ncTot.length - tail; i < ncTot.length; i += step) nc24.push(ncTot[i]);
+          if (ngTot.length) {{ for (var i = ngTot.length - tail; i < ngTot.length; i += step) ng24.push(ngTot[i]); }}
+          function hpcColor(val, th) {{
+            if (th === 0) return 'rgba(255,255,255,0.6)';
+            var r = val / th;
+            return r > 0.8 ? '#ff6b6b' : r > 0.5 ? '#f0c040' : '#55efc4';
+          }}
+          function spark(vals) {{
+            if (!vals || vals.length < 2) return '';
+            var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
+            var rng = mx !== mn ? mx - mn : 1, w = 100, h = 24;
+            var pts = vals.map(function(v, i) {{
+              return (i / (vals.length-1) * w).toFixed(1) + ',' + (h - (v - mn) / rng * (h-2) - 1).toFixed(1);
+            }});
+            var col = vals[vals.length-1] >= vals[0] ? '#55efc4' : '#ff6b6b';
+            return '<svg width="'+w+'" height="'+h+'" viewBox="0 0 '+w+' '+h+'" style="vertical-align:middle;" xmlns="http://www.w3.org/2000/svg"><polyline points="'+pts.join(' ')+'" fill="none" stroke="'+col+'" stroke-width="1.5"/></svg>';
+          }}
+          var cpuC = hpcColor(ncCur, ncT);
+          var cpuRow = '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;"><span style="color:rgba(255,255,255,0.6);font-size:12px;">'+qos+' CPU</span><span style="font-size:12px;"><span style="color:'+cpuC+';font-weight:600;">'+Math.round(ncCur)+'</span><span style="color:rgba(255,255,255,0.35);"> / '+Math.round(ncT)+'</span></span></div>';
+          compactH += cpuRow;
+          expandedH += cpuRow;
+          var cs = spark(nc24);
+          if (cs) expandedH += '<div style="padding:0 0 4px 0;">'+cs+'</div>';
+          if (hasGpu) {{
+            var gpuC = hpcColor(ngCur, ngT);
+            var gpuRow = '<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;"><span style="color:rgba(255,255,255,0.6);font-size:12px;">'+qos+' GPU</span><span style="font-size:12px;"><span style="color:'+gpuC+';font-weight:600;">'+Math.round(ngCur)+'</span><span style="color:rgba(255,255,255,0.35);"> / '+Math.round(ngT)+'</span></span></div>';
+            compactH += gpuRow;
+            expandedH += gpuRow;
+            var gs = spark(ng24);
+            if (gs) expandedH += '<div style="padding:0 0 4px 0;">'+gs+'</div>';
+          }}
+        }});
+        var ce = document.getElementById('hpc-compact');
+        var fe = document.getElementById('hpc-full');
+        if (ce) ce.innerHTML = compactH;
+        if (fe) fe.innerHTML = expandedH;
+        var upEl = document.getElementById('hpc-updated');
+        if (upEl && lastUp) {{
+          try {{
+            var d = new Date(lastUp);
+            var h = d.getHours(), m = d.getMinutes();
+            var ampm = h >= 12 ? 'PM' : 'AM';
+            h = h % 12 || 12;
+            upEl.textContent = 'Updated ' + h + ':' + (m < 10 ? '0' : '') + m + ' ' + ampm;
+          }} catch(e) {{ upEl.textContent = 'Updated ' + lastUp.slice(0,16); }}
+        }}
+      }})
+      .catch(function(e) {{ console.error('HPC refresh failed', e); }})
+      .finally(function() {{ if (btn) btn.textContent = '\\u21BB'; }});
+  }};
   window.togglePolPol = function() {{ _toggle('polpol-compact', 'polpol-full', 'polpol-btn'); }};
   window.togglePolTrend = function() {{ _toggle('poltrend-compact', 'poltrend-full', 'poltrend-btn'); }};
   window.toggleEnt = function() {{ _toggle('ent-compact', 'ent-full', 'ent-btn'); }};
@@ -3529,9 +4035,45 @@ def generate_dashboard_html(target_date=None):
 
   window.resetWidgets = function() {{
     localStorage.removeItem(STORE_KEY);
-    localStorage.removeItem('lori-hidden-panels');
     localStorage.removeItem('lori-panel-order');
+    localStorage.removeItem('lori-cal-days');
+    localStorage.removeItem('lori-toggle-states');
     location.reload();
+  }};
+
+  // ── Layout slots (save/load 1-3) ──
+  var LAYOUT_KEY = 'lori-layout-slot-';
+  window.saveLayoutSlot = function(n) {{
+    var data = {{
+      pos: loadPositions(),
+      hidden: JSON.parse(localStorage.getItem('lori-hidden-panels') || '[]'),
+      widths: JSON.parse(localStorage.getItem('lori-panel-widths') || '{{}}')
+    }};
+    try {{ localStorage.setItem(LAYOUT_KEY + n, JSON.stringify(data)); }} catch(e) {{}}
+    var btn = document.getElementById('slot-' + n);
+    if (btn) {{ btn.style.borderColor = 'rgba(162,155,254,0.7)'; setTimeout(function() {{ btn.style.borderColor = ''; }}, 600); }}
+    // Flash a save toast
+    var toast = document.createElement('div');
+    toast.textContent = 'Layout ' + n + ' saved';
+    toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(162,155,254,0.85);color:#fff;padding:6px 16px;border-radius:8px;font-family:JetBrains Mono,monospace;font-size:12px;z-index:10000;pointer-events:none;transition:opacity 0.4s;';
+    document.body.appendChild(toast);
+    setTimeout(function(){{ toast.style.opacity='0'; }}, 800);
+    setTimeout(function(){{ toast.remove(); }}, 1200);
+  }};
+  window.loadLayoutSlot = function(n) {{
+    try {{
+      var raw = localStorage.getItem(LAYOUT_KEY + n);
+      if (!raw) return;
+      var data = JSON.parse(raw);
+      if (data.pos) savePositions(data.pos);
+      if (data.hidden) localStorage.setItem('lori-hidden-panels', JSON.stringify(data.hidden));
+      if (data.widths) localStorage.setItem('lori-panel-widths', JSON.stringify(data.widths));
+      location.reload();
+    }} catch(e) {{}}
+  }};
+  window.onLayoutSlot = function(n, e) {{
+    if (e.shiftKey) {{ saveLayoutSlot(n); }}
+    else {{ loadLayoutSlot(n); }}
   }};
 
   // ── Panel visibility toggle ──
@@ -3541,12 +4083,21 @@ def generate_dashboard_html(target_date=None):
     'poly-politics':'Poly · Politics', 'poly-trending':'Poly · Trending',
     news:'Headlines', science:'Science', calendar:'Week Calendar',
     entertainment:'Entertainment', essay:'Paul Graham', projects:'Projects',
-    forecast:'Weather', 'hourly-weather':'Hourly Weather'
+    forecast:'Weather', 'hourly-weather':'Hourly Weather', notepad:'Notepad'
   }};
 
+  var DEFAULT_VISIBLE = ['today','hpc','news','calendar','hourly-weather','forecast','notepad'];
   function loadHidden() {{
-    try {{ return JSON.parse(localStorage.getItem(HIDDEN_KEY)) || []; }}
-    catch(e) {{ return []; }}
+    try {{
+      var raw = localStorage.getItem(HIDDEN_KEY);
+      if (raw !== null) return JSON.parse(raw) || [];
+      // First visit: hide everything not in DEFAULT_VISIBLE
+      var allWids = [];
+      document.querySelectorAll('.panels .glass[data-wid]').forEach(function(el) {{ allWids.push(el.dataset.wid); }});
+      var h = allWids.filter(function(w) {{ return DEFAULT_VISIBLE.indexOf(w) === -1; }});
+      saveHidden(h);
+      return h;
+    }} catch(e) {{ return []; }}
   }}
   function saveHidden(arr) {{
     try {{ localStorage.setItem(HIDDEN_KEY, JSON.stringify(arr)); }} catch(e) {{}}
@@ -3587,6 +4138,24 @@ def generate_dashboard_html(target_date=None):
       }});
       lbl.appendChild(cb);
       lbl.appendChild(document.createTextNode(WIDGET_NAMES[wid] || wid));
+      // Half-width toggle
+      var halfCb = document.createElement('input');
+      halfCb.type = 'checkbox';
+      halfCb.checked = isHalfWidth(wid);
+      halfCb.title = 'Half width';
+      halfCb.style.cssText = 'margin-left:auto; cursor:pointer;';
+      halfCb.addEventListener('change', (function(w, hcb) {{ return function() {{
+        var widths = loadWidths();
+        widths[w] = hcb.checked ? 1 : 0;
+        saveWidths(widths);
+        autoGridLayout();
+      }}; }})(wid, halfCb));
+      var halfLbl = document.createElement('span');
+      halfLbl.textContent = '½';
+      halfLbl.style.cssText = 'margin-left:4px; font-size:0.85em; opacity:0.6;';
+      lbl.style.cssText = 'display:flex; align-items:center;';
+      lbl.appendChild(halfCb);
+      lbl.appendChild(halfLbl);
       menu.appendChild(lbl);
     }});
   }}
@@ -3607,6 +4176,13 @@ def generate_dashboard_html(target_date=None):
     }}
   }});
 
+  // ── Panel width preferences (localStorage) ──
+  var WIDTH_KEY = 'lori-panel-widths';
+  var DEFAULT_HALF = {{hpc:1, projects:1, forecast:1, tasks:1}};
+  function loadWidths() {{ try {{ return JSON.parse(localStorage.getItem(WIDTH_KEY)) || {{}}; }} catch(e) {{ return {{}}; }} }}
+  function saveWidths(obj) {{ try {{ localStorage.setItem(WIDTH_KEY, JSON.stringify(obj)); }} catch(e) {{}} }}
+  function isHalfWidth(wid) {{ var w = loadWidths(); return w.hasOwnProperty(wid) ? !!w[wid] : !!DEFAULT_HALF[wid]; }}
+
   // ── Auto-grid layout ──
   window.autoGridLayout = function() {{
     if (window.innerWidth <= 768) return;
@@ -3622,6 +4198,7 @@ def generate_dashboard_html(target_date=None):
     var cols = Math.max(2, Math.min(4, Math.floor(usableW / 330)));
     var gap = 10;
     var cardW = (usableW - (cols - 1) * gap) / cols;
+    var halfW = (cardW - gap) / 2;
     var pos = loadPositions();
     // Get each panel's preferred height: saved manual resize > scrollHeight
     var heights = [];
@@ -3635,54 +4212,202 @@ def generate_dashboard_html(target_date=None):
       var contentH = el.scrollHeight;
       el.style.height = origH;
       el.style.overflow = origOv;
-      // Use saved height if user has resized, otherwise use content height
-      heights.push(savedH > 0 ? savedH : contentH);
+      // Use saved height if user has resized, otherwise use content height + padding
+      heights.push(savedH > 0 ? savedH : contentH + 28);
     }});
-    // Scale heights proportionally to fill viewport
-    var totalH = 0;
-    heights.forEach(function(h) {{ totalH += h; }});
-    var usableH = vh - 40;
-    // Place panels column by column using a height tracker per column
-    var colTops = [];
-    for (var c = 0; c < cols; c++) colTops.push(20);
+    // Cap each height to viewport minus padding, with a minimum
+    var maxH = vh - 40;
+    heights = heights.map(function(h) {{ return Math.max(80, Math.min(h, maxH)); }});
+    // Place panels in DOM order (priority), filling right-to-left
     var colHeights = [];
     for (var c = 0; c < cols; c++) colHeights.push(0);
-    // Sort panels by height descending (tallest first) for better packing
-    var indices = panels.map(function(_, i) {{ return i; }});
-    indices.sort(function(a, b) {{ return heights[b] - heights[a]; }});
-    // First pass: place into columns to balance total height
     var colPanels = [];
     for (var c = 0; c < cols; c++) colPanels.push([]);
-    indices.forEach(function(i) {{
-      var minCol = 0;
-      for (var c = 1; c < cols; c++) {{
-        if (colHeights[c] < colHeights[minCol]) minCol = c;
+    panels.forEach(function(_, i) {{
+      var minCol = cols - 1;
+      for (var c = cols - 2; c >= 0; c--) {{
+        if (colHeights[c] < colHeights[minCol] - 10) minCol = c;
       }}
       colPanels[minCol].push(i);
-      colHeights[minCol] += heights[i];
+      colHeights[minCol] += heights[i] + gap;
     }});
-    // Second pass: scale each column's panels to fill viewport height
+    // Place panels — half-width panels get paired side-by-side when adjacent
     colPanels.forEach(function(idxs, col) {{
       if (!idxs.length) return;
-      var colTotal = 0;
-      idxs.forEach(function(i) {{ colTotal += heights[i]; }});
-      var availH = usableH - (idxs.length - 1) * gap;
       var y = 20;
-      idxs.forEach(function(i) {{
+      var x = leftOffset + col * (cardW + gap);
+      var j = 0;
+      while (j < idxs.length) {{
+        var i = idxs[j];
         var el = panels[i];
-        var h = Math.max(80, Math.round(heights[i] / colTotal * availH));
-        var x = leftOffset + col * (cardW + gap);
+        var wid = el.dataset.wid;
+        var isHalf = isHalfWidth(wid);
+        // Try to pair two adjacent half-width panels side-by-side
+        if (isHalf && j + 1 < idxs.length && isHalfWidth(panels[idxs[j+1]].dataset.wid)) {{
+          var i2 = idxs[j+1];
+          var el2 = panels[i2];
+          var h = Math.max(heights[i], heights[i2]);
+          el.style.position = 'fixed';
+          el.style.left = x + 'px';
+          el.style.top = y + 'px';
+          el.style.width = halfW + 'px';
+          el.style.height = h + 'px';
+          el.style.overflow = 'auto';
+          el.style.zIndex = '50';
+          el.style.margin = '0';
+          pos[wid] = {{ x: x, y: y, w: halfW, h: h }};
+          el2.style.position = 'fixed';
+          el2.style.left = (x + halfW + gap) + 'px';
+          el2.style.top = y + 'px';
+          el2.style.width = halfW + 'px';
+          el2.style.height = h + 'px';
+          el2.style.overflow = 'auto';
+          el2.style.zIndex = '50';
+          el2.style.margin = '0';
+          pos[el2.dataset.wid] = {{ x: x + halfW + gap, y: y, w: halfW, h: h }};
+          y += h + gap;
+          j += 2;
+        }} else if (isHalf) {{
+          var h = heights[i];
+          el.style.position = 'fixed';
+          el.style.left = x + 'px';
+          el.style.top = y + 'px';
+          el.style.width = halfW + 'px';
+          el.style.height = h + 'px';
+          el.style.overflow = 'auto';
+          el.style.zIndex = '50';
+          el.style.margin = '0';
+          pos[wid] = {{ x: x, y: y, w: halfW, h: h }};
+          y += h + gap;
+          j++;
+        }} else {{
+          var h = heights[i];
+          el.style.position = 'fixed';
+          el.style.left = x + 'px';
+          el.style.top = y + 'px';
+          el.style.width = cardW + 'px';
+          el.style.height = h + 'px';
+          el.style.overflow = 'auto';
+          el.style.zIndex = '50';
+          el.style.margin = '0';
+          pos[wid] = {{ x: x, y: y, w: cardW, h: h }};
+          y += h + gap;
+          j++;
+        }}
+      }}
+    }});
+    savePositions(pos);
+  }};
+
+  // ── Split grid layout (halves left, fulls right) ──
+  window.autoGridSplit = function() {{
+    if (window.innerWidth <= 768) return;
+    var hidden = loadHidden();
+    var allPanels = [];
+    document.querySelectorAll('.panels .glass[data-wid]').forEach(function(el) {{
+      if (hidden.indexOf(el.dataset.wid) === -1 && el.style.display !== 'none') allPanels.push(el);
+    }});
+    if (!allPanels.length) return;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var leftOffset = Math.max(vw * 0.35, 500);
+    var usableW = vw - leftOffset - 20;
+    var gap = 10;
+    // One column width for the left zone
+    var leftColW = Math.max(330, Math.floor(usableW / Math.max(2, Math.min(4, Math.floor(usableW / 330)))));
+    var halfW = (leftColW - gap) / 2;
+    var pos = loadPositions();
+    var maxH = vh - 40;
+    // Separate into halves and fulls, preserving DOM order
+    var halves = [], fulls = [];
+    allPanels.forEach(function(el) {{
+      if (isHalfWidth(el.dataset.wid)) halves.push(el);
+      else fulls.push(el);
+    }});
+    // Measure heights for all panels
+    function measureH(el) {{
+      var wid = el.dataset.wid;
+      var savedH = pos[wid] && pos[wid].h ? pos[wid].h : 0;
+      var origH = el.style.height, origOv = el.style.overflow;
+      el.style.height = 'auto';
+      el.style.overflow = 'visible';
+      var contentH = el.scrollHeight;
+      el.style.height = origH;
+      el.style.overflow = origOv;
+      var h = savedH > 0 ? savedH : contentH + 28;
+      return Math.max(80, Math.min(h, maxH));
+    }}
+    // ── Left zone: half-width panels paired 2-up ──
+    var leftX = leftOffset;
+    var leftY = 20;
+    for (var i = 0; i < halves.length; i += 2) {{
+      var el = halves[i];
+      var wid = el.dataset.wid;
+      var h1 = measureH(el);
+      if (i + 1 < halves.length) {{
+        var el2 = halves[i + 1];
+        var wid2 = el2.dataset.wid;
+        var h2 = measureH(el2);
+        var h = Math.max(h1, h2);
         el.style.position = 'fixed';
-        el.style.left = x + 'px';
-        el.style.top = y + 'px';
-        el.style.width = cardW + 'px';
+        el.style.left = leftX + 'px';
+        el.style.top = leftY + 'px';
+        el.style.width = halfW + 'px';
         el.style.height = h + 'px';
         el.style.overflow = 'auto';
         el.style.zIndex = '50';
         el.style.margin = '0';
-        pos[el.dataset.wid] = {{ x: x, y: y, w: cardW, h: h }};
-        y += h + gap;
-      }});
+        pos[wid] = {{ x: leftX, y: leftY, w: halfW, h: h }};
+        el2.style.position = 'fixed';
+        el2.style.left = (leftX + halfW + gap) + 'px';
+        el2.style.top = leftY + 'px';
+        el2.style.width = halfW + 'px';
+        el2.style.height = h + 'px';
+        el2.style.overflow = 'auto';
+        el2.style.zIndex = '50';
+        el2.style.margin = '0';
+        pos[wid2] = {{ x: leftX + halfW + gap, y: leftY, w: halfW, h: h }};
+        leftY += h + gap;
+      }} else {{
+        // Odd remaining half-panel
+        el.style.position = 'fixed';
+        el.style.left = leftX + 'px';
+        el.style.top = leftY + 'px';
+        el.style.width = halfW + 'px';
+        el.style.height = h1 + 'px';
+        el.style.overflow = 'auto';
+        el.style.zIndex = '50';
+        el.style.margin = '0';
+        pos[wid] = {{ x: leftX, y: leftY, w: halfW, h: h1 }};
+        leftY += h1 + gap;
+      }}
+    }}
+    // ── Right zone: full-width panels ──
+    var rightX = leftOffset + leftColW + gap;
+    var rightUsableW = vw - rightX - 20;
+    var rightCols = Math.max(1, Math.floor(rightUsableW / 330));
+    var rightCardW = (rightUsableW - (rightCols - 1) * gap) / rightCols;
+    var rightColH = [];
+    for (var c = 0; c < rightCols; c++) rightColH.push(0);
+    fulls.forEach(function(el) {{
+      var wid = el.dataset.wid;
+      var h = measureH(el);
+      // Find shortest column (prefer rightmost on tie)
+      var minCol = rightCols - 1;
+      for (var c = rightCols - 2; c >= 0; c--) {{
+        if (rightColH[c] < rightColH[minCol] - 10) minCol = c;
+      }}
+      var x = rightX + minCol * (rightCardW + gap);
+      var y = 20 + rightColH[minCol];
+      el.style.position = 'fixed';
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+      el.style.width = rightCardW + 'px';
+      el.style.height = h + 'px';
+      el.style.overflow = 'auto';
+      el.style.zIndex = '50';
+      el.style.margin = '0';
+      pos[wid] = {{ x: x, y: y, w: rightCardW, h: h }};
+      rightColH[minCol] += h + gap;
     }});
     savePositions(pos);
   }};
@@ -3703,6 +4428,14 @@ def generate_dashboard_html(target_date=None):
 
   // Apply hidden panel state
   applyHiddenState();
+
+  // Mark layout slot buttons that have saved data
+  [1,2,3].forEach(function(n) {{
+    var btn = document.getElementById('slot-' + n);
+    if (btn && localStorage.getItem(LAYOUT_KEY + n)) {{
+      btn.style.borderColor = 'rgba(162,155,254,0.35)';
+    }}
+  }});
 
   // Drag logic
   var dragEl = null, dragOffX = 0, dragOffY = 0;
@@ -3727,77 +4460,210 @@ def generate_dashboard_html(target_date=None):
     panel.style.zIndex = '100';
     panel.style.margin = '0';
     panel.classList.add('dragging');
+    showColumnGuides();
   }});
 
-  // ── Snap logic ──
-  var SNAP_DIST = 12;
-  var snapGuides = [];
-  function clearGuides() {{
-    snapGuides.forEach(function(g) {{ g.remove(); }});
-    snapGuides = [];
+  // ── Column-snap system ──
+  var colGuideEls = [];
+  var colData = [];
+  var activeColIdx = -1;
+
+  function computeColumns() {{
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var leftOffset = Math.max(vw * 0.35, 500);
+    var usableW = vw - leftOffset - 20;
+    var cols = Math.max(2, Math.min(4, Math.floor(usableW / 330)));
+    var gap = 10;
+    var cardW = (usableW - (cols - 1) * gap) / cols;
+    var result = [];
+    for (var c = 0; c < cols; c++) {{
+      result.push({{ x: leftOffset + c * (cardW + gap), w: cardW }});
+    }}
+    return result;
   }}
-  function addGuide(x, y, w, h) {{
-    var g = document.createElement('div');
-    g.className = 'snap-guide';
-    g.style.left = x + 'px'; g.style.top = y + 'px';
-    g.style.width = w + 'px'; g.style.height = h + 'px';
-    document.body.appendChild(g);
-    snapGuides.push(g);
+
+  function findSnapColumn(cx) {{
+    if (!colData.length) return -1;
+    var best = 0, bestDist = 1e9;
+    for (var i = 0; i < colData.length; i++) {{
+      var mid = colData[i].x + colData[i].w / 2;
+      var d = Math.abs(cx - mid);
+      if (d < bestDist) {{ bestDist = d; best = i; }}
+    }}
+    return best;
   }}
-  function snapPosition(el, newX, newY) {{
-    clearGuides();
-    var others = document.querySelectorAll('.drag[data-wid]');
-    var elW = el.getBoundingClientRect().width;
-    var elH = el.getBoundingClientRect().height;
-    var snappedX = newX, snappedY = newY;
-    others.forEach(function(o) {{
-      if (o === el || o.style.position !== 'fixed') return;
-      var r = o.getBoundingClientRect();
-      // Snap left edges
-      if (Math.abs(newX - r.left) < SNAP_DIST) {{ snappedX = r.left; addGuide(r.left, 0, 1, window.innerHeight); }}
-      // Snap right edges
-      if (Math.abs(newX + elW - (r.left + r.width)) < SNAP_DIST) {{ snappedX = r.left + r.width - elW; addGuide(r.left + r.width, 0, 1, window.innerHeight); }}
-      // Snap left to right
-      if (Math.abs(newX - (r.left + r.width)) < SNAP_DIST) {{ snappedX = r.left + r.width; addGuide(r.left + r.width, 0, 1, window.innerHeight); }}
-      // Snap right to left
-      if (Math.abs(newX + elW - r.left) < SNAP_DIST) {{ snappedX = r.left - elW; addGuide(r.left, 0, 1, window.innerHeight); }}
-      // Snap top edges
-      if (Math.abs(newY - r.top) < SNAP_DIST) {{ snappedY = r.top; addGuide(0, r.top, window.innerWidth, 1); }}
-      // Snap bottom edges
-      if (Math.abs(newY + elH - (r.top + r.height)) < SNAP_DIST) {{ snappedY = r.top + r.height - elH; addGuide(0, r.top + r.height, window.innerWidth, 1); }}
-      // Snap top to bottom
-      if (Math.abs(newY - (r.top + r.height)) < SNAP_DIST) {{ snappedY = r.top + r.height; addGuide(0, r.top + r.height, window.innerWidth, 1); }}
+
+  function showColumnGuides() {{
+    removeColumnGuides();
+    colData = computeColumns();
+    activeColIdx = -1;
+    colData.forEach(function(col) {{
+      var el = document.createElement('div');
+      el.className = 'col-guide';
+      el.style.left = col.x + 'px';
+      el.style.width = col.w + 'px';
+      el.style.borderRight = '2px dashed rgba(162,155,254,0.25)';
+      document.body.appendChild(el);
+      colGuideEls.push(el);
     }});
-    // Snap to viewport edges
-    if (Math.abs(newX) < SNAP_DIST) {{ snappedX = 0; }}
-    if (Math.abs(newY) < SNAP_DIST) {{ snappedY = 0; }}
-    if (Math.abs(newX + elW - window.innerWidth) < SNAP_DIST) {{ snappedX = window.innerWidth - elW; }}
-    if (Math.abs(newY + elH - window.innerHeight) < SNAP_DIST) {{ snappedY = window.innerHeight - elH; }}
-    return {{x: snappedX, y: snappedY}};
+  }}
+
+  function removeColumnGuides() {{
+    colGuideEls.forEach(function(el) {{ el.remove(); }});
+    colGuideEls = [];
+    colData = [];
+    activeColIdx = -1;
+  }}
+
+  function highlightColumn(cx) {{
+    var idx = findSnapColumn(cx);
+    if (idx !== activeColIdx) {{
+      colGuideEls.forEach(function(el) {{ el.classList.remove('active'); }});
+      if (idx >= 0 && colGuideEls[idx]) colGuideEls[idx].classList.add('active');
+      activeColIdx = idx;
+    }}
+  }}
+
+  function getColumnStack(colIdx, excludeEl) {{
+    if (colIdx < 0 || colIdx >= colData.length) return [];
+    var col = colData[colIdx];
+    var pos = loadPositions();
+    var hidden = loadHidden();
+    var stack = [];
+    document.querySelectorAll('.panels .glass[data-wid]').forEach(function(el) {{
+      if (el === excludeEl) return;
+      if (hidden.indexOf(el.dataset.wid) !== -1 || el.style.display === 'none') return;
+      var p = pos[el.dataset.wid];
+      if (!p) return;
+      // Panel belongs to this column if its x overlaps the column's x range
+      var px = p.x, pw = p.w || parseInt(el.style.width) || col.w;
+      if (px < col.x + col.w && px + pw > col.x) {{
+        stack.push({{ el: el, y: p.y, h: p.h || parseInt(el.style.height) || 200 }});
+      }}
+    }});
+    stack.sort(function(a, b) {{ return a.y - b.y; }});
+    return stack;
+  }}
+
+  function findInsertY(colIdx, cursorY, excludeEl) {{
+    var stack = getColumnStack(colIdx, excludeEl);
+    var gap = 10, topPad = 20;
+    if (!stack.length) return topPad;
+    // Above first panel?
+    if (cursorY < stack[0].y + stack[0].h / 2) return topPad;
+    // Between or after panels — insert after the one whose midpoint is above cursor
+    var insertAfter = stack[stack.length - 1];
+    for (var i = 0; i < stack.length - 1; i++) {{
+      var mid = stack[i].y + stack[i].h / 2;
+      var midNext = stack[i+1].y + stack[i+1].h / 2;
+      if (cursorY >= mid && cursorY < midNext) {{
+        insertAfter = stack[i];
+        break;
+      }}
+    }}
+    return insertAfter.y + insertAfter.h + gap;
+  }}
+
+  function reflowColumn(colIdx) {{
+    if (colIdx < 0 || colIdx >= colData.length) return;
+    var col = colData[colIdx];
+    var stack = getColumnStack(colIdx, null);
+    var gap = 10, y = 20;
+    var halfW = (col.w - gap) / 2;
+    var pos = loadPositions();
+    var j = 0;
+    while (j < stack.length) {{
+      var item = stack[j];
+      var wid = item.el.dataset.wid;
+      var half = isHalfWidth(wid);
+      // Pair two consecutive half-width panels side-by-side
+      if (half && j + 1 < stack.length && isHalfWidth(stack[j+1].el.dataset.wid)) {{
+        var item2 = stack[j+1];
+        var wid2 = item2.el.dataset.wid;
+        var h = Math.max(item.h, item2.h);
+        item.el.style.left = col.x + 'px';
+        item.el.style.top = y + 'px';
+        item.el.style.width = halfW + 'px';
+        item.el.style.height = h + 'px';
+        item.el.style.overflow = 'auto';
+        pos[wid] = {{ x: col.x, y: y, w: halfW, h: h }};
+        item2.el.style.left = (col.x + halfW + gap) + 'px';
+        item2.el.style.top = y + 'px';
+        item2.el.style.width = halfW + 'px';
+        item2.el.style.height = h + 'px';
+        item2.el.style.overflow = 'auto';
+        pos[wid2] = {{ x: col.x + halfW + gap, y: y, w: halfW, h: h }};
+        y += h + gap;
+        j += 2;
+      }} else if (half) {{
+        // Lone half-width panel
+        item.el.style.left = col.x + 'px';
+        item.el.style.top = y + 'px';
+        item.el.style.width = halfW + 'px';
+        pos[wid] = {{ x: col.x, y: y, w: halfW, h: item.h }};
+        y += item.h + gap;
+        j++;
+      }} else {{
+        // Full-width panel
+        item.el.style.left = col.x + 'px';
+        item.el.style.top = y + 'px';
+        item.el.style.width = col.w + 'px';
+        pos[wid] = {{ x: col.x, y: y, w: col.w, h: item.h }};
+        y += item.h + gap;
+        j++;
+      }}
+    }}
+    savePositions(pos);
   }}
 
   document.addEventListener('mousemove', function(e) {{
     if (!dragEl) return;
     e.preventDefault();
-    var raw = snapPosition(dragEl, e.clientX - dragOffX, e.clientY - dragOffY);
-    dragEl.style.left = raw.x + 'px';
-    dragEl.style.top = raw.y + 'px';
+    dragEl.style.left = (e.clientX - dragOffX) + 'px';
+    dragEl.style.top = (e.clientY - dragOffY) + 'px';
+    highlightColumn(e.clientX);
   }});
 
   document.addEventListener('mouseup', function(e) {{
     if (!dragEl) return;
     dragEl.classList.remove('dragging');
     dragEl.style.zIndex = '50';
-    clearGuides();
     var wid = dragEl.dataset.wid;
+    // Remember source column before snap
+    var srcColIdx = -1;
+    var pos = loadPositions();
+    if (pos[wid]) {{
+      colData = colData.length ? colData : computeColumns();
+      srcColIdx = findSnapColumn(pos[wid].x + (pos[wid].w || 0) / 2);
+    }}
+    var targetColIdx = activeColIdx;
+    if (targetColIdx >= 0 && colData[targetColIdx]) {{
+      var col = colData[targetColIdx];
+      var gap = 10;
+      var half = isHalfWidth(wid);
+      var w = half ? (col.w - gap) / 2 : col.w;
+      var insertY = findInsertY(targetColIdx, e.clientY, dragEl);
+      dragEl.style.left = col.x + 'px';
+      dragEl.style.top = insertY + 'px';
+      dragEl.style.width = w + 'px';
+      dragEl.style.overflow = 'auto';
+    }}
+    removeColumnGuides();
     if (wid) {{
-      var pos = loadPositions();
+      pos = loadPositions();
       pos[wid] = {{
         x: parseInt(dragEl.style.left),
         y: parseInt(dragEl.style.top),
-        w: parseInt(dragEl.style.width)
+        w: parseInt(dragEl.style.width),
+        h: parseInt(dragEl.style.height) || 0
       }};
       savePositions(pos);
+      // Reflow target column + source column
+      if (targetColIdx >= 0) {{
+        colData = computeColumns();
+        reflowColumn(targetColIdx);
+        if (srcColIdx >= 0 && srcColIdx !== targetColIdx) reflowColumn(srcColIdx);
+      }}
     }}
     dragEl = null;
   }});
@@ -3822,31 +4688,60 @@ def generate_dashboard_html(target_date=None):
     panel.style.zIndex = '100';
     panel.style.margin = '0';
     panel.classList.add('dragging');
+    showColumnGuides();
   }}, {{passive: false}});
 
   document.addEventListener('touchmove', function(e) {{
     if (!dragEl) return;
     e.preventDefault();
     var touch = e.touches[0];
-    var raw = snapPosition(dragEl, touch.clientX - dragOffX, touch.clientY - dragOffY);
-    dragEl.style.left = raw.x + 'px';
-    dragEl.style.top = raw.y + 'px';
+    dragEl.style.left = (touch.clientX - dragOffX) + 'px';
+    dragEl.style.top = (touch.clientY - dragOffY) + 'px';
+    highlightColumn(touch.clientX);
   }}, {{passive: false}});
 
   document.addEventListener('touchend', function(e) {{
     if (!dragEl) return;
     dragEl.classList.remove('dragging');
     dragEl.style.zIndex = '50';
-    clearGuides();
     var wid = dragEl.dataset.wid;
+    var lastTouch = e.changedTouches && e.changedTouches[0];
+    var cx = lastTouch ? lastTouch.clientX : parseInt(dragEl.style.left);
+    var cy = lastTouch ? lastTouch.clientY : parseInt(dragEl.style.top);
+    // Remember source column before snap
+    var srcColIdx = -1;
+    var pos = loadPositions();
+    if (pos[wid]) {{
+      colData = colData.length ? colData : computeColumns();
+      srcColIdx = findSnapColumn(pos[wid].x + (pos[wid].w || 0) / 2);
+    }}
+    var targetColIdx = activeColIdx;
+    if (targetColIdx >= 0 && colData[targetColIdx]) {{
+      var col = colData[targetColIdx];
+      var gap = 10;
+      var half = isHalfWidth(wid);
+      var w = half ? (col.w - gap) / 2 : col.w;
+      var insertY = findInsertY(targetColIdx, cy, dragEl);
+      dragEl.style.left = col.x + 'px';
+      dragEl.style.top = insertY + 'px';
+      dragEl.style.width = w + 'px';
+      dragEl.style.overflow = 'auto';
+    }}
+    removeColumnGuides();
     if (wid) {{
-      var pos = loadPositions();
+      pos = loadPositions();
       pos[wid] = {{
         x: parseInt(dragEl.style.left),
         y: parseInt(dragEl.style.top),
-        w: parseInt(dragEl.style.width)
+        w: parseInt(dragEl.style.width),
+        h: parseInt(dragEl.style.height) || 0
       }};
       savePositions(pos);
+      if (targetColIdx >= 0) {{
+        colData = computeColumns();
+        reflowColumn(targetColIdx);
+        if (srcColIdx >= 0 && srcColIdx !== targetColIdx) reflowColumn(srcColIdx);
+      }}
     }}
     dragEl = null;
   }});
@@ -4020,7 +4915,7 @@ def generate_dashboard_html(target_date=None):
           for (var i = 1; i < wr.daily.time.length; i++) {{
             var d = new Date(wr.daily.time[i]+'T12:00:00');
             var fw = WMO[wr.daily.weather_code[i]] || ['🌤️',''];
-            h += '<div style="flex:1;min-width:70px;padding:8px;background:rgba(255,255,255,0.06);border-radius:10px;text-align:center;"><div style="font-size:18px;">'+fw[0]+'</div><div style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.7);">'+days[d.getDay()]+'</div><div style="font-size:13px;color:#a29bfe;font-weight:600;">'+Math.round(wr.daily.temperature_2m_max[i])+'\u00B0/'+Math.round(wr.daily.temperature_2m_min[i])+'\u00B0</div></div>';
+            h += '<div style="flex:1;min-width:70px;padding:10px;background:rgba(255,255,255,0.06);border-radius:10px;text-align:center;"><div style="font-size:26px;">'+fw[0]+'</div><div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.7);">'+days[d.getDay()]+'</div><div style="font-size:17px;color:#a29bfe;font-weight:600;">'+Math.round(wr.daily.temperature_2m_max[i])+'\u00B0/'+Math.round(wr.daily.temperature_2m_min[i])+'\u00B0</div></div>';
           }}
           h += '</div>';
           Array.from(fc.children).forEach(function(ch) {{ if (ch !== st && !ch.classList.contains('resize-h') && !ch.classList.contains('resize-w') && !ch.classList.contains('resize-corner')) ch.remove(); }});
@@ -4046,9 +4941,9 @@ def generate_dashboard_html(target_date=None):
             var hp = wr.hourly.precipitation_probability[k];
             var hwnd = Math.round(wr.hourly.wind_speed_10m[k]);
             temps.push(ht3);
-            hh += '<div style="min-width:48px;padding:6px 4px;text-align:center;flex-shrink:0;"><div style="font-size:9px;color:rgba(255,255,255,0.45);font-weight:600;">'+lbl+'</div><div style="font-size:16px;margin:2px 0;">'+hw[0]+'</div>';
+            hh += '<div style="min-width:52px;padding:6px 4px;text-align:center;flex-shrink:0;"><div style="font-size:10px;color:rgba(255,255,255,0.45);font-weight:600;">'+lbl+'</div><div style="font-size:22px;margin:2px 0;">'+hw[0]+'</div>';
             if (hp > 0) hh += '<div style="font-size:8px;color:#74b9ff;">'+hp+'%</div>';
-            hh += '<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85);">'+ht3+'\u00B0</div><div style="font-size:8px;color:rgba(255,255,255,0.3);">'+hwnd+'mph</div></div>';
+            hh += '<div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.85);">'+ht3+'\u00B0</div><div style="font-size:9px;color:rgba(255,255,255,0.3);">'+hwnd+'mph</div></div>';
           }}
           hh += '</div><div style="margin-top:4px;"><div style="font-size:8px;color:rgba(255,255,255,0.3);margin-bottom:2px;">24H TEMP</div>' + _spark(temps, 100, 24) + '</div>';
           Array.from(hc.children).forEach(function(ch) {{ if (ch !== st2 && !ch.classList.contains('resize-h') && !ch.classList.contains('resize-w') && !ch.classList.contains('resize-corner')) ch.remove(); }});
@@ -4186,6 +5081,225 @@ def generate_dashboard_html(target_date=None):
   setInterval(refreshNews, 300000);     // every 5 min
   setInterval(refreshPoly, 180000);     // every 3 min
 
+  // ── Notepad Firebase sync ──
+  (function() {{
+    var ta = document.getElementById('notepad-area');
+    var dot = document.getElementById('notepad-dot');
+    var stxt = document.getElementById('notepad-sync-text');
+    var tstamp = document.getElementById('notepad-timestamp');
+    if (!ta || typeof firebase === 'undefined') return;
+    var ref = firebase.database().ref('lori-notepad');
+    var isLocalChange = false;
+    var saveTimer = null;
+
+    function setStatus(cls, text) {{
+      dot.className = 'sync-dot ' + cls;
+      stxt.textContent = text;
+    }}
+
+    function fmtTime(ms) {{
+      if (!ms) return '';
+      var d = new Date(ms);
+      return d.toLocaleTimeString([], {{hour:'2-digit', minute:'2-digit'}});
+    }}
+
+    // Listen for remote changes
+    ref.on('value', function(snap) {{
+      var val = snap.val() || {{}};
+      var remote = !isLocalChange;
+      if (remote) {{
+        ta.value = val.text || '';
+      }}
+      if (window._loriTtsCheck) window._loriTtsCheck(val.text || '', remote);
+      isLocalChange = false;
+      setStatus('synced', 'Synced');
+      tstamp.textContent = fmtTime(val.ts);
+    }}, function() {{
+      setStatus('error', 'Offline');
+    }});
+
+    // Debounced save on input
+    ta.addEventListener('input', function() {{
+      isLocalChange = true;
+      setStatus('saving', 'Saving...');
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function() {{
+        ref.set({{
+          text: ta.value,
+          ts: firebase.database.ServerValue.TIMESTAMP
+        }}).then(function() {{
+          setStatus('synced', 'Synced');
+        }}).catch(function() {{
+          setStatus('error', 'Error');
+        }});
+      }}, 800);
+    }});
+
+    // Reconnect when tab becomes visible
+    document.addEventListener('visibilitychange', function() {{
+      if (!document.hidden) firebase.database().goOnline();
+    }});
+
+    // Text-to-speech for incoming remote text
+    var ttsBtn = document.getElementById('notepad-tts');
+    var ttsEnabled = localStorage.getItem('lori-notepad-tts') === '1';
+    var lastSpokenText = ta.value;
+    function updateTtsBtn() {{
+      ttsBtn.innerHTML = ttsEnabled ? '&#128266;' : '&#128263;';
+      ttsBtn.classList.toggle('tts-on', ttsEnabled);
+    }}
+    updateTtsBtn();
+    ttsBtn.addEventListener('click', function() {{
+      ttsEnabled = !ttsEnabled;
+      localStorage.setItem('lori-notepad-tts', ttsEnabled ? '1' : '0');
+      updateTtsBtn();
+      if (!ttsEnabled) speechSynthesis.cancel();
+    }});
+    function speakText(text) {{
+      if (!text || !window.speechSynthesis) return;
+      speechSynthesis.cancel();
+      var u = new SpeechSynthesisUtterance(text);
+      u.rate = 1; u.pitch = 1;
+      speechSynthesis.speak(u);
+    }}
+    window._loriTtsCheck = function(newText, remote) {{
+      if (!remote || !ttsEnabled) {{ lastSpokenText = newText; return; }}
+      if (newText === lastSpokenText) return;
+      // If new text starts with old text, speak only the appended part
+      if (newText.indexOf(lastSpokenText) === 0) {{
+        speakText(newText.slice(lastSpokenText.length).trim());
+      }} else {{
+        speakText(newText);
+      }}
+      lastSpokenText = newText;
+    }};
+
+    // Speech-to-text
+    var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    var micBtn = document.getElementById('notepad-mic');
+    if (SpeechRec && micBtn) {{
+      var rec = new SpeechRec();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      var listening = false;
+      var finalText = '';
+
+      micBtn.addEventListener('click', function() {{
+        if (listening) {{
+          rec.stop();
+        }} else {{
+          finalText = ta.value;
+          rec.start();
+        }}
+      }});
+
+      rec.onstart = function() {{
+        listening = true;
+        micBtn.classList.add('mic-on');
+      }};
+
+      rec.onend = function() {{
+        listening = false;
+        micBtn.classList.remove('mic-on');
+      }};
+
+      rec.onresult = function(e) {{
+        var interim = '';
+        for (var i = e.resultIndex; i < e.results.length; i++) {{
+          var t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {{
+            finalText += (finalText && !finalText.endsWith('\\n') ? ' ' : '') + t;
+          }} else {{
+            interim = t;
+          }}
+        }}
+        ta.value = finalText + (interim ? ' ' + interim : '');
+        ta.dispatchEvent(new Event('input'));
+      }};
+
+      rec.onerror = function() {{
+        listening = false;
+        micBtn.classList.remove('mic-on');
+      }};
+    }} else if (micBtn) {{
+      micBtn.style.display = 'none';
+    }}
+  }})();
+
+  // ── Keyboard shortcuts ──
+  (function() {{
+    // Help overlay
+    var helpEl = document.createElement('div');
+    helpEl.id = 'kb-help';
+    helpEl.style.cssText = 'display:none;position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;';
+    helpEl.innerHTML = '<div style="background:rgba(15,15,30,0.92);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:28px 36px;max-width:340px;font-family:JetBrains Mono,monospace;color:rgba(255,255,255,0.85);font-size:13px;line-height:2;">'
+      + '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.12em;color:rgba(255,255,255,0.4);margin-bottom:12px;">Keyboard Shortcuts</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">g</kbd> Auto-grid layout</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">s</kbd> Split-grid layout</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">v</kbd> Toggle panel menu</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">m</kbd> Toggle notepad mic</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">1-3</kbd> Load layout slot</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">&#8679;1-3</kbd> Save layout slot</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">?</kbd> This help</div>'
+      + '<div style="margin-top:14px;font-size:10px;color:rgba(255,255,255,0.3);">Press any key or click to close</div>'
+      + '</div>';
+    document.body.appendChild(helpEl);
+
+    var helpVisible = false;
+    function showHelp() {{ helpEl.style.display = 'flex'; helpVisible = true; }}
+    function hideHelp() {{ helpEl.style.display = 'none'; helpVisible = false; }}
+    helpEl.addEventListener('click', hideHelp);
+
+    document.addEventListener('keydown', function(e) {{
+      var tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) return;
+
+      // If help is open, any key closes it
+      if (helpVisible) {{ hideHelp(); e.preventDefault(); return; }}
+
+      var key = e.key;
+      // Shift+1/2/3 produce ! @ # on US keyboards
+      if (e.shiftKey && (key === '!' || key === '@' || key === '#')) {{
+        var slotMap = {{'!':1, '@':2, '#':3}};
+        if (typeof saveLayoutSlot === 'function') saveLayoutSlot(slotMap[key]);
+        e.preventDefault();
+        return;
+      }}
+      if (key === '1' || key === '2' || key === '3') {{
+        if (typeof loadLayoutSlot === 'function') loadLayoutSlot(parseInt(key));
+        e.preventDefault();
+        return;
+      }}
+      if (key === 'g') {{
+        if (typeof autoGridLayout === 'function') autoGridLayout();
+        e.preventDefault();
+        return;
+      }}
+      if (key === 's') {{
+        if (typeof autoGridSplit === 'function') autoGridSplit();
+        e.preventDefault();
+        return;
+      }}
+      if (key === 'm') {{
+        var micBtn = document.getElementById('notepad-mic');
+        if (micBtn) micBtn.click();
+        e.preventDefault();
+        return;
+      }}
+      if (key === 'v') {{
+        if (typeof togglePanelMenu === 'function') togglePanelMenu();
+        e.preventDefault();
+        return;
+      }}
+      if (key === '?') {{
+        showHelp();
+        e.preventDefault();
+        return;
+      }}
+    }});
+  }})();
+
 }})();
 </script>
 </body>
@@ -4303,6 +5417,7 @@ def build_parser():
     add_task = add_sub.add_parser("task", help="Add task to project")
     add_task.add_argument("project", help="Project name")
     add_task.add_argument("desc", help="Task description")
+    add_task.add_argument("--due", help="Due date (YYYY-MM-DD)")
 
     add_ms = add_sub.add_parser("milestone", help="Add milestone to project")
     add_ms.add_argument("project", help="Project name")
