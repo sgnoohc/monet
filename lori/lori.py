@@ -773,6 +773,22 @@ def print_full_briefing(config, projects, events, td, days_ahead):
             if due and due < td:
                 days_late = (td - due).days
                 overdue.append((p["name"], m["name"], days_late))
+            for t in m.get("tasks", []):
+                if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                    try:
+                        t_due = parse_date(t["due"])
+                    except ValueError:
+                        continue
+                    if t_due < td:
+                        overdue.append((p["name"], t.get("desc", ""), (td - t_due).days))
+        for t in p.get("tasks", []):
+            if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                try:
+                    t_due = parse_date(t["due"])
+                except ValueError:
+                    continue
+                if t_due < td:
+                    overdue.append((p["name"], t.get("desc", ""), (td - t_due).days))
 
     if overdue:
         print("OVERDUE")
@@ -792,6 +808,22 @@ def print_full_briefing(config, projects, events, td, days_ahead):
             due = parse_date(m["due"]) if m.get("due") else None
             if due and td <= due <= week_end:
                 due_soon.append((p["name"], m["name"], due))
+            for t in m.get("tasks", []):
+                if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                    try:
+                        t_due = parse_date(t["due"])
+                    except ValueError:
+                        continue
+                    if td <= t_due <= week_end:
+                        due_soon.append((p["name"], t.get("desc", ""), t_due))
+        for t in p.get("tasks", []):
+            if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                try:
+                    t_due = parse_date(t["due"])
+                except ValueError:
+                    continue
+                if td <= t_due <= week_end:
+                    due_soon.append((p["name"], t.get("desc", ""), t_due))
 
     if due_soon:
         print("DUE THIS WEEK")
@@ -902,6 +934,22 @@ def cmd_week(args):
             due = parse_date(m["due"]) if m.get("due") else None
             if due and td <= due < week_end:
                 deadlines.append((due, p["name"], m["name"]))
+            for t in m.get("tasks", []):
+                if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                    try:
+                        t_due = parse_date(t["due"])
+                    except ValueError:
+                        continue
+                    if td <= t_due < week_end:
+                        deadlines.append((t_due, p["name"], t.get("desc", "")))
+        for t in p.get("tasks", []):
+            if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                try:
+                    t_due = parse_date(t["due"])
+                except ValueError:
+                    continue
+                if td <= t_due < week_end:
+                    deadlines.append((t_due, p["name"], t.get("desc", "")))
     if deadlines:
         print(f"\n  Deadlines this week:")
         for due, pname, mname in sorted(deadlines):
@@ -1515,6 +1563,28 @@ def cmd_drive(args):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CLI: alert setup / check-alerts
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def cmd_cron_setup(args):
+    lori_path = pathlib.Path.home() / "bin" / "lori"
+    dashboard = LORI_DIR / "dashboard.html"
+    entry = f"0 6 * * * {lori_path} html && scp {dashboard} uaf-2:~/public_html/hpg/"
+
+    # Read current scrontab
+    result = subprocess.run(["scrontab", "-l"], capture_output=True, text=True)
+    current = result.stdout if result.returncode == 0 else ""
+
+    if entry in current:
+        print("  Dashboard cron entry already installed.")
+        return
+
+    new_crontab = current.rstrip() + "\n" + entry + "\n"
+    proc = subprocess.run(["scrontab", "-"], input=new_crontab, capture_output=True, text=True)
+    if proc.returncode == 0:
+        print("  Installed scrontab entry for daily dashboard (6 AM).")
+        print(f"  Entry: {entry}")
+    else:
+        print(f"  Error installing scrontab: {proc.stderr}")
+
 
 def cmd_alert_setup(args):
     lori_path = pathlib.Path.home() / "bin" / "lori"
@@ -2557,31 +2627,72 @@ def generate_dashboard_html(target_date=None):
     free_str = ", ".join(f"{fmt_time(s)}–{fmt_time(e)}" for s, e in free)
     hours = total_mins / 60
 
-    # Overdue
-    overdue_html = ""
-    for p in projects:
-        if p.get("status") != "active":
-            continue
-        for m in p.get("milestones", []):
-            if m.get("done"):
-                continue
-            due = parse_date(m["due"]) if m.get("due") else None
-            if due and due < td:
-                days = (td - due).days
-                overdue_html += f'<div style="padding:5px 0; color:#ff6b6b; font-size:13px;">● {p["name"]} → "{m["name"]}" <span style="font-weight:600;">({days}d overdue)</span></div>'
-
-    # Due this week
+    # Collect all tasks/milestones with due dates for the dashboard
     week_end = td + datetime.timedelta(days=days_ahead)
-    due_html = ""
+    all_due_items = []  # (due_date, name, project_name, is_milestone)
     for p in projects:
         if p.get("status") != "active":
             continue
+        pname = p.get("name", "")
         for m in p.get("milestones", []):
             if m.get("done"):
                 continue
-            due = parse_date(m["due"]) if m.get("due") else None
-            if due and td <= due <= week_end:
-                due_html += f'<div style="padding:5px 0; color:rgba(255,255,255,0.9); font-size:13px;"><span style="color:#f0c040;">●</span> {p["name"]} → "{m["name"]}" <span style="color:rgba(255,255,255,0.45);">({fmt_date(due)})</span></div>'
+            if m.get("due"):
+                try:
+                    due = parse_date(m["due"])
+                except ValueError:
+                    due = None
+                if due and due <= week_end:
+                    all_due_items.append((due, m["name"], pname, True))
+            for t in m.get("tasks", []):
+                if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                    try:
+                        t_due = parse_date(t["due"])
+                    except ValueError:
+                        continue
+                    if t_due <= week_end:
+                        all_due_items.append((t_due, t.get("desc", ""), pname, False))
+        for t in p.get("tasks", []):
+            if isinstance(t, dict) and not t.get("done") and t.get("due"):
+                try:
+                    t_due = parse_date(t["due"])
+                except ValueError:
+                    continue
+                if t_due <= week_end:
+                    all_due_items.append((t_due, t.get("desc", ""), pname, False))
+
+    all_due_items.sort(key=lambda x: x[0])
+    tasks_list_html = ""
+    current_heading = None
+    for due, name, pname, is_ms in all_due_items:
+        delta = (due - td).days
+        if delta < 0:
+            heading = "OVERDUE"
+            heading_color = "#ff6b6b"
+            color = "#ff6b6b"
+            sub = f"{-delta}d late"
+        elif delta == 0:
+            heading = "TODAY"
+            heading_color = "#f0c040"
+            color = "#f0c040"
+            sub = ""
+        elif delta == 1:
+            heading = "TOMORROW"
+            heading_color = "#a29bfe"
+            color = "rgba(255,255,255,0.55)"
+            sub = ""
+        else:
+            heading = due.strftime("%a, %b %-d").upper()
+            heading_color = "rgba(255,255,255,0.35)"
+            color = "rgba(255,255,255,0.55)"
+            sub = ""
+        if heading != current_heading:
+            mt = "12px" if current_heading is not None else "0"
+            tasks_list_html += f'<div style="margin-top:{mt}; padding-bottom:3px; border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:4px;"><span style="font-family:JetBrains Mono,monospace; font-size:10px; color:{heading_color}; letter-spacing:0.08em;">{heading}</span></div>'
+            current_heading = heading
+        marker = "●" if is_ms else "·"
+        sub_span = f' <span style="color:{color}; font-size:11px;">({sub})</span>' if sub else ""
+        tasks_list_html += f'<div style="padding:3px 0 3px 8px; color:rgba(255,255,255,0.9); font-size:13px;"><span style="color:{color};">{marker}</span> {name} <span style="color:rgba(255,255,255,0.3); font-size:11px;">[{pname}]</span>{sub_span}</div>'
 
     # ── iCal-style week calendar (4-day view with navigation) ──
     cal_start_hour = 7
@@ -2728,14 +2839,6 @@ def generate_dashboard_html(target_date=None):
               <span style="font-size:11px; color:rgba(255,255,255,0.4); font-weight:600;">{done}/{total}</span>
             </div>
           </div>"""
-
-    # Next actions
-    actions_html = ""
-    for p in active:
-        tasks = p.get("tasks", [])
-        if tasks:
-            t = tasks[0] if isinstance(tasks[0], str) else tasks[0].get("desc", str(tasks[0]))
-            actions_html += f'<div style="padding:5px 0; color:rgba(255,255,255,0.9); font-size:13px;"><span style="color:#55efc4;">▸</span> {t} <span style="color:rgba(255,255,255,0.35); font-size:12px;">[{p["name"]}]</span></div>'
 
     # News HTML — collapsed (1 per source) + expanded (all 5 per source)
     news_html = ""
@@ -3219,6 +3322,7 @@ def generate_dashboard_html(target_date=None):
     .glass, .drag-handle {{ cursor:default !important; }}
     .reorder-btn {{ display:inline-flex !important; }}
     #vid-select {{ display:none !important; }}
+    #vid-pause {{ display:none !important; }}
     #grid-btn {{ display:none !important; }}
     .desktop-only {{ display:none !important; }}
     #clock {{ font-size:42px !important; letter-spacing:-1px !important; }}
@@ -3255,13 +3359,34 @@ def generate_dashboard_html(target_date=None):
 </head>
 <body>
 
-<!-- Video background (desktop only — mobile skips iframe+img for fast load) -->
-<div class="video-bg" id="video-bg"></div>
+<!-- Video background (desktop only — uses YT Player API for pause control) -->
+<div class="video-bg" id="video-bg">
+  <div id="yt-player"></div>
+  <img src="{fallback_img}" alt="" style="z-index:-1;">
+</div>
 <div class="overlay"></div>
+<script src="https://www.youtube.com/iframe_api"></script>
 <script>
-if (window.innerWidth > 768) {{
-  var vbg = document.getElementById('video-bg');
-  vbg.innerHTML = '<iframe src="https://www.youtube.com/embed/{video_id}?autoplay=1&mute=1&loop=1&playlist={video_id}&controls=0&showinfo=0&modestbranding=1&rel=0&disablekb=1&fs=0&iv_load_policy=3&start=30" frameborder="0" allow="autoplay; encrypted-media" loading="lazy"></iframe><img src="{fallback_img}" alt="" style="z-index:-1;">';
+var ytPlayer = null;
+var ytPaused = localStorage.getItem('lori_vid_paused') === '1';
+var ytReady = false;
+
+function onYouTubeIframeAPIReady() {{
+  if (window.innerWidth <= 768) return;
+  ytPlayer = new YT.Player('yt-player', {{
+    videoId: '{video_id}',
+    playerVars: {{
+      autoplay: ytPaused ? 0 : 1, mute: 1, loop: 1, playlist: '{video_id}',
+      controls: 0, showinfo: 0, modestbranding: 1, rel: 0,
+      disablekb: 1, fs: 0, iv_load_policy: 3, start: 30
+    }},
+    events: {{
+      onReady: function(e) {{
+        ytReady = true;
+        if (ytPaused) e.target.pauseVideo();
+      }}
+    }}
+  }});
 }}
 </script>
 
@@ -3310,20 +3435,16 @@ if (window.innerWidth > 768) {{
     </div>
   </div>
 
-  <!-- Tasks + Overdue + Due -->
+  <!-- Hourly Weather (right after today) -->
+  {hourly_html}
+
+  <!-- Forecast (right after hourly) -->
+  {weather_html}
+
+  <!-- Tasks -->
   <div class="glass drag" data-wid="tasks">
     <div class="stitle drag-handle" style="color:#55efc4; cursor:grab;">&#9889; TASKS{_rb_first}</div>
-    {actions_html if actions_html else '<div style="color:rgba(255,255,255,0.3); font-size:12px;">All clear</div>'}
-    {"" if not overdue_html else f'''
-    <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
-      <div style="font-family:JetBrains Mono,monospace; font-size:9px; color:#ff6b6b; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:4px;">&#9888; Overdue</div>
-      {overdue_html}
-    </div>'''}
-    {"" if not due_html else f'''
-    <div style="margin-top:8px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
-      <div style="font-family:JetBrains Mono,monospace; font-size:9px; color:#f0c040; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:4px;">&#128198; Due this week</div>
-      {due_html}
-    </div>'''}
+    {tasks_list_html if tasks_list_html else '<div style="color:rgba(255,255,255,0.3); font-size:12px;">All clear</div>'}
   </div>
 
   <!-- Markets (expanded tickers + sparklines) -->
@@ -3456,11 +3577,6 @@ if (window.innerWidth > 768) {{
     </div>
   </div>
 
-  <!-- Hourly Weather -->
-  {hourly_html}
-
-  <!-- Forecast -->
-  {weather_html}
 
 </div>
 
@@ -3488,6 +3604,13 @@ if (window.innerWidth > 768) {{
     onmouseout="this.style.borderColor='rgba(255,255,255,0.12)';this.style.color='rgba(255,255,255,0.5)'"
     title="Select background video">
   </select>
+  <button id="vid-pause" onclick="toggleVideoPause()" style="width:36px; height:36px; border-radius:50%;
+    background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:16px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;"
+    onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
+    onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
+    title="Pause/play background video">&#9208;</button>
   <button id="vis-btn" onclick="togglePanelMenu()" style="width:36px; height:36px; border-radius:50%;
     background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
     border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:16px;
@@ -3739,20 +3862,50 @@ if (window.innerWidth > 768) {{
     idx = parseInt(idx);
     vidIdx = idx;
     var v = videos[idx];
-    var iframe = document.querySelector('.video-bg iframe');
-    if (iframe) {{
-      iframe.src = 'https://www.youtube.com/embed/' + v.id +
-        '?autoplay=1&mute=1&loop=1&playlist=' + v.id +
-        '&controls=0&showinfo=0&modestbranding=1&rel=0&disablekb=1&fs=0&iv_load_policy=3&start=30';
+    if (ytPlayer && ytReady) {{
+      ytPlayer.loadVideoById({{videoId: v.id, startSeconds: 30}});
+      ytPlayer.mute();
+      if (ytPaused) setTimeout(function() {{ ytPlayer.pauseVideo(); }}, 1500);
     }}
     localStorage.setItem('lori_vid_idx', idx);
   }};
+
+  window.toggleVideoPause = function() {{
+    if (!ytPlayer || !ytReady) return;
+    var btn = document.getElementById('vid-pause');
+    if (ytPaused) {{
+      ytPlayer.playVideo();
+      ytPaused = false;
+      localStorage.removeItem('lori_vid_paused');
+      if (btn) {{ btn.innerHTML = '&#9208;'; btn.title = 'Pause background video'; }}
+    }} else {{
+      ytPlayer.pauseVideo();
+      ytPaused = true;
+      localStorage.setItem('lori_vid_paused', '1');
+      if (btn) {{ btn.innerHTML = '&#9654;'; btn.title = 'Play background video'; }}
+    }}
+  }};
+
+  // Update button icon on load if already paused
+  if (ytPaused) {{
+    var _pb = document.getElementById('vid-pause');
+    if (_pb) {{ _pb.innerHTML = '&#9654;'; _pb.title = 'Play background video'; }}
+  }}
 
   // Restore last selected video from localStorage
   var savedIdx = localStorage.getItem('lori_vid_idx');
   if (savedIdx !== null && parseInt(savedIdx) !== vidIdx && parseInt(savedIdx) < videos.length) {{
     vidSelect.value = savedIdx;
-    selectVideo(parseInt(savedIdx));
+    vidIdx = parseInt(savedIdx);
+    var _waitReady = setInterval(function() {{
+      if (ytReady && ytPlayer) {{
+        clearInterval(_waitReady);
+        var sv = videos[parseInt(savedIdx)];
+        ytPlayer.loadVideoById({{videoId: sv.id, startSeconds: 30}});
+        ytPlayer.mute();
+        if (ytPaused) setTimeout(function() {{ ytPlayer.pauseVideo(); }}, 1500);
+      }}
+    }}, 200);
   }};
 
   // ── Calendar navigation ──
@@ -4086,7 +4239,7 @@ if (window.innerWidth > 768) {{
     forecast:'Weather', 'hourly-weather':'Hourly Weather', notepad:'Notepad'
   }};
 
-  var DEFAULT_VISIBLE = ['today','hpc','news','calendar','hourly-weather','forecast','notepad'];
+  var DEFAULT_VISIBLE = ['today','tasks','hpc','news','calendar','hourly-weather','forecast','notepad'];
   function loadHidden() {{
     try {{
       var raw = localStorage.getItem(HIDDEN_KEY);
@@ -4178,14 +4331,35 @@ if (window.innerWidth > 768) {{
 
   // ── Panel width preferences (localStorage) ──
   var WIDTH_KEY = 'lori-panel-widths';
-  var DEFAULT_HALF = {{hpc:1, projects:1, forecast:1, tasks:1}};
+  var DEFAULT_HALF = {{hpc:1, projects:1, forecast:1}};
   function loadWidths() {{ try {{ return JSON.parse(localStorage.getItem(WIDTH_KEY)) || {{}}; }} catch(e) {{ return {{}}; }} }}
   function saveWidths(obj) {{ try {{ localStorage.setItem(WIDTH_KEY, JSON.stringify(obj)); }} catch(e) {{}} }}
   function isHalfWidth(wid) {{ var w = loadWidths(); return w.hasOwnProperty(wid) ? !!w[wid] : !!DEFAULT_HALF[wid]; }}
 
   // ── Auto-grid layout ──
+  function _restoreColWraps() {{
+    var container = document.querySelector('.panels');
+    document.querySelectorAll('.col-wrap').forEach(function(wrap) {{
+      // Move glass panels back (skip flex-row wrappers)
+      var children = Array.from(wrap.querySelectorAll('.glass[data-wid]'));
+      children.forEach(function(el) {{
+        el.style.position = '';
+        el.style.left = '';
+        el.style.top = '';
+        el.style.width = '';
+        el.style.height = '';
+        el.style.overflow = '';
+        el.style.zIndex = '';
+        el.style.margin = '';
+        container.appendChild(el);
+      }});
+      wrap.remove();
+    }});
+  }}
+
   window.autoGridLayout = function() {{
     if (window.innerWidth <= 768) return;
+    _restoreColWraps();
     var hidden = loadHidden();
     var panels = [];
     document.querySelectorAll('.panels .glass[data-wid]').forEach(function(el) {{
@@ -4218,80 +4392,86 @@ if (window.innerWidth > 768) {{
     // Cap each height to viewport minus padding, with a minimum
     var maxH = vh - 40;
     heights = heights.map(function(h) {{ return Math.max(80, Math.min(h, maxH)); }});
-    // Place panels in DOM order (priority), filling right-to-left
+    // Default column hints for reset view (col 0 = leftmost)
+    var DEFAULT_COL = {{today:0, 'hourly-weather':0, forecast:0,
+                        news:1, hpc:1, calendar:1, notepad:1,
+                        tasks:0, stocks:1, projects:1}};
+    var hasSavedOrder = false;
+    try {{ hasSavedOrder = !!localStorage.getItem('lori-panel-order'); }} catch(e) {{}}
+    // Place panels in DOM order (priority), filling columns
     var colHeights = [];
     for (var c = 0; c < cols; c++) colHeights.push(0);
     var colPanels = [];
     for (var c = 0; c < cols; c++) colPanels.push([]);
-    panels.forEach(function(_, i) {{
-      var minCol = cols - 1;
-      for (var c = cols - 2; c >= 0; c--) {{
-        if (colHeights[c] < colHeights[minCol] - 10) minCol = c;
+    panels.forEach(function(el, i) {{
+      var wid = el.dataset.wid;
+      var col;
+      if (!hasSavedOrder && DEFAULT_COL.hasOwnProperty(wid) && DEFAULT_COL[wid] < cols) {{
+        col = DEFAULT_COL[wid];
+      }} else {{
+        col = cols - 1;
+        for (var c = cols - 2; c >= 0; c--) {{
+          if (colHeights[c] < colHeights[col] - 10) col = c;
+        }}
       }}
-      colPanels[minCol].push(i);
-      colHeights[minCol] += heights[i] + gap;
+      colPanels[col].push(i);
+      colHeights[col] += heights[i] + gap;
     }});
-    // Place panels — half-width panels get paired side-by-side when adjacent
+    // Create scrollable column wrappers and place panels inside
     colPanels.forEach(function(idxs, col) {{
       if (!idxs.length) return;
-      var y = 20;
       var x = leftOffset + col * (cardW + gap);
+      var wrap = document.createElement('div');
+      wrap.className = 'col-wrap';
+      wrap.style.cssText = 'position:fixed; top:20px; left:' + x + 'px; width:' + cardW + 'px; max-height:calc(100vh - 40px); overflow-y:auto; overflow-x:hidden; z-index:50; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,0.1) transparent;';
+      document.body.appendChild(wrap);
       var j = 0;
       while (j < idxs.length) {{
         var i = idxs[j];
         var el = panels[i];
         var wid = el.dataset.wid;
         var isHalf = isHalfWidth(wid);
+        // Reset any prior fixed positioning
+        el.style.position = 'relative';
+        el.style.left = '';
+        el.style.top = '';
+        el.style.zIndex = '';
         // Try to pair two adjacent half-width panels side-by-side
         if (isHalf && j + 1 < idxs.length && isHalfWidth(panels[idxs[j+1]].dataset.wid)) {{
           var i2 = idxs[j+1];
           var el2 = panels[i2];
           var h = Math.max(heights[i], heights[i2]);
-          el.style.position = 'fixed';
-          el.style.left = x + 'px';
-          el.style.top = y + 'px';
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex; gap:' + gap + 'px; margin-bottom:' + gap + 'px;';
           el.style.width = halfW + 'px';
           el.style.height = h + 'px';
           el.style.overflow = 'auto';
-          el.style.zIndex = '50';
           el.style.margin = '0';
-          pos[wid] = {{ x: x, y: y, w: halfW, h: h }};
-          el2.style.position = 'fixed';
-          el2.style.left = (x + halfW + gap) + 'px';
-          el2.style.top = y + 'px';
+          el2.style.position = 'relative';
+          el2.style.left = '';
+          el2.style.top = '';
+          el2.style.zIndex = '';
           el2.style.width = halfW + 'px';
           el2.style.height = h + 'px';
           el2.style.overflow = 'auto';
-          el2.style.zIndex = '50';
           el2.style.margin = '0';
-          pos[el2.dataset.wid] = {{ x: x + halfW + gap, y: y, w: halfW, h: h }};
-          y += h + gap;
+          row.appendChild(el);
+          row.appendChild(el2);
+          wrap.appendChild(row);
           j += 2;
         }} else if (isHalf) {{
-          var h = heights[i];
-          el.style.position = 'fixed';
-          el.style.left = x + 'px';
-          el.style.top = y + 'px';
           el.style.width = halfW + 'px';
-          el.style.height = h + 'px';
+          el.style.height = heights[i] + 'px';
           el.style.overflow = 'auto';
-          el.style.zIndex = '50';
-          el.style.margin = '0';
-          pos[wid] = {{ x: x, y: y, w: halfW, h: h }};
-          y += h + gap;
+          el.style.margin = '0 0 ' + gap + 'px 0';
+          wrap.appendChild(el);
           j++;
         }} else {{
-          var h = heights[i];
-          el.style.position = 'fixed';
-          el.style.left = x + 'px';
-          el.style.top = y + 'px';
           el.style.width = cardW + 'px';
-          el.style.height = h + 'px';
+          el.style.height = heights[i] + 'px';
           el.style.overflow = 'auto';
-          el.style.zIndex = '50';
-          el.style.margin = '0';
-          pos[wid] = {{ x: x, y: y, w: cardW, h: h }};
-          y += h + gap;
+          el.style.margin = '0 0 ' + gap + 'px 0';
+          wrap.appendChild(el);
           j++;
         }}
       }}
@@ -4302,6 +4482,7 @@ if (window.innerWidth > 768) {{
   // ── Split grid layout (halves left, fulls right) ──
   window.autoGridSplit = function() {{
     if (window.innerWidth <= 768) return;
+    _restoreColWraps();
     var hidden = loadHidden();
     var allPanels = [];
     document.querySelectorAll('.panels .glass[data-wid]').forEach(function(el) {{
@@ -5241,6 +5422,7 @@ if (window.innerWidth > 768) {{
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">m</kbd> Toggle notepad mic</div>'
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">1-3</kbd> Load layout slot</div>'
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">&#8679;1-3</kbd> Save layout slot</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">p</kbd> Pause/play video</div>'
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">?</kbd> This help</div>'
       + '<div style="margin-top:14px;font-size:10px;color:rgba(255,255,255,0.3);">Press any key or click to close</div>'
       + '</div>';
@@ -5289,6 +5471,11 @@ if (window.innerWidth > 768) {{
       }}
       if (key === 'v') {{
         if (typeof togglePanelMenu === 'function') togglePanelMenu();
+        e.preventDefault();
+        return;
+      }}
+      if (key === 'p') {{
+        if (typeof toggleVideoPause === 'function') toggleVideoPause();
         e.preventDefault();
         return;
       }}
@@ -5450,6 +5637,10 @@ def build_parser():
     alert_sub = alert_p.add_subparsers(dest="alert_action")
     alert_sub.add_parser("setup", help="Install scrontab entry")
 
+    cron_p = sub.add_parser("cron", help="Cron job management")
+    cron_sub = cron_p.add_subparsers(dest="cron_action")
+    cron_sub.add_parser("setup", help="Install daily dashboard scrontab entry")
+
     return parser
 
 
@@ -5516,6 +5707,11 @@ def main():
             cmd_alert_setup(args)
         else:
             print("Usage: lori alert setup")
+    elif cmd == "cron":
+        if args.cron_action == "setup":
+            cmd_cron_setup(args)
+        else:
+            print("Usage: lori cron setup")
     else:
         parser.print_help()
 

@@ -13,9 +13,17 @@ from lori import (load_projects, save_projects, parse_date, today, fmt_date,
                   expand_events_for_date,
                   calc_free_time, parse_time, fmt_time, save_schedule,
                   day_name_to_int, get_work_hours, convert_event_time)
+import json
+import os
+import tempfile
+import textwrap
+import unicodedata
+
+import yaml
+
 from fetch_mail import (get_token_cache, save_token_cache, authenticate,
                         connect_imap, fetch_email_list, fetch_email_body,
-                        set_flag)
+                        set_flag, search_uids)
 
 # ─── Data structures ─────────────────────────────────────────────────────────
 
@@ -62,6 +70,38 @@ def _init_colors():
         curses.init_pair(C_NONWORK, curses.COLOR_BLACK, curses.COLOR_BLUE)
 
 
+# ─── String width helpers (East Asian wide chars) ────────────────────────────
+
+def _char_width(ch):
+    """Return display width of a character (2 for wide/fullwidth, 1 otherwise)."""
+    w = unicodedata.east_asian_width(ch)
+    return 2 if w in ("W", "F") else 1
+
+
+def _str_width(s):
+    """Return display width of a string, accounting for wide characters."""
+    return sum(_char_width(ch) for ch in s)
+
+
+def _wc_truncate(s, width):
+    """Truncate string to fit within `width` display columns."""
+    w = 0
+    for i, ch in enumerate(s):
+        cw = _char_width(ch)
+        if w + cw > width:
+            return s[:i]
+        w += cw
+    return s
+
+
+def _wc_ljust(s, width):
+    """Left-justify string to `width` display columns with space padding."""
+    sw = _str_width(s)
+    if sw >= width:
+        return _wc_truncate(s, width)
+    return s + " " * (width - sw)
+
+
 # ─── Task helpers ────────────────────────────────────────────────────────────
 
 def _task_text(t):
@@ -74,6 +114,177 @@ def _task_due(t):
     if isinstance(t, dict):
         return t.get("due")
     return None
+
+
+def _task_done(t):
+    """Return whether a task is marked done."""
+    if isinstance(t, dict):
+        return t.get("done", False)
+    return False
+
+
+def _task_to_dict(t):
+    """Ensure a task is a dict (promote plain strings)."""
+    if isinstance(t, str):
+        return {"desc": t}
+    return t
+
+
+# ─── Mail threading helpers ───────────────────────────────────────────────────
+
+import re as _re
+
+def _normalize_subject(subj):
+    """Strip Re:/Fwd:/FW: prefixes, lowercase, collapse whitespace."""
+    s = _re.sub(r'^(\s*(Re|Fwd|FW|Fw)\s*:\s*)+', '', subj or '', flags=_re.IGNORECASE)
+    return _re.sub(r'\s+', ' ', s).strip().lower()
+
+
+def _has_reply_prefix(subj):
+    """Return True if subject starts with Re:/Fwd:/FW:."""
+    return bool(_re.match(r'\s*(Re|Fwd|FW|Fw)\s*:', subj or '', flags=_re.IGNORECASE))
+
+
+def _build_mail_threads(emails):
+    """Group emails into conversation threads.
+
+    Returns list of thread dicts sorted by latest date descending.
+    """
+    if not emails:
+        return []
+
+    # Union-Find
+    parent = {}
+    def find(x):
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    uid_by_mid = {}  # message-id -> uid
+    for em in emails:
+        mid = em.get("messageId", "")
+        if mid:
+            uid_by_mid[mid] = em["uid"]
+
+    # Link via In-Reply-To and References
+    for em in emails:
+        uid = em["uid"]
+        irt = em.get("inReplyTo", "")
+        if irt and irt in uid_by_mid:
+            union(uid, uid_by_mid[irt])
+        for ref in em.get("references", []):
+            if ref in uid_by_mid:
+                union(uid, uid_by_mid[ref])
+
+    # Subject-based fallback for singletons
+    groups = {}
+    for em in emails:
+        root = find(em["uid"])
+        groups.setdefault(root, []).append(em)
+
+    # Subject-based fallback: group singletons via normalized subject
+    # Only merge when at least one email has a reply prefix
+    norm_map = {}  # normalized subject -> root uid
+    # First pass: register multi-member groups and reply-prefix singletons
+    for root, members in list(groups.items()):
+        if len(members) > 1:
+            ns = _normalize_subject(members[0].get("subject", ""))
+            if ns:
+                if ns in norm_map:
+                    union(root, norm_map[ns])
+                else:
+                    norm_map[ns] = root
+        elif _has_reply_prefix(members[0].get("subject", "")):
+            ns = _normalize_subject(members[0].get("subject", ""))
+            if ns:
+                if ns in norm_map:
+                    union(root, norm_map[ns])
+                else:
+                    norm_map[ns] = root
+    # Second pass: merge non-reply singletons into existing norm_map groups
+    for root, members in list(groups.items()):
+        if len(members) == 1 and not _has_reply_prefix(members[0].get("subject", "")):
+            ns = _normalize_subject(members[0].get("subject", ""))
+            if ns and ns in norm_map:
+                union(root, norm_map[ns])
+
+    # Rebuild groups after subject-based merging
+    groups = {}
+    for em in emails:
+        root = find(em["uid"])
+        groups.setdefault(root, []).append(em)
+
+    # Parse dates for sorting
+    def _parse_date(date_str):
+        for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z",
+                    "%a, %d %b %Y %H:%M:%S %Z", "%a, %d %b %Y %H:%M:%S"):
+            try:
+                from datetime import datetime as _dt
+                return _dt.strptime(date_str.strip(), fmt)
+            except (ValueError, TypeError):
+                continue
+        return None
+
+    def _date_sort_key(date_str):
+        """Return a float timestamp for sorting, 0.0 if unparseable."""
+        dt = _parse_date(date_str)
+        if dt is None:
+            return 0.0
+        try:
+            return dt.timestamp()
+        except (OSError, ValueError, OverflowError):
+            return 0.0
+
+    threads = []
+    for root, members in groups.items():
+        # Sort within thread chronologically (oldest first)
+        members.sort(key=lambda e: _date_sort_key(e.get("date", "")))
+
+        subj = _normalize_subject(members[-1].get("subject", "")) or "(no subject)"
+        # Use the raw subject of the latest email for display
+        display_subj = members[-1].get("subject", "") or "(no subject)"
+        # Strip Re:/Fwd: for clean display
+        display_subj = _re.sub(r'^(\s*(Re|Fwd|FW|Fw)\s*:\s*)+', '', display_subj,
+                               flags=_re.IGNORECASE).strip() or display_subj
+
+        uids = {e["uid"] for e in members}
+        unread = sum(1 for e in members if not e.get("isRead", True))
+
+        # From summary: unique sender names, max 3
+        seen_names = []
+        for e in members:
+            frm = e.get("from", "")
+            if "<" in frm:
+                frm = frm.split("<")[0].strip().strip('"')
+            if frm and frm not in seen_names:
+                seen_names.append(frm)
+        if len(seen_names) > 3:
+            from_summary = ", ".join(seen_names[:3]) + "…"
+        else:
+            from_summary = ", ".join(seen_names) if seen_names else ""
+
+        threads.append({
+            "subject": display_subj,
+            "norm_subject": subj,
+            "emails": members,
+            "uids": uids,
+            "latest_date": members[-1].get("date", ""),
+            "unread_count": unread,
+            "from_summary": from_summary,
+            "_sort_key": _date_sort_key(members[-1].get("date", "")),
+        })
+
+    # Sort threads by latest date descending
+    threads.sort(key=lambda t: t["_sort_key"], reverse=True)
+    for t in threads:
+        del t["_sort_key"]
+
+    return threads
 
 
 # ─── ProjectBrowser ──────────────────────────────────────────────────────────
@@ -126,6 +337,20 @@ class ProjectBrowser:
         self.mail_body_scroll = 0
         self.mail_unread_filter = False
         self.mail_selected = set()
+        self._mail_loaded_count = 0
+        self._mail_body_cache = {}  # uid -> body text
+        self._mail_body_pending = False
+        self._mail_left_w_offset = 0  # user adjustment for left pane width
+        self._mail_search_query = ""   # current search string
+
+        # Threading state
+        self.mail_threads = []              # derived thread list
+        self.mail_threaded = True           # True=threaded, False=flat
+        self.mail_thread_body_lines = []    # conversation view for right panel
+        self.mail_thread_body_scroll = 0
+        self.mail_thread_body_idx = None    # index of thread shown in right panel
+        self._mail_expanded = set()         # set of expanded thread indices
+        self._mail_display_rows = []        # flat list of display rows (thread + email)
 
         self._calc_dimensions()
 
@@ -183,16 +408,47 @@ class ProjectBrowser:
                 if ms.get("done"):
                     continue
                 due = ms.get("due")
-                if not due:
+                if due:
+                    try:
+                        due_date = parse_date(due)
+                    except ValueError:
+                        due_date = None
+                    if due_date and due_date <= cutoff:
+                        items.append({"kind": "milestone", "milestone": ms,
+                                      "project": proj, "due_date": due_date,
+                                      "ms_index": i})
+                # Milestone sub-tasks with due dates
+                for j, t in enumerate(ms.get("tasks", [])):
+                    if _task_done(t):
+                        continue
+                    t_due = _task_due(t)
+                    if not t_due:
+                        continue
+                    try:
+                        t_due_date = parse_date(t_due)
+                    except ValueError:
+                        continue
+                    if t_due_date <= cutoff:
+                        items.append({"kind": "ms_task", "task": t,
+                                      "milestone": ms, "project": proj,
+                                      "due_date": t_due_date,
+                                      "ms_index": i, "task_index": j})
+
+            # Standalone tasks with due dates
+            for i, t in enumerate(proj.get("tasks", [])):
+                if _task_done(t):
+                    continue
+                t_due = _task_due(t)
+                if not t_due:
                     continue
                 try:
-                    due_date = parse_date(due)
+                    t_due_date = parse_date(t_due)
                 except ValueError:
                     continue
-                # Include if overdue or within cutoff
-                if due_date <= cutoff:
-                    items.append({"milestone": ms, "project": proj,
-                                  "due_date": due_date, "ms_index": i})
+                if t_due_date <= cutoff:
+                    items.append({"kind": "task", "task": t,
+                                  "project": proj, "due_date": t_due_date,
+                                  "task_index": i})
 
         items.sort(key=lambda x: x["due_date"])
         self.timeline_items = items
@@ -367,6 +623,14 @@ class ProjectBrowser:
             except ValueError:
                 self.detail_items.append(DetailItem("info", None, f"Deadline: {dl}", False))
 
+        # Description
+        desc = proj.get("description", "")
+        if desc:
+            self.detail_items.append(DetailItem("blank", None, "", False))
+            self.detail_items.append(DetailItem("header", None, "Description", False))
+            for dline in textwrap.wrap(desc, width=60):
+                self.detail_items.append(DetailItem("info", None, f"  {dline}", False))
+
         # Milestones
         milestones = proj.get("milestones", [])
         if milestones:
@@ -397,10 +661,17 @@ class ProjectBrowser:
                 for j, t in enumerate(ms.get("tasks", [])):
                     t_text = _task_text(t)
                     t_due = _task_due(t)
+                    t_done = _task_done(t)
                     t_due_str = ""
-                    if t_due:
-                        t_due_str = f"  ({fmt_date(parse_date(t_due))})"
-                    self.detail_items.append(DetailItem("ms_task", (i, j), f"      · {t_text}{t_due_str}", True))
+                    if t_done:
+                        comp = t.get("completed_date", "") if isinstance(t, dict) else ""
+                        t_mark = "✓"
+                        t_due_str = f"  ({comp})" if comp else ""
+                    else:
+                        t_mark = "·"
+                        if t_due:
+                            t_due_str = f"  ({fmt_date(parse_date(t_due))})"
+                    self.detail_items.append(DetailItem("ms_task", (i, j), f"      {t_mark} {t_text}{t_due_str}", True))
 
         # Tasks
         tasks = proj.get("tasks", [])
@@ -410,10 +681,17 @@ class ProjectBrowser:
             for i, t in enumerate(tasks):
                 t_text = _task_text(t)
                 t_due = _task_due(t)
+                t_done = _task_done(t)
                 t_due_str = ""
-                if t_due:
-                    t_due_str = f"  ({fmt_date(parse_date(t_due))})"
-                text = f"  · {t_text}{t_due_str}"
+                if t_done:
+                    comp = t.get("completed_date", "") if isinstance(t, dict) else ""
+                    t_mark = "✓"
+                    t_due_str = f"  ({comp})" if comp else ""
+                else:
+                    t_mark = "·"
+                    if t_due:
+                        t_due_str = f"  ({fmt_date(parse_date(t_due))})"
+                text = f"  {t_mark} {t_text}{t_due_str}"
                 self.detail_items.append(DetailItem("task", i, text, True))
 
         # Notes
@@ -722,7 +1000,8 @@ class ProjectBrowser:
         if self.view_mode in (VIEW_SCHED_DAY, VIEW_SCHED_WEEK, VIEW_SCHED_NDAY):
             self.left_w = max(40, min(self.max_x * 70 // 100, self.max_x - 25))
         elif self.view_mode == VIEW_MAIL_INBOX:
-            self.left_w = max(20, min(50, self.max_x * 40 // 100))
+            base = max(20, self.max_x * 40 // 100)
+            self.left_w = max(20, min(self.max_x - 25, base + self._mail_left_w_offset))
         else:
             self.left_w = max(20, min(40, self.max_x * 35 // 100))
         self.right_w = self.max_x - self.left_w - 3  # 3 for borders
@@ -765,7 +1044,12 @@ class ProjectBrowser:
         elif self.view_mode == VIEW_SCHED_MONTH:
             filter_label = self.sched_date.strftime("%B %Y")
         elif self.view_mode == VIEW_MAIL_INBOX:
-            filter_label = f"Inbox ({len(self.mail_emails)})"
+            if self.mail_threaded:
+                n_threads = len(self.mail_threads)
+                n_msgs = len(self.mail_emails)
+                filter_label = f"Inbox ({n_threads} threads, {n_msgs} msgs)"
+            else:
+                filter_label = f"Inbox ({len(self.mail_emails)})"
             if self.mail_unread_filter:
                 filter_label += " [unread]"
         elif self.view_mode == VIEW_TODAY:
@@ -817,7 +1101,17 @@ class ProjectBrowser:
             else:
                 rtitle = " Details "
         elif self.view_mode == VIEW_MAIL_INBOX:
-            if self.mail_body_uid and self.mail_emails and self.left_cursor < len(self.mail_emails):
+            if self.mail_body_uid and self.mail_threaded and self._mail_display_rows and self.left_cursor < len(self._mail_display_rows):
+                row = self._mail_display_rows[self.left_cursor]
+                if row["type"] == "email":
+                    subj = row["email"].get("subject", "")[:self.right_w - 4]
+                    rtitle = f" {subj} "
+                else:
+                    thread = row["thread"]
+                    n = len(thread["emails"])
+                    subj = thread["subject"][:self.right_w - 10]
+                    rtitle = f" {subj} ({n}) " if n > 1 else f" {subj} "
+            elif self.mail_body_uid and not self.mail_threaded and self.mail_emails and self.left_cursor < len(self.mail_emails):
                 rtitle = f" {self.mail_emails[self.left_cursor]['subject'][:self.right_w - 4]} "
             else:
                 rtitle = " Body "
@@ -932,10 +1226,19 @@ class ProjectBrowser:
             y = 1 + i
 
             due_date = entry["due_date"]
-            ms_name = entry["milestone"].get("name", "???")
             proj_name = entry["project"].get("name", "???")
             date_str = due_date.strftime("%b %d")
-            text = f" {date_str}  {ms_name} [{proj_name}]"
+            kind = entry.get("kind", "milestone")
+            if kind == "milestone":
+                item_name = entry["milestone"].get("name", "???")
+                text = f" {date_str}  {item_name} [{proj_name}]"
+            elif kind == "ms_task":
+                item_name = _task_text(entry["task"])
+                ms_name = entry["milestone"].get("name", "")
+                text = f" {date_str}  {item_name} [{proj_name}/{ms_name}]"
+            else:  # standalone task
+                item_name = _task_text(entry["task"])
+                text = f" {date_str}  · {item_name} [{proj_name}]"
             text = text[:self.left_w]
 
             # Color by urgency
@@ -1693,7 +1996,15 @@ class ProjectBrowser:
                 li = self.mail_body_scroll + i
                 if li >= len(self.mail_body_lines):
                     break
-                self._safe_addstr(1 + i, x_offset, self.mail_body_lines[li][:max_w])
+                line = self.mail_body_lines[li][:max_w]
+                attr = 0
+                if li == 0:
+                    attr = curses.A_BOLD  # subject
+                elif line.startswith(("From:", "To:", "Cc:", "Date:")):
+                    attr = curses.A_DIM
+                elif line.startswith("─"):
+                    attr = curses.A_DIM
+                self._safe_addstr(1 + i, x_offset, line, attr)
             return
 
         if self.view_mode == VIEW_PROJECTS and not self.filtered:
@@ -1765,17 +2076,20 @@ class ProjectBrowser:
                         if ti < len(ms_tasks):
                             t_obj = ms_tasks[ti]
                 if t_obj is not None:
-                    t_due = _task_due(t_obj)
-                    if t_due:
-                        try:
-                            due_d = parse_date(t_due)
-                            delta = (due_d - today()).days
-                            if delta < 0:
-                                color = curses.color_pair(C_RED)
-                            elif delta <= 7:
-                                color = curses.color_pair(C_YELLOW)
-                        except ValueError:
-                            pass
+                    if _task_done(t_obj):
+                        color = curses.color_pair(C_GREEN)
+                    else:
+                        t_due = _task_due(t_obj)
+                        if t_due:
+                            try:
+                                due_d = parse_date(t_due)
+                                delta = (due_d - today()).days
+                                if delta < 0:
+                                    color = curses.color_pair(C_RED)
+                                elif delta <= 7:
+                                    color = curses.color_pair(C_YELLOW)
+                            except ValueError:
+                                pass
 
             # Highlight selectable row if cursor is on it
             if idx == self.right_cursor and item.selectable and self.focus == RIGHT:
@@ -1790,8 +2104,10 @@ class ProjectBrowser:
         _undo_hint = "  u undo" if self._undo_stack else ""
         if self.view_mode == VIEW_MAIL_INBOX:
             if self.focus == LEFT:
-                pos = f" {self.left_cursor + 1}/{len(self.mail_emails)}" if self.mail_emails else ""
-                hints = pos + " j/k:nav  Enter:read  x:select  X:all  T:tasks  u:unread  r:refresh  m:mark  g/G:top/end  c:tasks  q:quit"
+                items = self._mail_display_rows if self.mail_threaded else self.mail_emails
+                pos = f" {self.left_cursor + 1}/{len(items)}" if items else ""
+                thread_label = "t:flat" if self.mail_threaded else "t:thread"
+                hints = pos + f" j/k:nav  Enter:expand/read  /:search  n/N:next/prev  x:select  X:all  T:tasks  #:del  e:archive  u:unread  r:refresh  +:more  m:mark  {thread_label}  c:tasks  q:quit"
             else:
                 hints = " j/k:scroll  J/K:page  h/Esc:back  q:quit"
             self._safe_addstr(bar_y, 1, hints[:w].ljust(w), curses.color_pair(C_STATUS_BAR))
@@ -1809,10 +2125,10 @@ class ProjectBrowser:
             elif self.view_mode in (VIEW_TODAY, VIEW_WEEK, VIEW_MONTH):
                 hints = " ↑↓ navigate  Enter/→ details  d done  r reschedule  x delete" + _undo_hint + "  i inbox  v view  c cal  M mail  q quit"
             else:
-                hints = " ↑↓ navigate  Enter/→ details  v view  s sort  a add  x delete  A archive" + _undo_hint + "  f filter  i inbox  c cal  M mail  q quit"
+                hints = " ↑↓ navigate  Enter/→ details  v view  s sort  a add  x delete  A archive  D claude" + _undo_hint + "  f filter  i inbox  c cal  M mail  q quit"
         else:
             # Context-sensitive hints for right panel
-            parts = [" ↑↓ navigate  ←/Esc back"]
+            parts = [" j/k navigate  h/l in/out"]
             if self.detail_items and 0 <= self.right_cursor < len(self.detail_items):
                 item = self.detail_items[self.right_cursor]
                 if item.kind == "milestone":
@@ -1824,13 +2140,28 @@ class ProjectBrowser:
                         parts.append("d done  r reschedule")
                     parts.append("x delete")
                 elif item.kind in ("task", "ms_task"):
-                    parts.append("d done  r reschedule  x delete  J/K reorder")
                     proj = self._current_project()
+                    t_obj = None
+                    if proj and item.kind == "task":
+                        tasks_list = proj.get("tasks", [])
+                        if 0 <= item.index < len(tasks_list):
+                            t_obj = tasks_list[item.index]
+                    elif proj and item.kind == "ms_task" and item.index is not None:
+                        mi, ti = item.index
+                        ms_list = proj.get("milestones", [])
+                        if mi < len(ms_list):
+                            ms_tasks = ms_list[mi].get("tasks", [])
+                            if ti < len(ms_tasks):
+                                t_obj = ms_tasks[ti]
+                    if t_obj is not None and _task_done(t_obj):
+                        parts.append("d undone  x delete  J/K reorder")
+                    else:
+                        parts.append("d done  r reschedule  x delete  J/K reorder")
                     if proj and proj.get("name", "").lower() == "inbox":
                         parts.append("m move")
             if self._undo_stack:
                 parts.append("u undo")
-            parts.append("a add  n notes  q quit")
+            parts.append("a add  n notes  D claude  q quit")
             hints = "  ".join(parts)
 
         hints = hints[:w]
@@ -1842,12 +2173,52 @@ class ProjectBrowser:
         except curses.error:
             pass
 
-    def _show_loading(self, msg):
-        """Draw a centered loading message and refresh immediately."""
+    def _show_loading(self, msg, progress=None):
+        """Draw a centered bordered loading box and refresh immediately.
+
+        progress: optional (current, total) tuple to show a progress bar.
+        """
         h, w = self.max_y, self.max_x
-        y = h // 2
-        self._safe_addstr(y, 0, " " * (w - 1))
-        self._safe_addstr(y, max(0, (w - len(msg)) // 2), msg, curses.A_BOLD)
+        box_w = min(max(len(msg) + 6, 40), w - 4)
+        if box_w < 20:
+            box_w = w - 2
+        inner = box_w - 4
+
+        has_prog = progress is not None
+        box_h = 7 if has_prog else 5
+        sy = max(0, (h - box_h) // 2)
+        sx = max(0, (w - box_w) // 2)
+
+        # Clear a generous area to erase any previous loading box
+        clear_w = min(w - 2, box_w + 20)
+        clear_sx = max(0, (w - clear_w) // 2)
+        for cy in range(max(0, sy - 1), min(h, sy + box_h + 2)):
+            self._safe_addstr(cy, clear_sx, " " * clear_w)
+
+        title = "Loading"
+        dashes = max(1, box_w - 5 - len(title))
+        blank = "│" + " " * (box_w - 2) + "│"
+
+        self._safe_addstr(sy, sx, "┌─ " + title + " " + "─" * dashes + "┐")
+        self._safe_addstr(sy + 1, sx, blank)
+        self._safe_addstr(sy + 2, sx,
+                          "│  " + msg[:inner].ljust(inner) + "│")
+        row = 3
+        if has_prog:
+            cur, tot = progress
+            tot = max(tot, 1)
+            label = f"{cur}/{tot}"
+            bar_w = inner - len(label) - 1 if len(label) + 2 <= inner else inner
+            filled = int(bar_w * cur / tot)
+            bar = "█" * filled + "░" * (bar_w - filled)
+            if bar_w < inner:
+                bar = bar + " " + label
+            self._safe_addstr(sy + row, sx,
+                              "│  " + bar[:inner].ljust(inner) + "│")
+            row += 1
+        self._safe_addstr(sy + row, sx, blank)
+        row += 1
+        self._safe_addstr(sy + row, sx, "└" + "─" * (box_w - 2) + "┘")
         self.stdscr.refresh()
 
     # ─── Navigation ───────────────────────────────────────────────────────
@@ -2332,19 +2703,30 @@ class ProjectBrowser:
         elif item.kind == "task":
             tasks = proj.get("tasks", [])
             if 0 <= item.index < len(tasks):
-                tasks.pop(item.index)
+                t = _task_to_dict(tasks[item.index])
+                tasks[item.index] = t
+                if t.get("done"):
+                    t.pop("done", None)
+                    t.pop("completed_date", None)
+                else:
+                    t["done"] = True
+                    t["completed_date"] = str(today())
                 self._save_and_rebuild()
-                # Adjust cursor
-                self._snap_right_cursor()
 
         elif item.kind == "ms_task":
             ms_idx, t_idx = item.index
             ms = proj["milestones"][ms_idx]
             tasks = ms.get("tasks", [])
             if 0 <= t_idx < len(tasks):
-                tasks.pop(t_idx)
+                t = _task_to_dict(tasks[t_idx])
+                tasks[t_idx] = t
+                if t.get("done"):
+                    t.pop("done", None)
+                    t.pop("completed_date", None)
+                else:
+                    t["done"] = True
+                    t["completed_date"] = str(today())
                 self._save_and_rebuild()
-                self._snap_right_cursor()
 
     def action_undone(self):
         item = self._current_detail_item()
@@ -2713,6 +3095,590 @@ class ProjectBrowser:
                 self.left_cursor = i
                 break
         self._rebuild_detail()
+
+        # Offer to launch Claude Code for planning
+        ch = self._modal_choice("Plan", "Launch Claude Code to plan this project?",
+                                [("y", "Yes"), ("n", "No")])
+        if ch == "y":
+            self.action_claude_session(proj)
+
+    # ─── Chat description ─────────────────────────────────────────────
+
+    def _draw_chat_overlay(self, chat_lines, chat_scroll, input_buf, is_thinking):
+        """Near-fullscreen chat overlay for project description building."""
+        h, w = self.stdscr.getmaxyx()
+        box_w = max(60, w - 4)
+        box_h = max(16, h - 4)
+        sy = max(0, (h - box_h) // 2)
+        sx = max(0, (w - box_w) // 2)
+        inner_w = box_w - 2
+        chat_h = box_h - 6  # title + chat area + separator + input + separator + footer
+
+        # Clear area
+        blank = " " * box_w
+        for cy in range(sy, min(sy + box_h, h)):
+            self._safe_addstr(cy, sx, blank)
+
+        # Top border
+        title = " Chat: Project Description "
+        top_bar = "─" * (box_w - 2)
+        top_bar = top_bar[:1] + title + top_bar[1 + len(title):]
+        self._safe_addstr(sy, sx, "┌" + top_bar[:box_w - 2] + "┐")
+
+        # Chat content
+        visible = chat_lines[chat_scroll:chat_scroll + chat_h]
+        for row_i in range(chat_h):
+            y = sy + 1 + row_i
+            if row_i < len(visible):
+                ctype, ctext = visible[row_i]
+                line = ctext[:inner_w].ljust(inner_w)
+                if ctype == "user":
+                    self._safe_addstr(y, sx + 1, line, curses.color_pair(C_CYAN))
+                elif ctype == "assistant":
+                    self._safe_addstr(y, sx + 1, line, curses.color_pair(C_GREEN))
+                else:
+                    self._safe_addstr(y, sx + 1, line)
+            else:
+                self._safe_addstr(y, sx + 1, " " * inner_w)
+            self._safe_addstr(y, sx, "│")
+            self._safe_addstr(y, sx + box_w - 1, "│")
+
+        # Input separator
+        sep_y = sy + 1 + chat_h
+        self._safe_addstr(sep_y, sx, "├" + "─" * (box_w - 2) + "┤")
+
+        # Input line
+        inp_y = sep_y + 1
+        if is_thinking:
+            inp_text = " [Thinking...]"
+            self._safe_addstr(inp_y, sx, "│")
+            self._safe_addstr(inp_y, sx + 1, inp_text[:inner_w].ljust(inner_w), curses.A_DIM)
+            self._safe_addstr(inp_y, sx + box_w - 1, "│")
+        else:
+            prompt_str = " > "
+            buf_display = input_buf[-(inner_w - len(prompt_str) - 1):]
+            inp_text = prompt_str + buf_display
+            self._safe_addstr(inp_y, sx, "│")
+            self._safe_addstr(inp_y, sx + 1, inp_text[:inner_w].ljust(inner_w))
+            self._safe_addstr(inp_y, sx + box_w - 1, "│")
+
+        # Footer separator
+        foot_sep_y = inp_y + 1
+        self._safe_addstr(foot_sep_y, sx, "├" + "─" * (box_w - 2) + "┤")
+
+        # Footer
+        foot_y = foot_sep_y + 1
+        keys = " Enter:send  Ctrl-D:done (save)  PgUp/PgDn:scroll  Esc:cancel "
+        self._safe_addstr(foot_y, sx, "│")
+        self._safe_addstr(foot_y, sx + 1, keys[:inner_w].center(inner_w), curses.A_DIM)
+        self._safe_addstr(foot_y, sx + box_w - 1, "│")
+
+        # Bottom border
+        bot_y = foot_y + 1
+        self._safe_addstr(bot_y, sx, "└" + "─" * (box_w - 2) + "┘")
+
+        self.stdscr.refresh()
+
+    def _chat_build_display(self, history, wrap_w):
+        """Convert conversation history to flat display lines."""
+        lines = []
+        for msg in history:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "user":
+                prefix = "You: "
+                ctype = "user"
+            else:
+                prefix = "Claude: "
+                ctype = "assistant"
+            wrapped = textwrap.wrap(content, width=wrap_w - len(prefix) - 2,
+                                   subsequent_indent=" " * len(prefix))
+            if not wrapped:
+                wrapped = [""]
+            for i, wline in enumerate(wrapped):
+                if i == 0:
+                    lines.append((ctype, f"  {prefix}{wline}"))
+                else:
+                    lines.append((ctype, f"  {wline}"))
+            lines.append(("blank", ""))
+        return lines
+
+    def _chat_build_prompt(self, project_name, category, history):
+        """Build prompt for Claude with conversation context."""
+        preamble = (
+            f"You are helping describe the project \"{project_name}\" "
+            f"(category: {category or 'general'}). "
+            f"Ask clarifying questions about goals, scope, methods, deliverables, "
+            f"and key milestones to understand the project. Keep responses concise "
+            f"(2-3 sentences). Ask one question at a time."
+        )
+        parts = [f"System: {preamble}\n"]
+        for msg in history:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            parts.append(f"{role}: {msg['content']}")
+        parts.append("Assistant:")
+        return "\n".join(parts)
+
+    def _chat_synthesize_prompt(self, project_name, category, history):
+        """Build final synthesis prompt to distill conversation into description."""
+        transcript = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in history
+        )
+        return (
+            f"Based on this conversation about the project \"{project_name}\" "
+            f"(category: {category or 'general'}), write a concise 2-4 sentence "
+            f"project description that captures the key goals, scope, and methods. "
+            f"Output ONLY the description text, nothing else.\n\n"
+            f"Conversation:\n{transcript}"
+        )
+
+    def _chat_send_to_claude(self, prompt, model):
+        """Send prompt to Claude CLI and return response text."""
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        try:
+            result = subprocess.run(
+                ["claude", "-p", "--model", model, "--dangerously-skip-permissions"],
+                input=prompt, capture_output=True, text=True, timeout=120,
+                env=env,
+            )
+            return result.stdout.strip()
+        except Exception:
+            return "[Error: Claude did not respond]"
+
+    def action_chat_description(self, project=None):
+        """Interactive chat to build/refine a project description."""
+        if project is None:
+            project = self._current_project()
+        if not project:
+            return
+
+        # Model selection
+        choice = self._modal_choice("Model", "Choose model for chat:",
+                                    [("h", "Haiku (fast)"), ("s", "Sonnet")])
+        if choice is None:
+            return
+        model_map = {"h": "claude-haiku-4-5-20251001", "s": "claude-sonnet-4-6"}
+        model = model_map[choice]
+
+        proj_name = project.get("name", "")
+        category = project.get("category", "")
+        existing_desc = project.get("description", "")
+
+        history = []  # list of {"role", "content"}
+
+        # Initial assistant message
+        if existing_desc:
+            init_msg = (f"The current description for \"{proj_name}\" is:\n"
+                        f"\"{existing_desc}\"\n\n"
+                        f"What would you like to change or add?")
+        else:
+            init_msg = (f"Let's build a description for \"{proj_name}\". "
+                        f"What is this project about?")
+        history.append({"role": "assistant", "content": init_msg})
+
+        input_buf = ""
+        chat_scroll = 0
+        is_thinking = False
+
+        curses.curs_set(1)
+        try:
+            while True:
+                h, w = self.stdscr.getmaxyx()
+                box_w = max(60, w - 4)
+                inner_w = box_w - 2
+                box_h = max(16, h - 4)
+                chat_h = box_h - 6
+
+                chat_lines = self._chat_build_display(history, inner_w)
+                # Auto-scroll to bottom
+                max_scroll = max(0, len(chat_lines) - chat_h)
+                if chat_scroll > max_scroll:
+                    chat_scroll = max_scroll
+
+                self._draw_chat_overlay(chat_lines, chat_scroll, input_buf, is_thinking)
+
+                try:
+                    ch = self.stdscr.getch()
+                except curses.error:
+                    continue
+
+                if ch == 27:  # Esc — cancel
+                    break
+                elif ch == 4:  # Ctrl-D — done, synthesize
+                    if len(history) < 2:
+                        # Need at least one user message
+                        break
+                    is_thinking = True
+                    self._draw_chat_overlay(chat_lines, chat_scroll, input_buf, is_thinking)
+
+                    synth_prompt = self._chat_synthesize_prompt(proj_name, category, history)
+                    desc = self._chat_send_to_claude(synth_prompt, model)
+                    is_thinking = False
+
+                    if desc and not desc.startswith("[Error"):
+                        # Confirm
+                        confirm = self._modal_choice(
+                            "Save Description", desc[:200],
+                            [("y", "Save"), ("n", "Discard")])
+                        if confirm == "y":
+                            project["description"] = desc
+                            self._save_and_rebuild()
+                            self._rebuild_detail()
+                    break
+                elif ch in (curses.KEY_PPAGE, 339):  # PgUp
+                    chat_scroll = max(0, chat_scroll - chat_h)
+                elif ch in (curses.KEY_NPAGE, 338):  # PgDn
+                    max_scroll = max(0, len(chat_lines) - chat_h)
+                    chat_scroll = min(max_scroll, chat_scroll + chat_h)
+                elif ch in (curses.KEY_ENTER, ord("\n"), 10, 13):  # Enter — send
+                    msg = input_buf.strip()
+                    if not msg:
+                        continue
+                    history.append({"role": "user", "content": msg})
+                    input_buf = ""
+                    is_thinking = True
+
+                    # Redraw with thinking indicator and auto-scroll
+                    chat_lines = self._chat_build_display(history, inner_w)
+                    chat_scroll = max(0, len(chat_lines) - chat_h)
+                    self._draw_chat_overlay(chat_lines, chat_scroll, input_buf, is_thinking)
+
+                    prompt = self._chat_build_prompt(proj_name, category, history)
+                    reply = self._chat_send_to_claude(prompt, model)
+                    is_thinking = False
+                    history.append({"role": "assistant", "content": reply})
+
+                    # Auto-scroll to bottom
+                    chat_lines = self._chat_build_display(history, inner_w)
+                    chat_scroll = max(0, len(chat_lines) - chat_h)
+                elif ch in (curses.KEY_BACKSPACE, 127, 263):
+                    input_buf = input_buf[:-1]
+                elif ch == curses.KEY_RESIZE:
+                    self._calc_dimensions()
+                elif 32 <= ch <= 126:
+                    input_buf += chr(ch)
+        finally:
+            curses.curs_set(0)
+            self._rebuild_detail()
+            self.draw()
+
+    # ─── Claude Code session ─────────────────────────────────────────
+
+    def _build_claude_context(self, project):
+        """Generate CLAUDE.md content for a Claude Code session."""
+        name = project.get("name", "Untitled")
+        category = project.get("category", "")
+        status = project.get("status", "")
+        deadline = project.get("deadline", "")
+        description = project.get("description", "")
+        notes = project.get("notes", "")
+
+        lines = [
+            f"# Project: {name}",
+            "",
+            f"- Category: {category}" if category else None,
+            f"- Status: {status}" if status else None,
+            f"- Deadline: {deadline}" if deadline else None,
+            f"- Today: {today()}",
+            "",
+        ]
+        lines = [l for l in lines if l is not None]
+
+        if description:
+            lines += ["## Description", description, ""]
+        if notes:
+            lines += ["## Notes", notes, ""]
+
+        milestones = project.get("milestones", [])
+        if milestones:
+            lines.append("## Current Milestones")
+            for ms in milestones:
+                done = "DONE" if ms.get("done") else "TODO"
+                due = f" (due {ms.get('due', '?')})" if ms.get("due") else ""
+                lines.append(f"- [{done}] {ms.get('name', '')}{due}")
+                for t in ms.get("tasks", []):
+                    td = "DONE" if _task_done(t) else "TODO"
+                    lines.append(f"  - [{td}] {_task_text(t)}")
+            lines.append("")
+
+        tasks = project.get("tasks", [])
+        if tasks:
+            lines.append("## Current Tasks")
+            for t in tasks:
+                td = "DONE" if _task_done(t) else "TODO"
+                lines.append(f"- [{td}] {_task_text(t)}")
+            lines.append("")
+
+        lines += [
+            "---",
+            "",
+            "# Instructions",
+            "",
+            "You are helping plan this project. Discuss the project with the user,",
+            "ask clarifying questions, and help them think through milestones and tasks.",
+            "",
+            "When the user is satisfied with the plan, write a file called `output.yaml`",
+            "in this directory with the following schema:",
+            "",
+            "```yaml",
+            'description: "2-4 sentence project description"',
+            "milestones:",
+            '  - name: "Milestone Name"',
+            '    due: "YYYY-MM-DD"',
+            "    tasks:",
+            '      - desc: "Task description"',
+            '        due: "YYYY-MM-DD"  # optional',
+            "tasks:",
+            '  - desc: "Standalone task"',
+            '    due: "YYYY-MM-DD"  # optional',
+            "```",
+            "",
+            "Rules:",
+            "- Only include NEW items (not already listed above)",
+            "- Use YYYY-MM-DD format for all dates",
+            "- Omit empty sections (e.g. if no milestones, leave out the milestones key)",
+            "- description is optional if the project already has a good one",
+        ]
+        return "\n".join(lines)
+
+    def action_claude_session(self, project=None):
+        """Launch an interactive Claude Code session for project planning."""
+        if project is None:
+            project = self._current_project()
+        if not project:
+            return
+
+        if not self._modal_confirm("Claude Code",
+                                   f"Launch Claude Code for '{project.get('name', '')}'?"):
+            return
+
+        tmpdir = tempfile.mkdtemp(prefix="lori_claude_")
+        try:
+            # Write CLAUDE.md context
+            claude_md = os.path.join(tmpdir, "CLAUDE.md")
+            with open(claude_md, "w") as f:
+                f.write(self._build_claude_context(project))
+
+            # Prepare env without CLAUDECODE to avoid nesting error
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+            # Release terminal to Claude Code
+            curses.endwin()
+            subprocess.call(
+                ["claude", "--dangerously-skip-permissions"],
+                cwd=tmpdir, env=env)
+
+            # Restore curses
+            self.stdscr.refresh()
+            curses.curs_set(0)
+
+            # Check for output
+            output_path = os.path.join(tmpdir, "output.yaml")
+            if os.path.exists(output_path):
+                self._process_claude_output(project, output_path)
+        finally:
+            # Cleanup tmpdir
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            self._rebuild_detail()
+            self.draw()
+
+    def _process_claude_output(self, project, output_path):
+        """Parse output.yaml and present review overlay."""
+        try:
+            with open(output_path) as f:
+                data = yaml.safe_load(f)
+        except Exception:
+            return
+        if not data or not isinstance(data, dict):
+            return
+
+        items = []  # list of (type_label, description, data_dict, accepted)
+
+        # Description
+        desc = data.get("description")
+        if desc and isinstance(desc, str):
+            items.append(("DESC", desc[:200], {"description": desc}, True))
+
+        # Milestones
+        existing_ms_names = {ms.get("name", "").lower()
+                             for ms in project.get("milestones", [])}
+        for ms in data.get("milestones", []):
+            if not isinstance(ms, dict):
+                continue
+            name = ms.get("name", "")
+            if name.lower() in existing_ms_names:
+                continue  # skip duplicates
+            due = ms.get("due", "")
+            tasks = ms.get("tasks", [])
+            label = name
+            if due:
+                label += f" (due {due})"
+            if tasks:
+                label += f" [{len(tasks)} tasks]"
+            items.append(("MILESTONE", label, ms, True))
+
+        # Standalone tasks
+        for t in data.get("tasks", []):
+            if not isinstance(t, dict):
+                continue
+            desc_t = t.get("desc", "")
+            due = t.get("due", "")
+            label = desc_t
+            if due:
+                label += f" (due {due})"
+            items.append(("TASK", label, t, True))
+
+        if not items:
+            return
+
+        result = self._claude_review_items(items, project)
+        if result is None:
+            return
+
+        # Apply accepted items
+        self._push_undo()
+        for type_label, description, data_dict, accepted in result:
+            if not accepted:
+                continue
+            if type_label == "DESC":
+                project["description"] = data_dict["description"]
+            elif type_label == "MILESTONE":
+                ms_entry = {
+                    "name": data_dict.get("name", ""),
+                    "done": False,
+                }
+                if data_dict.get("due"):
+                    ms_entry["due"] = data_dict["due"]
+                ms_tasks = []
+                for t in data_dict.get("tasks", []):
+                    if isinstance(t, dict):
+                        task_entry = {"desc": t.get("desc", ""), "done": False}
+                        if t.get("due"):
+                            task_entry["due"] = t["due"]
+                        ms_tasks.append(task_entry)
+                if ms_tasks:
+                    ms_entry["tasks"] = ms_tasks
+                project.setdefault("milestones", []).append(ms_entry)
+            elif type_label == "TASK":
+                task_entry = {"desc": data_dict.get("desc", ""), "done": False}
+                if data_dict.get("due"):
+                    task_entry["due"] = data_dict["due"]
+                project.setdefault("tasks", []).append(task_entry)
+
+        save_projects(self.projects)
+        self._rebuild_filtered()
+        self._rebuild_detail()
+
+    def _claude_review_items(self, items, project):
+        """Interactive review overlay. Returns items with accept/reject, or None."""
+        cursor = 0
+        scroll = 0
+        curses.flushinp()
+
+        while True:
+            self.draw()
+            self._draw_claude_review(items, cursor, scroll, project)
+            self.stdscr.refresh()
+
+            try:
+                ch = self.stdscr.getch()
+            except curses.error:
+                continue
+
+            if ch in (ord("q"), 27):  # q or Esc — cancel
+                return None
+            elif ch in (ord("j"), curses.KEY_DOWN):
+                if cursor < len(items) - 1:
+                    cursor += 1
+            elif ch in (ord("k"), curses.KEY_UP):
+                if cursor > 0:
+                    cursor -= 1
+            elif ch == ord(" "):  # Space — toggle
+                t, d, data, acc = items[cursor]
+                items[cursor] = (t, d, data, not acc)
+            elif ch in (ord("S"), ord("s")):  # Save/confirm
+                return items
+
+            # Scroll management
+            h, _ = self.stdscr.getmaxyx()
+            visible_h = max(1, h - 10)
+            if cursor < scroll:
+                scroll = cursor
+            if cursor >= scroll + visible_h:
+                scroll = cursor - visible_h + 1
+
+    def _draw_claude_review(self, items, cursor, scroll, project):
+        """Draw centered review overlay for Claude output items."""
+        h, w = self.stdscr.getmaxyx()
+        box_w = min(80, w - 4)
+        if box_w < 30:
+            box_w = w - 2
+        inner_w = box_w - 4
+        visible_h = max(1, h - 10)
+        box_h = visible_h + 5  # title + items + footer + borders
+
+        sy = max(0, (h - box_h) // 2)
+        sx = max(0, (w - box_w) // 2)
+
+        # Clear area
+        blank = " " * box_w
+        for cy in range(sy, min(sy + box_h, h)):
+            self._safe_addstr(cy, sx, blank)
+
+        # Title
+        proj_name = project.get("name", "")
+        title = f" Review: {proj_name} "
+        top_bar = "─" * (box_w - 2)
+        tl = min(len(title), len(top_bar) - 1)
+        top_bar = top_bar[:1] + title[:tl] + top_bar[1 + tl:]
+        self._safe_addstr(sy, sx, "┌" + top_bar[:box_w - 2] + "┐")
+
+        # Items
+        visible = items[scroll:scroll + visible_h]
+        for row_i in range(visible_h):
+            y = sy + 1 + row_i
+            if y >= h - 1:
+                break
+            if row_i < len(visible):
+                t, desc, _, accepted = visible[row_i]
+                idx = scroll + row_i
+                is_cur = idx == cursor
+
+                mark = "✓" if accepted else "✗"
+                attr = curses.color_pair(C_GREEN) if accepted else curses.color_pair(C_RED)
+                if is_cur:
+                    attr |= curses.A_REVERSE
+
+                tag = f"[{t:9s}]"
+                line = f" {mark} {tag} {desc}"
+                line = line[:inner_w].ljust(inner_w)
+                self._safe_addstr(y, sx, "│ ", curses.A_REVERSE if is_cur else 0)
+                self._safe_addstr(y, sx + 2, line, attr)
+                self._safe_addstr(y, sx + box_w - 1, "│",
+                                  curses.A_REVERSE if is_cur else 0)
+            else:
+                self._safe_addstr(y, sx,
+                                  "│" + " " * (box_w - 2) + "│")
+
+        # Separator
+        sep_y = sy + 1 + visible_h
+        if sep_y < h:
+            self._safe_addstr(sep_y, sx, "├" + "─" * (box_w - 2) + "┤")
+
+        # Footer
+        footer_y = sep_y + 1
+        if footer_y < h:
+            accepted_count = sum(1 for _, _, _, a in items if a)
+            footer = f" Space toggle  S save ({accepted_count}/{len(items)})  q cancel"
+            self._safe_addstr(footer_y, sx,
+                              "│ " + footer[:inner_w].ljust(inner_w) + "│")
+
+        # Bottom border
+        bottom_y = footer_y + 1
+        if bottom_y < h:
+            self._safe_addstr(bottom_y, sx, "└" + "─" * (box_w - 2) + "┘")
 
     def action_archive_project(self):
         """Archive a project by changing its status to paused or completed."""
@@ -3401,14 +4367,31 @@ class ProjectBrowser:
         entry = self._current_timeline_entry()
         if not entry:
             return
-        ms = entry["milestone"]
-        if ms.get("done"):
-            ms.pop("done", None)
-            ms.pop("completed_date", None)
-            self._save_and_rebuild()
-            return
-        ms["done"] = True
-        ms["completed_date"] = str(today())
+        kind = entry.get("kind", "milestone")
+        if kind == "milestone":
+            ms = entry["milestone"]
+            if ms.get("done"):
+                ms.pop("done", None)
+                ms.pop("completed_date", None)
+            else:
+                ms["done"] = True
+                ms["completed_date"] = str(today())
+        else:
+            t = entry["task"]
+            t_dict = _task_to_dict(t)
+            if _task_done(t_dict):
+                t_dict.pop("done", None)
+                t_dict.pop("completed_date", None)
+            else:
+                t_dict["done"] = True
+                t_dict["completed_date"] = str(today())
+            # Replace in-place if it was promoted from string
+            if kind == "ms_task":
+                ms = entry["milestone"]
+                ms["tasks"][entry["task_index"]] = t_dict
+            else:
+                proj = entry["project"]
+                proj["tasks"][entry["task_index"]] = t_dict
         self._save_and_rebuild()
 
     def _timeline_action_undone(self):
@@ -3426,95 +4409,822 @@ class ProjectBrowser:
         entry = self._current_timeline_entry()
         if not entry:
             return
-        ms = entry["milestone"]
-        name = ms.get("name", "")
-        if not self._modal_confirm("Delete", f"Delete milestone '{name}'?"):
-            return
-        proj = entry["project"]
-        proj["milestones"].pop(entry["ms_index"])
+        kind = entry.get("kind", "milestone")
+        if kind == "milestone":
+            name = entry["milestone"].get("name", "")
+            if not self._modal_confirm("Delete", f"Delete milestone '{name}'?"):
+                return
+            entry["project"]["milestones"].pop(entry["ms_index"])
+        elif kind == "ms_task":
+            desc = _task_text(entry["task"])
+            if not self._modal_confirm("Delete", f"Delete task '{desc}'?"):
+                return
+            entry["milestone"]["tasks"].pop(entry["task_index"])
+        else:
+            desc = _task_text(entry["task"])
+            if not self._modal_confirm("Delete", f"Delete task '{desc}'?"):
+                return
+            entry["project"]["tasks"].pop(entry["task_index"])
         self._save_and_rebuild()
 
     def _timeline_action_reschedule(self):
         entry = self._current_timeline_entry()
         if not entry:
             return
-        ms = entry["milestone"]
-        if ms.get("done"):
-            return
-        new_date_str = self._modal_input("Reschedule",
-            f"New date ({ms.get('due', 'none')}): ",
-            [f"Milestone: {ms['name']}"])
-        if not new_date_str:
-            return
-        try:
-            new_date = parse_date(new_date_str)
-        except ValueError:
-            return
-        ms["due"] = str(new_date)
+        kind = entry.get("kind", "milestone")
+        if kind == "milestone":
+            ms = entry["milestone"]
+            if ms.get("done"):
+                return
+            label = f"Milestone: {ms['name']}"
+            current_due = ms.get("due", "none")
+            new_date_str = self._modal_input("Reschedule",
+                f"New date ({current_due}): ", [label])
+            if not new_date_str:
+                return
+            try:
+                new_date = parse_date(new_date_str)
+            except ValueError:
+                return
+            ms["due"] = str(new_date)
+        else:
+            t = entry["task"]
+            t_dict = _task_to_dict(t)
+            if _task_done(t_dict):
+                return
+            label = f"Task: {_task_text(t_dict)}"
+            current_due = t_dict.get("due", "none")
+            new_date_str = self._modal_input("Reschedule",
+                f"New date ({current_due}): ", [label])
+            if not new_date_str:
+                return
+            try:
+                new_date = parse_date(new_date_str)
+            except ValueError:
+                return
+            t_dict["due"] = str(new_date)
+            if kind == "ms_task":
+                entry["milestone"]["tasks"][entry["task_index"]] = t_dict
+            else:
+                entry["project"]["tasks"][entry["task_index"]] = t_dict
         self._save_and_rebuild()
 
     # ─── Mail integration ──────────────────────────────────────────────────
+
+    _MAIL_CACHE_DIR = os.path.join(os.path.expanduser("~/.lori"), "mail_cache")
+
+    def _mail_load_disk_cache(self):
+        """Load cached email list and body cache from disk."""
+        list_path = os.path.join(self._MAIL_CACHE_DIR, "list.json")
+        if os.path.exists(list_path):
+            try:
+                with open(list_path) as f:
+                    self._mail_disk_cache = {e["uid"]: e for e in json.load(f)}
+            except (json.JSONDecodeError, KeyError):
+                self._mail_disk_cache = {}
+        else:
+            self._mail_disk_cache = {}
+        # Load cached bodies
+        body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+        if os.path.isdir(body_dir):
+            for fname in os.listdir(body_dir):
+                if fname.endswith(".txt"):
+                    uid = fname[:-4]
+                    if uid not in self._mail_body_cache:
+                        try:
+                            with open(os.path.join(body_dir, fname)) as f:
+                                self._mail_body_cache[uid] = f.read()
+                        except OSError:
+                            pass
+
+    def _mail_save_disk_cache(self):
+        """Persist email list and new bodies to disk."""
+        os.makedirs(self._MAIL_CACHE_DIR, exist_ok=True)
+        with open(os.path.join(self._MAIL_CACHE_DIR, "list.json"), "w") as f:
+            json.dump(self.mail_emails, f)
+        body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+        os.makedirs(body_dir, exist_ok=True)
+        for uid, body in self._mail_body_cache.items():
+            path = os.path.join(body_dir, f"{uid}.txt")
+            if not os.path.exists(path):
+                with open(path, "w") as f:
+                    f.write(body)
+
+    def _mail_rebuild_threads(self):
+        """Rebuild mail_threads from mail_emails based on current mode."""
+        if self.mail_threaded:
+            self.mail_threads = _build_mail_threads(self.mail_emails)
+        else:
+            # Flat mode: each email is its own "thread"
+            self.mail_threads = []
+            for em in self.mail_emails:
+                frm = em.get("from", "")
+                if "<" in frm:
+                    frm = frm.split("<")[0].strip().strip('"')
+                self.mail_threads.append({
+                    "subject": em.get("subject", "") or "(no subject)",
+                    "norm_subject": _normalize_subject(em.get("subject", "")),
+                    "emails": [em],
+                    "uids": {em["uid"]},
+                    "latest_date": em.get("date", ""),
+                    "unread_count": 0 if em.get("isRead", True) else 1,
+                    "from_summary": frm or em.get("from", ""),
+                })
+        self._mail_build_display_rows()
+
+    def _mail_build_display_rows(self):
+        """Build flat display rows list from mail_threads (thread + email rows)."""
+        if not self.mail_threaded:
+            self._mail_display_rows = []
+            return
+        rows = []
+        for i, thread in enumerate(self.mail_threads):
+            rows.append({"type": "thread", "thread_idx": i, "thread": thread})
+            if i in self._mail_expanded and len(thread["emails"]) > 1:
+                emails_rev = list(reversed(thread["emails"]))
+                for j, em in enumerate(emails_rev):
+                    rows.append({"type": "email", "thread_idx": i, "email": em,
+                                 "pos": j, "total": len(emails_rev)})
+        self._mail_display_rows = rows
 
     def _mail_connect(self):
         """Lazy IMAP connect / reconnect."""
         if self.mail_imap:
             try:
+                self.mail_imap.socket().settimeout(10)
                 self.mail_imap.noop()
                 return
             except Exception:
-                pass
+                self.mail_imap = None
         self._show_loading("Connecting to mail server...")
-        cache = get_token_cache()
-        token, username = authenticate(cache)
-        save_token_cache(cache)
-        self.mail_imap = connect_imap(token, username)
+        try:
+            cache = get_token_cache()
+            token, username = authenticate(cache)
+            save_token_cache(cache)
+            self.mail_imap = connect_imap(token, username)
+        except Exception as e:
+            self.mail_imap = None
+            self._modal_input("Connection Error",
+                              "Could not connect to mail server.",
+                              [str(e)[:60], "", "Press Enter to dismiss."])
+            raise
 
     def _mail_fetch_list(self):
-        self._mail_connect()
-        self._show_loading("Fetching emails...")
-        self.mail_emails = fetch_email_list(
-            self.mail_imap, unread=self.mail_unread_filter, top=100)
+        try:
+            self._mail_connect()
+        except Exception:
+            return
+        # Load disk cache if first time
+        if not hasattr(self, "_mail_disk_cache"):
+            self._mail_load_disk_cache()
 
-    def _mail_open(self):
+        try:
+            self._show_loading("Checking for new emails...")
+            current_uids = search_uids(self.mail_imap,
+                                       unread=self.mail_unread_filter, top=100)
+        except Exception:
+            self.mail_imap = None
+            self._modal_input("Error", "Lost connection while fetching.",
+                              ["Will use cached emails.", "Press Enter."])
+            # Fall back to disk cache
+            cached = self._mail_disk_cache
+            if cached:
+                uids = sorted(cached.keys(), key=lambda u: int(u), reverse=True)
+                self.mail_emails = [cached[u] for u in uids]
+                self._mail_loaded_count = len(self.mail_emails)
+                self._mail_rebuild_threads()
+            return
+
+        cached = self._mail_disk_cache
+        new_uids = [u for u in current_uids if u not in cached]
+
+        if new_uids:
+            try:
+                n = len(new_uids)
+                new_emails = fetch_email_list(
+                    self.mail_imap, only_uids=new_uids,
+                    on_progress=lambda cur, tot: self._show_loading(
+                        f"Fetching {n} new emails...", progress=(cur, tot)))
+                for e in new_emails:
+                    cached[e["uid"]] = e
+            except Exception:
+                self.mail_imap = None
+
+        # Build ordered list from current UIDs
+        self.mail_emails = [cached[u] for u in current_uids if u in cached]
+        self._mail_loaded_count = len(self.mail_emails)
+        # Only prune stale cache entries when showing all mail (not filtered)
+        if not self.mail_unread_filter:
+            current_set = set(current_uids)
+            self._mail_disk_cache = {u: e for u, e in cached.items()
+                                     if u in current_set}
+        self._mail_save_disk_cache()
+        self._mail_rebuild_threads()
+
+    def _mail_load_more(self):
+        """Fetch 10 older emails and append to the list."""
+        if not self.mail_emails:
+            return
+        self._mail_connect()
+        self._show_loading("Loading more emails...")
+        older = fetch_email_list(
+            self.mail_imap, unread=self.mail_unread_filter, top=10,
+            skip=self._mail_loaded_count,
+            on_progress=lambda cur, tot: self._show_loading(
+                "Loading more...", progress=(cur, tot)))
+        if older:
+            self.mail_emails.extend(older)
+            self._mail_loaded_count += len(older)
+            if hasattr(self, "_mail_disk_cache"):
+                for e in older:
+                    self._mail_disk_cache[e["uid"]] = e
+                self._mail_save_disk_cache()
+            self._mail_rebuild_threads()
+
+    def _mail_build_body_lines(self, em, body):
+        """Build mail_body_lines with a compact header block + wrapped body."""
+        wrap_w = max(10, self.right_w - 1)
+        lines = []
+
+        # Header block
+        subj = em.get("subject", "(no subject)")
+        frm = em.get("from", "")
+        to = em.get("to", "")
+        cc = em.get("cc", "")
+        date = self._mail_format_date(em.get("date", ""))
+
+        lines.append(subj)
+        lines.append(f"From: {frm}")
+        if to:
+            lines.append(f"To: {to}")
+        if cc:
+            lines.append(f"Cc: {cc}")
+        lines.append(f"Date: {date}")
+        lines.append("─" * wrap_w)
+        lines.append("")
+
+        # Wrap body, collapsing runs of blank lines to at most 1
+        blank_run = 0
+        for raw_line in body.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                blank_run += 1
+                if blank_run <= 1:
+                    lines.append("")
+                continue
+            blank_run = 0
+            while len(raw_line) > wrap_w:
+                lines.append(raw_line[:wrap_w])
+                raw_line = raw_line[wrap_w:]
+            lines.append(raw_line)
+
+        self.mail_body_lines = lines
+        self.mail_body_uid = em["uid"]
+        self.mail_body_scroll = 0
+
+    def _mail_open(self, auto=False):
         if not self.mail_emails:
             return
         em = self.mail_emails[self.left_cursor]
         uid = em["uid"]
         if uid != self.mail_body_uid:
-            self._show_loading("Loading email...")
-            self._mail_connect()
-            body = fetch_email_body(self.mail_imap, uid)
-            self.mail_body_lines = []
+            if uid in self._mail_body_cache:
+                body = self._mail_body_cache[uid]
+            else:
+                if not auto:
+                    self._show_loading("Loading email...")
+                try:
+                    self._mail_connect()
+                    body = fetch_email_body(self.mail_imap, uid)
+                except Exception:
+                    self.mail_imap = None
+                    if not auto:
+                        self._modal_input("Error",
+                                          "Could not load email body.",
+                                          ["Connection lost.", "Press Enter."])
+                    return
+                self._mail_body_cache[uid] = body
+                # Persist to disk
+                body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+                os.makedirs(body_dir, exist_ok=True)
+                try:
+                    with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
+                        f.write(body)
+                except OSError:
+                    pass
+            self._mail_build_body_lines(em, body)
+        if not auto:
+            self.focus = RIGHT
+
+    def _mail_open_thread(self, auto=False):
+        """Open the current thread: fetch all bodies, build conversation view."""
+        if not self.mail_threads:
+            return
+        idx = self.left_cursor
+        if idx >= len(self.mail_threads):
+            return
+        if idx == self.mail_thread_body_idx:
+            if not auto:
+                self.focus = RIGHT
+            return
+
+        thread = self.mail_threads[idx]
+        if not auto:
+            self._show_loading("Loading conversation...")
+
+        # Fetch bodies for all emails in thread
+        bodies = []
+        for em in thread["emails"]:
+            uid = em["uid"]
+            if uid in self._mail_body_cache:
+                bodies.append((em, self._mail_body_cache[uid]))
+            else:
+                try:
+                    self._mail_connect()
+                    body = fetch_email_body(self.mail_imap, uid)
+                except Exception:
+                    self.mail_imap = None
+                    if not auto:
+                        self._modal_input("Error",
+                                          "Could not load email body.",
+                                          ["Connection lost.", "Press Enter."])
+                    return
+                self._mail_body_cache[uid] = body
+                body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+                os.makedirs(body_dir, exist_ok=True)
+                try:
+                    with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
+                        f.write(body)
+                except OSError:
+                    pass
+                bodies.append((em, body))
+
+        # Build conversation lines
+        lines = []
+        wrap_w = max(10, self.right_w - 1)
+        for i, (em, body) in enumerate(bodies):
+            # Separator
+            frm = em.get("from", "")
+            if "<" in frm:
+                frm = frm.split("<")[0].strip().strip('"') or frm
+            date = em.get("date", "")
+            for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z",
+                        "%a, %d %b %Y %H:%M:%S %Z"):
+                try:
+                    from datetime import datetime as _dt
+                    dt = _dt.strptime(date.strip(), fmt)
+                    date = dt.strftime("%b %d %H:%M")
+                    break
+                except (ValueError, TypeError):
+                    continue
+            else:
+                date = date[:16]
+            sep = f"─── {frm} | {date} "
+            # Pad with ─ to fill width
+            sep += "─" * max(0, wrap_w - len(sep))
+            lines.append(sep)
+            lines.append("")
             for raw_line in body.splitlines():
-                while len(raw_line) > self.right_w - 1:
-                    self.mail_body_lines.append(raw_line[:self.right_w - 1])
-                    raw_line = raw_line[self.right_w - 1:]
-                self.mail_body_lines.append(raw_line)
-            self.mail_body_uid = uid
-            self.mail_body_scroll = 0
-        self.focus = RIGHT
+                while len(raw_line) > wrap_w:
+                    lines.append(raw_line[:wrap_w])
+                    raw_line = raw_line[wrap_w:]
+                lines.append(raw_line)
+            if i < len(bodies) - 1:
+                lines.append("")
+
+        self.mail_thread_body_lines = lines
+        self.mail_thread_body_scroll = 0
+        self.mail_thread_body_idx = idx
+
+        # Mark all emails in thread as read
+        for em in thread["emails"]:
+            if not em.get("isRead", True):
+                try:
+                    self._mail_connect()
+                    self.mail_imap.select("INBOX", readonly=False)
+                    set_flag(self.mail_imap, em["uid"], "\\Seen", enable=True)
+                    self.mail_imap.select("INBOX", readonly=True)
+                    em["isRead"] = True
+                except Exception:
+                    pass
+        thread["unread_count"] = 0
+
+        if not auto:
+            self.focus = RIGHT
+
+    def _mail_open_current_row(self, auto=False):
+        """Open the email for the current display row (threaded mode)."""
+        if not self._mail_display_rows:
+            return
+        if self.left_cursor >= len(self._mail_display_rows):
+            return
+        row = self._mail_display_rows[self.left_cursor]
+        if row["type"] == "email":
+            em = row["email"]
+        else:
+            thread = row["thread"]
+            if not thread["emails"]:
+                return
+            em = thread["emails"][-1]
+
+        uid = em["uid"]
+        if uid == self.mail_body_uid:
+            if not auto:
+                self.focus = RIGHT
+            return
+
+        if uid in self._mail_body_cache:
+            body = self._mail_body_cache[uid]
+        else:
+            if not auto:
+                self._show_loading("Loading email...")
+            try:
+                self._mail_connect()
+                body = fetch_email_body(self.mail_imap, uid)
+            except Exception:
+                self.mail_imap = None
+                if not auto:
+                    self._modal_input("Error",
+                                      "Could not load email body.",
+                                      ["Connection lost.", "Press Enter."])
+                return
+            self._mail_body_cache[uid] = body
+            body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+            os.makedirs(body_dir, exist_ok=True)
+            try:
+                with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
+                    f.write(body)
+            except OSError:
+                pass
+
+        self._mail_build_body_lines(em, body)
+
+        # Mark email as read
+        if not em.get("isRead", True):
+            try:
+                self._mail_connect()
+                self.mail_imap.select("INBOX", readonly=False)
+                set_flag(self.mail_imap, em["uid"], "\\Seen", enable=True)
+                self.mail_imap.select("INBOX", readonly=True)
+                em["isRead"] = True
+                tidx = row["thread_idx"]
+                if tidx < len(self.mail_threads):
+                    t = self.mail_threads[tidx]
+                    t["unread_count"] = sum(1 for e in t["emails"]
+                                            if not e.get("isRead", True))
+            except Exception:
+                pass
+
+        if not auto:
+            self.focus = RIGHT
+
+    def _mail_current_thread_idx(self):
+        """Get the thread index for the current cursor in threaded mode."""
+        if not self._mail_display_rows:
+            return None
+        if self.left_cursor >= len(self._mail_display_rows):
+            return None
+        return self._mail_display_rows[self.left_cursor]["thread_idx"]
+
+    def _mail_target_uids(self):
+        """Return set of UIDs from selected threads or current thread."""
+        if not self.mail_threads:
+            return set()
+        if self.mail_selected:
+            uids = set()
+            for tidx in self.mail_selected:
+                if 0 <= tidx < len(self.mail_threads):
+                    uids |= self.mail_threads[tidx]["uids"]
+            return uids
+        if self.mail_threaded:
+            tidx = self._mail_current_thread_idx()
+            if tidx is not None and 0 <= tidx < len(self.mail_threads):
+                return set(self.mail_threads[tidx]["uids"])
+            return set()
+        if self.left_cursor < len(self.mail_threads):
+            return set(self.mail_threads[self.left_cursor]["uids"])
+        return set()
+
+    def _mail_mark_pending_body(self):
+        """Mark that the body pane needs loading after the user stops scrolling."""
+        if self.mail_threaded and self._mail_display_rows:
+            if self.left_cursor < len(self._mail_display_rows):
+                row = self._mail_display_rows[self.left_cursor]
+                if row["type"] == "email":
+                    uid = row["email"]["uid"]
+                else:
+                    uid = row["thread"]["emails"][-1]["uid"] if row["thread"]["emails"] else None
+                if uid and uid != self.mail_body_uid:
+                    self.mail_body_lines = []
+                    self.mail_body_uid = None
+                    self._mail_body_pending = True
+        elif self.mail_emails:
+            uid = self.mail_emails[self.left_cursor]["uid"]
+            if uid != self.mail_body_uid:
+                self.mail_body_lines = []
+                self.mail_body_uid = None
+                self._mail_body_pending = True
+
+    def _mail_idle_load(self):
+        """Called when getch times out — load the body for the current email."""
+        self._mail_body_pending = False
+        if self.mail_threaded and self._mail_display_rows:
+            self._mail_open_current_row(auto=True)
+        elif self.mail_emails:
+            self._mail_open(auto=True)
+
+    def _mail_resize_left(self, delta):
+        """Adjust mail left pane width by delta columns."""
+        self._mail_left_w_offset += delta
+        self._calc_dimensions()
+        # Re-wrap body lines for new right_w
+        if self.mail_body_uid:
+            self.mail_body_uid = None  # force re-wrap on next open
+        if self.mail_thread_body_idx is not None:
+            self.mail_thread_body_idx = None  # force re-wrap on next open
 
     def _mail_toggle_seen(self):
-        if not self.mail_emails:
+        if self.mail_threaded:
+            tidx = self._mail_current_thread_idx()
+            if tidx is None or tidx >= len(self.mail_threads):
+                return
+            thread = self.mail_threads[tidx]
+            # Toggle: if any unread, mark all read; else mark all unread
+            mark_read = thread["unread_count"] > 0
+            self._show_loading("Updating flags...")
+            self._mail_connect()
+            self.mail_imap.select("INBOX", readonly=False)
+            for em in thread["emails"]:
+                set_flag(self.mail_imap, em["uid"], "\\Seen", enable=mark_read)
+                em["isRead"] = mark_read
+            self.mail_imap.select("INBOX", readonly=True)
+            thread["unread_count"] = 0 if mark_read else len(thread["emails"])
+        else:
+            if not self.mail_emails:
+                return
+            em = self.mail_emails[self.left_cursor]
+            self._show_loading("Updating flag...")
+            self._mail_connect()
+            self.mail_imap.select("INBOX", readonly=False)
+            set_flag(self.mail_imap, em["uid"], "\\Seen", enable=not em["isRead"])
+            self.mail_imap.select("INBOX", readonly=True)
+            em["isRead"] = not em["isRead"]
+
+    def _mail_delete(self):
+        """Delete selected emails/threads (or current if none selected)."""
+        if self.mail_threaded:
+            target_uids = self._mail_target_uids()
+        else:
+            target_uids = {em["uid"] for em in self.mail_emails if em["uid"] in self.mail_selected}
+            if not target_uids:
+                if self.mail_emails and self.left_cursor < len(self.mail_emails):
+                    target_uids = {self.mail_emails[self.left_cursor]["uid"]}
+        if not target_uids:
             return
-        em = self.mail_emails[self.left_cursor]
-        self._show_loading("Updating flag...")
+        n = len(target_uids)
+        choice = self._modal_choice("Delete", f"Delete {n} email(s)?",
+                                    [("y", "Yes"), ("n", "No")])
+        if choice != "y":
+            return
+        self._show_loading(f"Deleting {n} email(s)...")
         self._mail_connect()
         self.mail_imap.select("INBOX", readonly=False)
-        set_flag(self.mail_imap, em["uid"], "\\Seen", enable=not em["isRead"])
+        for uid in target_uids:
+            set_flag(self.mail_imap, uid, "\\Deleted")
+        self.mail_imap.expunge()
         self.mail_imap.select("INBOX", readonly=True)
-        em["isRead"] = not em["isRead"]
+        self.mail_emails = [em for em in self.mail_emails if em["uid"] not in target_uids]
+        self.mail_selected.clear()
+        if self.mail_body_uid in target_uids:
+            self.mail_body_uid = None
+            self.mail_body_lines = []
+        self.mail_thread_body_lines = []
+        self.mail_thread_body_idx = None
+        self._mail_expanded.clear()
+        self._mail_rebuild_threads()
+        n_items = len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
+        self.left_cursor = min(self.left_cursor, max(0, n_items - 1))
+
+    def _mail_archive(self):
+        """Archive selected emails/threads (or current if none selected)."""
+        if self.mail_threaded:
+            target_uids = self._mail_target_uids()
+        else:
+            target_uids = {em["uid"] for em in self.mail_emails if em["uid"] in self.mail_selected}
+            if not target_uids:
+                if self.mail_emails and self.left_cursor < len(self.mail_emails):
+                    target_uids = {self.mail_emails[self.left_cursor]["uid"]}
+        if not target_uids:
+            return
+        n = len(target_uids)
+        choice = self._modal_choice("Archive", f"Archive {n} email(s)?",
+                                    [("y", "Yes"), ("n", "No")])
+        if choice != "y":
+            return
+        self._show_loading(f"Archiving {n} email(s)...")
+        self._mail_connect()
+        self.mail_imap.select("INBOX", readonly=False)
+        for uid in target_uids:
+            uid_bytes = uid.encode() if isinstance(uid, str) else uid
+            self.mail_imap.uid("copy", uid_bytes, "Archive")
+            set_flag(self.mail_imap, uid, "\\Deleted")
+        self.mail_imap.expunge()
+        self.mail_imap.select("INBOX", readonly=True)
+        self.mail_emails = [em for em in self.mail_emails if em["uid"] not in target_uids]
+        self.mail_selected.clear()
+        if self.mail_body_uid in target_uids:
+            self.mail_body_uid = None
+            self.mail_body_lines = []
+        self.mail_thread_body_lines = []
+        self.mail_thread_body_idx = None
+        self._mail_expanded.clear()
+        self._mail_rebuild_threads()
+        n_items = len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
+        self.left_cursor = min(self.left_cursor, max(0, n_items - 1))
 
     def _mail_scroll_list(self, delta):
-        if not self.mail_emails:
+        items = self._mail_display_rows if self.mail_threaded else self.mail_emails
+        if not items:
             return
-        self.left_cursor = max(0, min(len(self.mail_emails) - 1, self.left_cursor + delta))
+        self.left_cursor = max(0, min(len(items) - 1, self.left_cursor + delta))
         if self.left_cursor < self.left_scroll:
             self.left_scroll = self.left_cursor
         elif self.left_cursor >= self.left_scroll + self.content_h:
             self.left_scroll = self.left_cursor - self.content_h + 1
 
+    def _mail_search(self):
+        """Prompt for search query and jump to first match."""
+        query = self._modal_input("Search Mail", "Search: ")
+        if not query:
+            return
+        self._mail_search_query = query.lower()
+        self._mail_search_next(0)
+
+    def _mail_search_next(self, start, direction=1):
+        """Jump to next item matching the search query from start index."""
+        q = self._mail_search_query
+        if self.mail_threaded:
+            items = self._mail_display_rows
+        else:
+            items = self.mail_emails
+        if not q or not items:
+            return
+        n = len(items)
+        for i in range(n):
+            idx = (start + i * direction) % n
+            if self.mail_threaded:
+                row = items[idx]
+                if row["type"] == "thread":
+                    subj = row["thread"].get("subject", "").lower()
+                    frm = row["thread"].get("from_summary", "").lower()
+                else:
+                    subj = row["email"].get("subject", "").lower()
+                    frm = row["email"].get("from", "").lower()
+            else:
+                em = items[idx]
+                subj = em.get("subject", "").lower()
+                frm = em.get("from", "").lower()
+            if q in subj or q in frm:
+                self.left_cursor = idx
+                if self.left_cursor < self.left_scroll:
+                    self.left_scroll = self.left_cursor
+                elif self.left_cursor >= self.left_scroll + self.content_h:
+                    self.left_scroll = self.left_cursor - self.content_h + 1
+                self._mail_mark_pending_body()
+                return
+
     def _draw_left_panel_mail(self):
+        if self.mail_threaded:
+            self._draw_left_panel_mail_threaded()
+        else:
+            self._draw_left_panel_mail_flat()
+
+    def _mail_format_date(self, raw_date):
+        """Parse a raw email date string into a short display form."""
+        for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z",
+                    "%a, %d %b %Y %H:%M:%S %Z"):
+            try:
+                from datetime import datetime as _dt
+                dt = _dt.strptime(raw_date.strip(), fmt)
+                return dt.strftime("%m/%d %H:%M")
+            except (ValueError, TypeError):
+                continue
+        return raw_date[:11]
+
+    def _draw_left_panel_mail_threaded(self):
+        if not self._mail_display_rows:
+            self._safe_addstr(1, 1, "No emails.".ljust(self.left_w), curses.A_DIM)
+            self._safe_addstr(2, 1, "Press 'r' to refresh.".ljust(self.left_w), curses.A_DIM)
+            return
+
+        display_w = min(self.left_w, self.max_x - 3)
+
+        for i in range(self.content_h):
+            idx = self.left_scroll + i
+            if idx >= len(self._mail_display_rows):
+                break
+            y = i + 1
+            row = self._mail_display_rows[idx]
+            is_cursor = (idx == self.left_cursor)
+            tidx = row["thread_idx"]
+            is_sel_marked = tidx in self.mail_selected
+
+            if row["type"] == "thread":
+                thread = row["thread"]
+                count = len(thread["emails"])
+
+                # Expand indicator
+                if count > 1:
+                    arrow = "▼ " if tidx in self._mail_expanded else "▶ "
+                else:
+                    arrow = "  "
+
+                if is_sel_marked:
+                    dot = "[*]"
+                elif thread["unread_count"] > 0:
+                    dot = "● "
+                else:
+                    dot = "  "
+
+                frm = thread["from_summary"]
+                date = self._mail_format_date(thread["latest_date"])
+                subj = thread["subject"] or "(no subject)"
+                if count > 1:
+                    subj = f"{subj} ({count})"
+
+                avail = self.left_w - 2
+                prefix = arrow + dot
+                prefix_w = _str_width(prefix)
+                date_w = _str_width(date)
+                from_w = min(15, max(8, avail // 4))
+                subj_w = avail - prefix_w - from_w - 1 - date_w - 1
+                if subj_w < 5:
+                    subj_w = avail - prefix_w - date_w - 1
+                    from_w = 0
+                subj_w = max(0, subj_w)
+
+                line = prefix
+                line += _wc_ljust(_wc_truncate(subj, subj_w), subj_w)
+                if from_w > 0:
+                    line += " " + _wc_ljust(_wc_truncate(frm, from_w), from_w)
+                line += " " + date
+
+                attr = 0
+                if is_cursor and self.focus == LEFT:
+                    attr = curses.A_REVERSE
+                elif is_cursor:
+                    attr = curses.A_REVERSE | curses.A_DIM
+                if is_sel_marked and not is_cursor:
+                    attr |= curses.color_pair(C_CYAN)
+                elif is_sel_marked and is_cursor:
+                    attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
+                if thread["unread_count"] > 0:
+                    attr |= curses.A_BOLD
+
+                self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr)
+
+            else:  # email row
+                em = row["email"]
+                pos, total = row["pos"], row["total"]
+                connector = "└ " if pos == total - 1 else "├ "
+
+                if is_sel_marked:
+                    dot = "[*]"
+                elif not em.get("isRead", True):
+                    dot = "● "
+                else:
+                    dot = "  "
+
+                frm = em.get("from", "")
+                if "<" in frm:
+                    frm = frm.split("<")[0].strip().strip('"') or frm
+                date = self._mail_format_date(em.get("date", ""))
+
+                avail = self.left_w - 2
+                prefix = "   " + connector + dot
+                prefix_w = _str_width(prefix)
+                date_w = _str_width(date)
+                name_w = max(0, avail - prefix_w - date_w - 1)
+
+                line = prefix
+                line += _wc_ljust(_wc_truncate(frm, name_w), name_w)
+                line += " " + date
+
+                attr = curses.A_DIM
+                if is_cursor and self.focus == LEFT:
+                    attr = curses.A_REVERSE
+                elif is_cursor:
+                    attr = curses.A_REVERSE | curses.A_DIM
+                if is_sel_marked and not is_cursor:
+                    attr = curses.color_pair(C_CYAN) | curses.A_DIM
+                elif is_sel_marked and is_cursor:
+                    attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
+                if not em.get("isRead", True):
+                    attr |= curses.A_BOLD
+
+                self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr)
+
+    def _draw_left_panel_mail_flat(self):
         if not self.mail_emails:
             self._safe_addstr(1, 1, "No emails.".ljust(self.left_w), curses.A_DIM)
             self._safe_addstr(2, 1, "Press 'r' to refresh.".ljust(self.left_w), curses.A_DIM)
@@ -3557,30 +5267,37 @@ class ProjectBrowser:
             subj = em["subject"] or "(no subject)"
 
             avail = self.left_w - 2
-            prefix_w = len(dot)
-            date_w = len(date)
+            prefix_w = _str_width(dot)
+            date_w = _str_width(date)
             from_w = min(15, max(8, avail // 4))
             subj_w = avail - prefix_w - from_w - 1 - date_w - 1
             if subj_w < 5:
                 subj_w = avail - prefix_w - date_w - 1
                 from_w = 0
+            subj_w = max(0, subj_w)
 
             line = dot
-            line += subj[:subj_w].ljust(subj_w)
+            line += _wc_ljust(_wc_truncate(subj, subj_w), subj_w)
             if from_w > 0:
-                line += " " + frm[:from_w].ljust(from_w)
+                line += " " + _wc_ljust(_wc_truncate(frm, from_w), from_w)
             line += " " + date
 
             is_selected = (idx == self.left_cursor)
+            is_sel_marked = em["uid"] in self.mail_selected
             attr = 0
             if is_selected and self.focus == LEFT:
                 attr = curses.A_REVERSE
             elif is_selected:
                 attr = curses.A_REVERSE | curses.A_DIM
+            if is_sel_marked and not is_selected:
+                attr |= curses.color_pair(C_CYAN)
+            elif is_sel_marked and is_selected:
+                attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
             if not em["isRead"]:
                 attr |= curses.A_BOLD
 
-            self._safe_addstr(y, 1, line[:self.left_w].ljust(self.left_w), attr)
+            display_w = min(self.left_w, self.max_x - 3)
+            self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr)
 
     def _mail_extract_items(self):
         """Use Claude CLI to extract tasks and events from selected emails."""
@@ -3604,8 +5321,33 @@ class ProjectBrowser:
         # Strip CLAUDECODE env var to avoid nesting error
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
+        # Build project context for LLM
+        proj_ctx_lines = []
+        for p in self.projects:
+            if p.get("status") != "active":
+                continue
+            pname = p.get("name", "")
+            pdesc = p.get("description", "")
+            ms_list = [m["name"] for m in p.get("milestones", []) if not m.get("done")]
+            parts = []
+            if pdesc:
+                parts.append(f"desc: {pdesc[:150]}")
+            if ms_list:
+                parts.append(f"milestones: {', '.join(ms_list)}")
+            if parts:
+                proj_ctx_lines.append(f"  - {pname} ({'; '.join(parts)})")
+            else:
+                proj_ctx_lines.append(f"  - {pname}")
+        proj_ctx = "\n".join(proj_ctx_lines) if proj_ctx_lines else "  (none)"
+
+        # Derive UIDs from thread selections when threaded
+        if self.mail_threaded:
+            target_uids = self._mail_target_uids()
+        else:
+            target_uids = set(self.mail_selected)
+
         for em in self.mail_emails:
-            if em["uid"] not in self.mail_selected:
+            if em["uid"] not in target_uids:
                 continue
             self._mail_connect()
             body = fetch_email_body(self.mail_imap, em["uid"])
@@ -3616,9 +5358,12 @@ class ProjectBrowser:
                 f"{preview}\n\n"
                 f"Extract action items and calendar events from this email.\n"
                 f"Today's date is {today_str}.\n\n"
+                f"Active projects:\n{proj_ctx}\n\n"
                 f"Output format (one item per line):\n"
-                f"TASK|description|YYYY-MM-DD    (with deadline)\n"
-                f"TASK|description|              (no deadline)\n"
+                f"TASK|description|YYYY-MM-DD|project_name|milestone_name\n"
+                f"TASK|description|YYYY-MM-DD|project_name|\n"
+                f"TASK|description||project_name|\n"
+                f"TASK|description|||\n"
                 f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|location\n"
                 f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|\n\n"
                 f"Rules:\n"
@@ -3626,6 +5371,10 @@ class ProjectBrowser:
                 f"- EVENT = something happening at a specific date/time (meeting, call, deadline)\n"
                 f"- Resolve relative dates (\"next Tuesday\") relative to today\n"
                 f"- If event has no clear time, use 09:00-10:00\n"
+                f"- Assign each TASK to the most relevant project from the list above\n"
+                f"- Use project descriptions to determine the best match\n"
+                f"- If a project has milestones, assign the task to the best-fitting milestone\n"
+                f"- If no project fits, leave project_name and milestone_name empty\n"
                 f"- If no actionable items, return NONE"
             )
             try:
@@ -3640,15 +5389,17 @@ class ProjectBrowser:
                         line = line.strip()
                         if not line or line.upper() == "NONE":
                             continue
+                        if line.startswith("```"):
+                            continue
                         parts = line.split("|")
                         if len(parts) >= 2 and parts[0].strip().upper() == "TASK":
                             desc = parts[1].strip()
                             due = parts[2].strip() if len(parts) > 2 else ""
+                            proj = parts[3].strip() if len(parts) > 3 else ""
+                            ms = parts[4].strip() if len(parts) > 4 else ""
                             if desc:
-                                if due:
-                                    all_tasks.append({"desc": desc, "due": due})
-                                else:
-                                    all_tasks.append(desc)
+                                all_tasks.append({"desc": desc, "due": due,
+                                                  "project": proj, "milestone": ms})
                         elif len(parts) >= 4 and parts[0].strip().upper() == "EVENT":
                             title = parts[1].strip()
                             date_s = parts[2].strip()
@@ -3679,85 +5430,538 @@ class ProjectBrowser:
             self.mail_selected.clear()
             return
 
-        # Show confirmation with counts
-        summary_parts = []
-        if all_tasks:
-            summary_parts.append(f"{len(all_tasks)} task(s)")
-        if all_events:
-            summary_parts.append(f"{len(all_events)} event(s)")
-        summary = f"Add {' and '.join(summary_parts)}?"
-        if not self._modal_confirm("Confirm Items", summary):
+        # Build review items
+        review_items = []
+        for t in all_tasks:
+            if isinstance(t, dict):
+                proj_name = t.get("project", "") or "Inbox"
+                review_items.append({"type": "task", "desc": t.get("desc", str(t)),
+                                     "due": t.get("due", ""), "project": proj_name,
+                                     "milestone": t.get("milestone", ""),
+                                     "accepted": True})
+            else:
+                review_items.append({"type": "task", "desc": str(t),
+                                     "due": "", "project": "Inbox",
+                                     "milestone": "",
+                                     "accepted": True})
+        for ev in all_events:
+            review_items.append({"type": "event", "title": ev.get("title", ""),
+                                 "date": ev.get("date", ""),
+                                 "start": ev.get("start", "09:00"),
+                                 "end": ev.get("end", "10:00"),
+                                 "location": ev.get("location", ""),
+                                 "recurring": ev.get("days", ""),
+                                 "accepted": True})
+
+        accepted = self._mail_review_items(review_items)
+        if accepted is None:
             return
 
-        # Store tasks in Inbox
-        if all_tasks:
-            inbox = self._get_or_create_inbox()
-            for t in all_tasks:
-                inbox.setdefault("tasks", []).append(t)
+        acc_tasks = [it for it in accepted if it["type"] == "task"]
+        acc_events = [it for it in accepted if it["type"] == "event"]
+
+        # Store tasks grouped by project
+        if acc_tasks:
+            for it in acc_tasks:
+                proj_name = it.get("project", "Inbox")
+                ms_name = it.get("milestone", "")
+                if proj_name.lower() == "inbox":
+                    target = self._get_or_create_inbox()
+                else:
+                    target = None
+                    for p in self.projects:
+                        if p.get("name", "").lower() == proj_name.lower():
+                            target = p
+                            break
+                    if not target:
+                        target = self._get_or_create_inbox()
+                task_obj = {"desc": it["desc"]} if it["due"] else it["desc"]
+                if it["due"]:
+                    task_obj["due"] = it["due"]
+                # Place under milestone if specified
+                placed = False
+                if ms_name:
+                    for ms in target.get("milestones", []):
+                        if ms.get("name", "").lower() == ms_name.lower():
+                            ms.setdefault("tasks", []).append(task_obj)
+                            placed = True
+                            break
+                if not placed:
+                    target.setdefault("tasks", []).append(task_obj)
 
         # Store events in schedule
-        if all_events:
-            self.schedule.extend(all_events)
+        if acc_events:
+            for it in acc_events:
+                ev = {"title": it["title"], "date": it["date"],
+                      "start": it["start"], "end": it["end"]}
+                if it["location"]:
+                    ev["location"] = it["location"]
+                if it["recurring"]:
+                    ev["days"] = it["recurring"]
+                self.schedule.append(ev)
             save_schedule(self.schedule)
 
         self._save_and_rebuild()
         self.mail_selected.clear()
 
+    def _mail_review_items(self, items):
+        """Interactive review overlay. Returns list of accepted items, or None on cancel."""
+        if not items:
+            return None
+        cursor = 0
+        self._review_scroll = 0
+        curses.flushinp()
+
+        while True:
+            self._draw_review_overlay(items, cursor)
+            try:
+                ch = self.stdscr.getch()
+            except curses.error:
+                continue
+
+            if ch == curses.KEY_RESIZE:
+                self._calc_dimensions()
+                continue
+            elif ch == 27:  # Esc — cancel
+                return None
+            elif ch in (ord("j"), curses.KEY_DOWN):
+                cursor = min(cursor + 1, len(items) - 1)
+            elif ch in (ord("k"), curses.KEY_UP):
+                cursor = max(cursor - 1, 0)
+            elif ch == ord("a"):
+                items[cursor]["accepted"] = True
+                if cursor < len(items) - 1:
+                    cursor += 1
+            elif ch == ord("x"):
+                items[cursor]["accepted"] = False
+                if cursor < len(items) - 1:
+                    cursor += 1
+            elif ch == ord("q"):
+                return None
+            elif ch == ord("S"):
+                return [it for it in items if it["accepted"]]
+            else:
+                self._review_handle_field_edit(ch, items[cursor])
+
+    def _draw_review_overlay(self, items, cursor):
+        """Render a two-pane review overlay: left=item list, right=detail."""
+        h, w = self.stdscr.getmaxyx()
+
+        it = items[cursor]
+        is_task = it["type"] == "task"
+
+        # ── Geometry ──
+        box_w = max(60, w - 4)
+        box_h = max(12, h - 4)
+        sy = max(0, (h - box_h) // 2)
+        sx = max(0, (w - box_w) // 2)
+        inner_w = box_w - 2          # inside the outer │…│
+        left_w = max(20, inner_w * 35 // 100)
+        right_w = inner_w - left_w - 1  # -1 for divider │
+        content_h = box_h - 4        # top border, content rows, footer sep, footer, bottom border
+
+        # ── Clear overlay area ──
+        blank_line = " " * box_w
+        for cy in range(sy, min(sy + box_h, h)):
+            self._safe_addstr(cy, sx, blank_line)
+
+        # ── Top border with divider tee ──
+        title = f" Review Extracted Items ({len(items)} items) "
+        top = "┌─" + title
+        remaining = box_w - 2 - 1 - len(title)  # -2 for ┌└, -1 for ┐
+        div_pos = left_w + 1  # position of ┬ relative to inside (after ┌)
+        # Build top border character by character
+        top_bar = list("─" * (box_w - 2))
+        # Place title
+        for i, ch in enumerate(title):
+            if 1 + i < len(top_bar):
+                top_bar[1 + i] = ch
+        # Place ┬ at divider
+        if div_pos < len(top_bar):
+            top_bar[div_pos] = "┬"
+        self._safe_addstr(sy, sx, "┌" + "".join(top_bar) + "┐")
+
+        # ── Build left-pane display entries (with optional divider) ──
+        left_entries = []  # ("item", idx) or ("divider", None)
+        num_tasks = sum(1 for it in items if it["type"] == "task")
+        has_divider = 0 < num_tasks < len(items)
+        for i in range(len(items)):
+            if has_divider and i == num_tasks:
+                left_entries.append(("divider", None))
+            left_entries.append(("item", i))
+        total_display = len(left_entries)
+
+        # Find cursor's display row
+        cursor_display = 0
+        for di, (et, ei) in enumerate(left_entries):
+            if et == "item" and ei == cursor:
+                cursor_display = di
+                break
+
+        # ── Scroll tracking for left pane ──
+        scroll = getattr(self, "_review_scroll", 0)
+        if cursor_display < scroll:
+            scroll = cursor_display
+        elif cursor_display >= scroll + content_h:
+            scroll = cursor_display - content_h + 1
+        scroll = max(0, min(scroll, max(0, total_display - content_h)))
+        self._review_scroll = scroll
+
+        # ── Build right-pane detail lines ──
+        rlines = []
+        mark = "✓" if it["accepted"] else "✗"
+        kind = "TASK" if is_task else "EVENT"
+        title_text = it.get("desc", "") if is_task else it.get("title", "")
+        max_title = right_w - 12
+        rlines.append(("header", f" {mark} {kind}  \"{title_text[:max_title]}\""))
+        rlines.append(("normal", ""))
+
+        if is_task:
+            due_str = it.get("due", "") or "(none)"
+            ms_str = it.get("milestone", "") or "(none)"
+            rlines.append(("normal", f"     Due: {due_str}"))
+            rlines.append(("normal", f"     Project: [{it.get('project', 'Inbox')}]"))
+            rlines.append(("normal", f"     Milestone: {ms_str}"))
+            rlines.append(("normal", ""))
+            rlines.append(("normal", " " + "─" * (right_w - 2)))
+            rlines.append(("normal", " Fields:"))
+            rlines.append(("normal", f"   [d] Description: {it.get('desc', '')[:right_w - 22]}"))
+            rlines.append(("normal", f"   [u] Due date:    {due_str}"))
+            rlines.append(("normal", f"   [p] Project:     {it.get('project', 'Inbox')}"))
+            rlines.append(("normal", f"   [m] Milestone:   {ms_str}"))
+        else:
+            rlines.append(("normal", f"     Date: {it.get('date', '')}  {it.get('start', '')}-{it.get('end', '')}"))
+            if it.get("location"):
+                rlines.append(("normal", f"     Location: {it['location'][:right_w - 16]}"))
+            rlines.append(("normal", ""))
+            rlines.append(("normal", " " + "─" * (right_w - 2)))
+            rlines.append(("normal", " Fields:"))
+            rlines.append(("normal", f"   [t] Title:     {it.get('title', '')[:right_w - 20]}"))
+            rlines.append(("normal", f"   [d] Date:      {it.get('date', '')}"))
+            rlines.append(("normal", f"   [s] Start:     {it.get('start', '')}"))
+            rlines.append(("normal", f"   [e] End:       {it.get('end', '')}"))
+            rlines.append(("normal", f"   [l] Location:  {it.get('location', '') or '(none)'}"))
+            rlines.append(("normal", f"   [r] Recurring: {it.get('recurring', '') or '(none)'}"))
+
+        # ── Draw content rows ──
+        for row_i in range(content_h):
+            y = sy + 1 + row_i
+
+            # Left pane: item list with divider
+            display_idx = scroll + row_i
+            if display_idx < total_display:
+                etype, eidx = left_entries[display_idx]
+                if etype == "divider":
+                    div_label = " Events "
+                    dashes_l = (left_w - len(div_label)) // 2
+                    dashes_r = left_w - len(div_label) - dashes_l
+                    div_text = ("─" * dashes_l + div_label + "─" * dashes_r)[:left_w]
+                    self._safe_addstr(y, sx, "│")
+                    self._safe_addstr(y, sx + 1, div_text, curses.A_DIM)
+                else:
+                    itm = items[eidx]
+                    m = "✓" if itm["accepted"] else "✗"
+                    k = "TASK" if itm["type"] == "task" else "EVNT"
+                    ttl = itm.get("desc", "") if itm["type"] == "task" else itm.get("title", "")
+                    left_text = f" {m} {k}  {ttl}"
+                    left_text = left_text[:left_w]
+                    left_cell = left_text.ljust(left_w)
+
+                    attr = 0
+                    if eidx == cursor:
+                        attr = curses.A_REVERSE | curses.A_BOLD
+                    elif itm["accepted"]:
+                        attr = curses.color_pair(C_GREEN)
+                    else:
+                        attr = curses.color_pair(C_RED)
+
+                    self._safe_addstr(y, sx, "│")
+                    self._safe_addstr(y, sx + 1, left_cell, attr)
+            else:
+                self._safe_addstr(y, sx, "│" + " " * left_w)
+
+            # Vertical divider
+            self._safe_addstr(y, sx + 1 + left_w, "│")
+
+            # Right pane: detail
+            if row_i < len(rlines):
+                rtype, rtext = rlines[row_i]
+                right_cell = rtext[:right_w].ljust(right_w)
+                if rtype == "header":
+                    if it["accepted"]:
+                        self._safe_addstr(y, sx + 2 + left_w, right_cell,
+                                          curses.color_pair(C_GREEN) | curses.A_BOLD)
+                    else:
+                        self._safe_addstr(y, sx + 2 + left_w, right_cell,
+                                          curses.color_pair(C_RED) | curses.A_BOLD)
+                else:
+                    self._safe_addstr(y, sx + 2 + left_w, right_cell)
+            else:
+                self._safe_addstr(y, sx + 2 + left_w, " " * right_w)
+
+            # Right outer border
+            self._safe_addstr(y, sx + box_w - 1, "│")
+
+        # ── Footer separator with ┴ at divider ──
+        foot_y = sy + 1 + content_h
+        foot_bar = list("─" * (box_w - 2))
+        if div_pos < len(foot_bar):
+            foot_bar[div_pos] = "┴"
+        self._safe_addstr(foot_y, sx, "├" + "".join(foot_bar) + "┤")
+
+        # ── Footer with keybinding hints ──
+        if is_task:
+            keys_help = "a:accept  x:reject  d/u/p/m:edit fields  j/k:nav  S:done  q:cancel"
+        else:
+            keys_help = "a:accept  x:reject  t/d/s/e/l/r:edit  j/k:nav  S:done  q:cancel"
+        footer_text = keys_help[:inner_w].center(inner_w)
+        self._safe_addstr(foot_y + 1, sx, "│" + footer_text + "│", curses.A_DIM)
+
+        # ── Bottom border ──
+        self._safe_addstr(foot_y + 2, sx, "└" + "─" * (box_w - 2) + "┘")
+
+        self.stdscr.refresh()
+
+    def _review_handle_field_edit(self, ch, item):
+        """Dispatch field edits for a review item."""
+        if item["type"] == "task":
+            if ch == ord("d"):
+                val = self._modal_input("Edit Description", "Desc: ",
+                                        default=item.get("desc", ""))
+                if val:
+                    item["desc"] = val
+            elif ch == ord("u"):
+                val = self._modal_input_date("Edit Due Date", "Due (YYYY-MM-DD): ",
+                                             default=item.get("due", ""))
+                if val:
+                    item["due"] = val
+            elif ch == ord("p"):
+                val = self._review_pick_project(item.get("project", "Inbox"))
+                if val:
+                    item["project"] = val
+                    # Reset milestone when project changes
+                    item["milestone"] = ""
+            elif ch == ord("m"):
+                val = self._review_pick_milestone(item.get("project", "Inbox"),
+                                                   item.get("milestone", ""))
+                if val is not None:
+                    item["milestone"] = val
+        else:  # event
+            if ch == ord("t"):
+                val = self._modal_input("Edit Title", "Title: ",
+                                        default=item.get("title", ""))
+                if val:
+                    item["title"] = val
+            elif ch == ord("d"):
+                val = self._modal_input_date("Edit Date", "Date (YYYY-MM-DD): ",
+                                             default=item.get("date", ""))
+                if val:
+                    item["date"] = val
+            elif ch == ord("s"):
+                val = self._modal_input_time("Edit Start", "Start (HH:MM): ")
+                if val:
+                    item["start"] = val
+            elif ch == ord("e"):
+                val = self._modal_input_time("Edit End", "End (HH:MM): ")
+                if val:
+                    item["end"] = val
+            elif ch == ord("l"):
+                val = self._modal_input("Edit Location", "Location: ",
+                                        default=item.get("location", ""))
+                if val is not None:
+                    item["location"] = val
+            elif ch == ord("r"):
+                val = self._modal_input("Edit Recurring", "Days (e.g. MWF): ",
+                                        default=item.get("recurring", ""))
+                if val is not None:
+                    item["recurring"] = val
+
+    def _review_pick_project(self, current):
+        """Let user pick a project from active projects list."""
+        targets = [p for p in self.projects if p.get("status") == "active"]
+        if not targets:
+            return current
+        body = [f"{i+1}. {p['name']}" for i, p in enumerate(targets)]
+        pick = self._modal_input("Pick Project", "Number or name: ", body)
+        if not pick:
+            return current
+        try:
+            idx = int(pick) - 1
+            if 0 <= idx < len(targets):
+                return targets[idx]["name"]
+        except ValueError:
+            pick_l = pick.lower()
+            for p in targets:
+                if pick_l in p["name"].lower():
+                    return p["name"]
+        return current
+
+    def _review_pick_milestone(self, proj_name, current):
+        """Let user pick a milestone from the given project."""
+        proj = None
+        for p in self.projects:
+            if p.get("name", "").lower() == proj_name.lower():
+                proj = p
+                break
+        if not proj:
+            self._modal_input("Info", "No milestones", ["Project not found."])
+            return current
+        milestones = [m for m in proj.get("milestones", []) if not m.get("done")]
+        if not milestones:
+            self._modal_input("Info", "No milestones",
+                              [f"No open milestones in {proj_name}."])
+            return current
+        body = [f"{i+1}. {m['name']}" + (f" (due {m['due']})" if m.get('due') else "")
+                for i, m in enumerate(milestones)]
+        body.append(f"{len(milestones)+1}. (none)")
+        pick = self._modal_input("Pick Milestone", "Number or name: ", body)
+        if not pick:
+            return current
+        try:
+            idx = int(pick) - 1
+            if idx == len(milestones):
+                return ""
+            if 0 <= idx < len(milestones):
+                return milestones[idx]["name"]
+        except ValueError:
+            pick_l = pick.lower()
+            for m in milestones:
+                if pick_l in m["name"].lower():
+                    return m["name"]
+        return current
+
     def _handle_mail_keys(self, key):
         """Handle keys when focused on mail list (left panel)."""
         if key in (ord("j"), curses.KEY_DOWN):
             self._mail_scroll_list(1)
+            self._mail_mark_pending_body()
         elif key in (ord("k"), curses.KEY_UP):
             self._mail_scroll_list(-1)
+            self._mail_mark_pending_body()
         elif key == ord("J"):
             self._mail_scroll_list(self.content_h // 2)
+            self._mail_mark_pending_body()
         elif key == ord("K"):
             self._mail_scroll_list(-self.content_h // 2)
+            self._mail_mark_pending_body()
         elif key in (10, 13, ord("l"), curses.KEY_RIGHT):
-            self._mail_open()
+            if self.mail_threaded:
+                if self._mail_display_rows and self.left_cursor < len(self._mail_display_rows):
+                    row = self._mail_display_rows[self.left_cursor]
+                    if row["type"] == "thread" and len(row["thread"]["emails"]) > 1:
+                        # Toggle expand/collapse
+                        tidx = row["thread_idx"]
+                        if tidx in self._mail_expanded:
+                            self._mail_expanded.discard(tidx)
+                        else:
+                            self._mail_expanded.add(tidx)
+                        self._mail_build_display_rows()
+                    else:
+                        # Single-email thread or email row: open in right panel
+                        self._mail_open_current_row()
+            else:
+                self._mail_open()
         elif key == ord("x"):
-            if self.mail_emails:
-                uid = self.mail_emails[self.left_cursor]["uid"]
-                if uid in self.mail_selected:
-                    self.mail_selected.discard(uid)
-                else:
-                    self.mail_selected.add(uid)
-                self._mail_scroll_list(1)
+            if self.mail_threaded:
+                tidx = self._mail_current_thread_idx()
+                if tidx is not None:
+                    if tidx in self.mail_selected:
+                        self.mail_selected.discard(tidx)
+                    else:
+                        self.mail_selected.add(tidx)
+            else:
+                if self.mail_emails:
+                    uid = self.mail_emails[self.left_cursor]["uid"]
+                    if uid in self.mail_selected:
+                        self.mail_selected.discard(uid)
+                    else:
+                        self.mail_selected.add(uid)
         elif key == ord("X"):
-            if self.mail_emails:
-                all_uids = {em["uid"] for em in self.mail_emails}
-                if self.mail_selected >= all_uids:
-                    self.mail_selected.clear()
-                else:
-                    self.mail_selected = all_uids
+            if self.mail_threaded:
+                if self.mail_threads:
+                    all_idxs = set(range(len(self.mail_threads)))
+                    if self.mail_selected >= all_idxs:
+                        self.mail_selected.clear()
+                    else:
+                        self.mail_selected = all_idxs
+            else:
+                if self.mail_emails:
+                    all_uids = {em["uid"] for em in self.mail_emails}
+                    if self.mail_selected >= all_uids:
+                        self.mail_selected.clear()
+                    else:
+                        self.mail_selected = all_uids
         elif key == ord("T"):
             self._mail_extract_items()
+        elif key == ord("+"):
+            self._mail_load_more()
+        elif key == ord("t"):
+            # Toggle threaded/flat view
+            self.mail_threaded = not self.mail_threaded
+            self._mail_expanded.clear()
+            self._mail_rebuild_threads()
+            self.left_cursor = 0
+            self.left_scroll = 0
+            self.mail_selected.clear()
+            self.mail_thread_body_lines = []
+            self.mail_thread_body_idx = None
+            self.mail_thread_body_scroll = 0
+            self.mail_body_lines = []
+            self.mail_body_uid = None
+            self.mail_body_scroll = 0
         elif key == ord("u"):
             self.mail_unread_filter = not self.mail_unread_filter
+            self._mail_expanded.clear()
             self._mail_fetch_list()
-            self.left_cursor = min(self.left_cursor, max(0, len(self.mail_emails) - 1))
+            n_items = len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
+            self.left_cursor = min(self.left_cursor, max(0, n_items - 1))
             self.left_scroll = 0
             self.mail_body_lines = []
             self.mail_body_uid = None
             self.mail_body_scroll = 0
+            self.mail_thread_body_lines = []
+            self.mail_thread_body_idx = None
+            self.mail_thread_body_scroll = 0
             self.mail_selected.clear()
         elif key == ord("r"):
+            self._mail_expanded.clear()
             self._mail_fetch_list()
-            self.left_cursor = min(self.left_cursor, max(0, len(self.mail_emails) - 1))
+            n_items = len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
+            self.left_cursor = min(self.left_cursor, max(0, n_items - 1))
             self.left_scroll = 0
             self.mail_body_lines = []
             self.mail_body_uid = None
             self.mail_body_scroll = 0
+            self.mail_thread_body_lines = []
+            self.mail_thread_body_idx = None
+            self.mail_thread_body_scroll = 0
             self.mail_selected.clear()
         elif key == ord("m"):
             self._mail_toggle_seen()
+        elif key == ord("#"):
+            self._mail_delete()
+        elif key == ord("e"):
+            self._mail_archive()
         elif key == ord("g"):
             self.left_cursor = 0
             self.left_scroll = 0
         elif key == ord("G"):
-            if self.mail_emails:
-                self.left_cursor = len(self.mail_emails) - 1
-                self.left_scroll = max(0, len(self.mail_emails) - self.content_h)
+            items = self._mail_display_rows if self.mail_threaded else self.mail_emails
+            if items:
+                self.left_cursor = len(items) - 1
+                self.left_scroll = max(0, len(items) - self.content_h)
+        elif key == ord("/"):
+            self._mail_search()
+        elif key == ord("n"):
+            if self._mail_search_query:
+                self._mail_search_next(self.left_cursor + 1, 1)
+        elif key == ord("N"):
+            if self._mail_search_query:
+                self._mail_search_next(self.left_cursor - 1, -1)
+        elif key == ord(">"):
+            self._mail_resize_left(5)
+        elif key == ord("<"):
+            self._mail_resize_left(-5)
         elif key == ord("c"):
             self._toggle_mode()
         elif key == ord("v"):
@@ -3785,9 +5989,19 @@ class ProjectBrowser:
             self._calc_dimensions()
             self.draw()
 
+            # Use short timeout when a mail body load is pending
+            if self._mail_body_pending:
+                self.stdscr.timeout(150)
+            else:
+                self.stdscr.timeout(-1)
+
             try:
                 key = self.stdscr.getch()
             except curses.error:
+                continue
+
+            if key == -1:  # timeout expired — load pending body
+                self._mail_idle_load()
                 continue
 
             if key == curses.KEY_RESIZE:
@@ -3797,6 +6011,7 @@ class ProjectBrowser:
             if key == ord("q"):
                 if self.mail_imap:
                     try:
+                        self.mail_imap.socket().settimeout(2)
                         self.mail_imap.logout()
                     except Exception:
                         pass
@@ -3841,7 +6056,7 @@ class ProjectBrowser:
 
     def _left_item_count(self):
         if self.view_mode == VIEW_MAIL_INBOX:
-            return len(self.mail_emails)
+            return len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
         if self.view_mode == VIEW_SCHED_DAY:
             return len(self.sched_day_items)
         if self.view_mode == VIEW_SCHED_NDAY:
@@ -3903,6 +6118,16 @@ class ProjectBrowser:
         self.mode = MODE_MAIL
         self.view_mode = VIEW_MAIL_INBOX
         if not self.mail_emails:
+            # Load disk cache first for instant display
+            if not hasattr(self, "_mail_disk_cache"):
+                self._mail_load_disk_cache()
+            if self._mail_disk_cache:
+                uids = sorted(self._mail_disk_cache.keys(),
+                              key=lambda u: int(u), reverse=True)
+                self.mail_emails = [self._mail_disk_cache[u] for u in uids]
+                self._mail_loaded_count = len(self.mail_emails)
+                self._mail_rebuild_threads()
+            # Then do incremental fetch for new emails
             self._mail_connect()
             self._mail_fetch_list()
         self.left_cursor = 0
@@ -3910,6 +6135,9 @@ class ProjectBrowser:
         self.right_cursor = 0
         self.right_scroll = 0
         self.focus = LEFT
+        self.mail_thread_body_lines = []
+        self.mail_thread_body_idx = None
+        self.mail_thread_body_scroll = 0
         self._rebuild_filtered()
         self._rebuild_detail()
 
@@ -3982,6 +6210,9 @@ class ProjectBrowser:
             if count > 0:
                 self.left_cursor = count - 1
                 self._rebuild_detail()
+        elif key == ord("D"):
+            if self.view_mode == VIEW_PROJECTS:
+                self.action_claude_session()
 
     def _handle_sched_day_keys(self, key):
         if key in (curses.KEY_UP, ord("k")):
@@ -4400,6 +6631,33 @@ class ProjectBrowser:
             self._move_right(-1)
         elif key in (curses.KEY_DOWN, ord("j")):
             self._move_right(1)
+        elif key == ord("l"):
+            # Drill into milestone → jump to first sub-task
+            if self.detail_items and 0 <= self.right_cursor < len(self.detail_items):
+                item = self.detail_items[self.right_cursor]
+                if item.kind == "milestone":
+                    ms_idx = item.index
+                    # Find first ms_task belonging to this milestone
+                    for di_idx in range(self.right_cursor + 1, len(self.detail_items)):
+                        di = self.detail_items[di_idx]
+                        if di.kind == "ms_task" and di.index[0] == ms_idx:
+                            self.right_cursor = di_idx
+                            break
+        elif key == ord("h"):
+            # If on ms_task, jump back to parent milestone; otherwise go to left panel
+            if self.detail_items and 0 <= self.right_cursor < len(self.detail_items):
+                item = self.detail_items[self.right_cursor]
+                if item.kind == "ms_task":
+                    ms_idx = item.index[0]
+                    for di_idx in range(self.right_cursor - 1, -1, -1):
+                        di = self.detail_items[di_idx]
+                        if di.kind == "milestone" and di.index == ms_idx:
+                            self.right_cursor = di_idx
+                            break
+                else:
+                    self.focus = LEFT
+            else:
+                self.focus = LEFT
         elif key in (curses.KEY_LEFT, 27):  # 27 = Escape
             self.focus = LEFT
         elif key == ord("d"):
@@ -4422,6 +6680,8 @@ class ProjectBrowser:
             self.action_move_task(-1)
         elif key == ord("J"):
             self.action_move_task(1)
+        elif key == ord("D"):
+            self.action_claude_session()
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────

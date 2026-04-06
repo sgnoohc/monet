@@ -112,45 +112,76 @@ def clean_preview(raw_bytes):
 # ─── Reusable IMAP building blocks ──────────────────────────────────────────
 
 
-def connect_imap(token, username):
+def connect_imap(token, username, timeout=30):
     """Return an authenticated IMAP4_SSL connection."""
     auth_string = f"user={username}\x01auth=Bearer {token}\x01\x01"
-    imap = imaplib.IMAP4_SSL(IMAP_HOST)
+    imap = imaplib.IMAP4_SSL(IMAP_HOST, timeout=timeout)
     imap.authenticate("XOAUTH2", lambda _: auth_string.encode())
     return imap
 
 
-def fetch_email_list(imap, unread=False, days=None, top=50):
-    """Fetch email list with UIDs for stable references.
-
-    Returns list of dicts with keys: uid, subject, from, date, preview, isRead.
-    """
+def search_uids(imap, unread=False, top=50, skip=0):
+    """Return ordered list of UID strings (newest first). Cheap — no detail fetch."""
     imap.select("INBOX", readonly=True)
-
-    criteria = []
-    if unread:
-        criteria.append("UNSEEN")
-    if days:
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%d-%b-%Y")
-        criteria.append(f"SINCE {since}")
-    if not criteria:
-        criteria.append("ALL")
-
+    criteria = ["UNSEEN"] if unread else ["ALL"]
     _, msg_nums = imap.uid("search", None, *criteria)
     uids = msg_nums[0].split()
     if not uids:
         return []
-
-    # Most recent first
-    uids = uids[-top:]
+    if skip:
+        uids = uids[-(top + skip):-skip]
+    else:
+        uids = uids[-top:]
     uids.reverse()
+    return [u.decode() if isinstance(u, bytes) else str(u) for u in uids]
 
+
+def fetch_email_list(imap, unread=False, days=None, top=50, skip=0,
+                     on_progress=None, only_uids=None):
+    """Fetch email list with UIDs for stable references.
+
+    skip: number of most-recent UIDs to skip (for pagination).
+    on_progress: optional callback(current, total) called per message.
+    only_uids: if provided, fetch details for exactly these UIDs (skip search).
+    Returns list of dicts with keys: uid, subject, from, date, preview, isRead.
+    """
+    imap.select("INBOX", readonly=True)
+
+    if only_uids is not None:
+        uids = [u.encode() if isinstance(u, str) else u for u in only_uids]
+    else:
+        criteria = []
+        if unread:
+            criteria.append("UNSEEN")
+        if days:
+            since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%d-%b-%Y")
+            criteria.append(f"SINCE {since}")
+        if not criteria:
+            criteria.append("ALL")
+
+        _, msg_nums = imap.uid("search", None, *criteria)
+        uids = msg_nums[0].split()
+        if not uids:
+            return []
+
+        # Most recent first, with skip/pagination support
+        if skip:
+            uids = uids[-(top + skip):-skip]
+        else:
+            uids = uids[-top:]
+        uids.reverse()
+
+    total = len(uids)
     emails_out = []
+    processed = 0
     for uid in uids:
         _, data = imap.uid("fetch", uid,
-                           "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)] BODY.PEEK[TEXT]<0.2000>)")
+                           "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO CC DATE MESSAGE-ID IN-REPLY-TO REFERENCES)] BODY.PEEK[TEXT]<0.2000>)")
         if not data or data[0] is None:
             continue
+        processed += 1
+        if on_progress:
+            on_progress(processed, total)
 
         flags_raw = ""
         headers_raw = b""
@@ -169,8 +200,14 @@ def fetch_email_list(imap, unread=False, days=None, top=50):
         msg = email.message_from_bytes(headers_raw)
         subject = decode_header(msg.get("Subject", ""))
         from_addr = decode_header(msg.get("From", ""))
+        to_addr = decode_header(msg.get("To", ""))
+        cc_addr = decode_header(msg.get("Cc", ""))
         date_str = msg.get("Date", "")
         is_read = "\\Seen" in flags_raw or "\\Seen" in str(data)
+
+        message_id = msg.get("Message-ID", "").strip()
+        in_reply_to = msg.get("In-Reply-To", "").strip()
+        references = msg.get("References", "").strip().split() if msg.get("References") else []
 
         preview = clean_preview(body_raw)
 
@@ -178,9 +215,14 @@ def fetch_email_list(imap, unread=False, days=None, top=50):
             "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
             "subject": subject,
             "from": from_addr,
+            "to": to_addr,
+            "cc": cc_addr,
             "date": date_str,
             "preview": preview,
             "isRead": is_read,
+            "messageId": message_id,
+            "inReplyTo": in_reply_to,
+            "references": references,
         })
 
     return emails_out
