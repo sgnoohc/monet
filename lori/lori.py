@@ -106,6 +106,30 @@ def now():
 def parse_date(s):
     if isinstance(s, datetime.date):
         return s
+    s_stripped = s.strip().lower()
+
+    # Relative shortcuts
+    t = today()
+    if s_stripped in ("today", "tod"):
+        return t
+    if s_stripped in ("tomorrow", "tom"):
+        return t + datetime.timedelta(days=1)
+    if s_stripped in ("yesterday", "yes"):
+        return t + datetime.timedelta(days=-1)
+
+    # +N / -N offset
+    if s_stripped[0] in ('+', '-') and s_stripped[1:].isdigit():
+        return t + datetime.timedelta(days=int(s_stripped))
+
+    # Weekday names → next occurrence
+    day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+    if s_stripped in day_map:
+        target = day_map[s_stripped]
+        diff = (target - t.weekday()) % 7
+        if diff == 0:
+            diff = 7  # "mon" on a Monday means next Monday
+        return t + datetime.timedelta(days=diff)
+
     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d"):
         try:
             d = datetime.datetime.strptime(s, fmt).date()
@@ -120,7 +144,7 @@ def parse_date(s):
 def parse_time(s):
     if isinstance(s, datetime.time):
         return s
-    for fmt in ("%H:%M", "%H", "%I:%M%p", "%I:%M %p"):
+    for fmt in ("%H:%M", "%H", "%I:%M%p", "%I:%M %p", "%I%p", "%I %p"):
         try:
             return datetime.datetime.strptime(s, fmt).time()
         except ValueError:
@@ -3253,7 +3277,7 @@ def generate_dashboard_html(target_date=None):
     animation: redpulse 3s cubic-bezier(0.37, 0, 0.63, 1) infinite;
   }}
   #big-countdown {{
-    display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:9999;
+    display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:9998;
     pointer-events:none;
     justify-content:center; align-items:center; flex-direction:column;
   }}
@@ -3383,6 +3407,8 @@ function onYouTubeIframeAPIReady() {{
     events: {{
       onReady: function(e) {{
         ytReady = true;
+        var _savedSpd = localStorage.getItem('lori_vid_speed');
+        if (_savedSpd) e.target.setPlaybackRate(parseFloat(_savedSpd));
         if (ytPaused) e.target.pauseVideo();
       }}
     }}
@@ -3604,6 +3630,14 @@ function onYouTubeIframeAPIReady() {{
     onmouseout="this.style.borderColor='rgba(255,255,255,0.12)';this.style.color='rgba(255,255,255,0.5)'"
     title="Select background video">
   </select>
+  <button id="vid-speed" onclick="toggleVideoSpeed()" style="width:36px; height:36px; border-radius:50%;
+    background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:10px;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;
+    font-family:'JetBrains Mono',monospace;"
+    onmouseover="this.style.background='rgba(162,155,254,0.3)';this.style.color='#fff'"
+    onmouseout="this.style.background='rgba(15,15,30,0.5)';this.style.color='rgba(255,255,255,0.4)'"
+    title="Video speed: 1x">1x</button>
   <button id="vid-pause" onclick="toggleVideoPause()" style="width:36px; height:36px; border-radius:50%;
     background:rgba(15,15,30,0.5); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
     border:1px solid rgba(255,255,255,0.08); color:rgba(255,255,255,0.4); font-size:16px;
@@ -3682,7 +3716,6 @@ function onYouTubeIframeAPIReady() {{
   // ── Live clock ──
   var countdownActive = false;
   function updateClock() {{
-    if (countdownActive) return;
     var d = new Date();
     var h = d.getHours() % 12 || 12;
     var m = String(d.getMinutes()).padStart(2, '0');
@@ -3751,6 +3784,7 @@ function onYouTubeIframeAPIReady() {{
     }}
 
     // Big center countdown + red glow
+    var ambientEl = document.querySelector('.ambient');
     if (soonestDiff !== Infinity && soonestDiff > 0 && soonestDiff <= 300000) {{
       var m = Math.floor(soonestDiff / 60000);
       var s = Math.floor((soonestDiff % 60000) / 1000);
@@ -3760,6 +3794,7 @@ function onYouTubeIframeAPIReady() {{
       bigCd.classList.add('active');
       document.body.classList.add('countdown-glow');
       countdownActive = true;
+      if (ambientEl) ambientEl.style.zIndex = '9999';
       // Faster border pulse in last minute
       document.body.style.animationDuration = soonestDiff <= 60000 ? '1.5s' : '3s';
     }} else if (soonestDiff <= 0 && soonestDiff > -60000) {{
@@ -3771,6 +3806,7 @@ function onYouTubeIframeAPIReady() {{
       bigCd.classList.add('active');
       document.body.classList.remove('countdown-glow');
       countdownActive = true;
+      if (ambientEl) ambientEl.style.zIndex = '9999';
       // Auto-open meeting link when countdown hits zero
       if (soonestLocation && !autoOpenedEvents[soonestLocation + soonestTitle]) {{
         if (/zoom\.us|meet\.google|teams\.microsoft/i.test(soonestLocation)) {{
@@ -3785,7 +3821,7 @@ function onYouTubeIframeAPIReady() {{
       bigCdTime.style.textShadow = '';
       bigCdLocation.innerHTML = '';
       countdownActive = false;
-      updateClock();
+      if (ambientEl) ambientEl.style.zIndex = '';
     }}
   }}
 
@@ -3886,10 +3922,36 @@ function onYouTubeIframeAPIReady() {{
     }}
   }};
 
+  var ytSpeeds = [1, 0.5, 0.25];
+  var ytSpeedIdx = 0;
+  var savedSpeed = localStorage.getItem('lori_vid_speed');
+  if (savedSpeed !== null) {{
+    var si = ytSpeeds.indexOf(parseFloat(savedSpeed));
+    if (si >= 0) ytSpeedIdx = si;
+  }}
+
+  window.toggleVideoSpeed = function() {{
+    if (!ytPlayer || !ytReady) return;
+    ytSpeedIdx = (ytSpeedIdx + 1) % ytSpeeds.length;
+    var speed = ytSpeeds[ytSpeedIdx];
+    ytPlayer.setPlaybackRate(speed);
+    localStorage.setItem('lori_vid_speed', speed);
+    var btn = document.getElementById('vid-speed');
+    var label = speed === 1 ? '1x' : speed === 0.5 ? '½x' : '¼x';
+    if (btn) {{ btn.textContent = label; btn.title = 'Video speed: ' + speed + 'x'; }}
+  }};
+
   // Update button icon on load if already paused
   if (ytPaused) {{
     var _pb = document.getElementById('vid-pause');
     if (_pb) {{ _pb.innerHTML = '&#9654;'; _pb.title = 'Play background video'; }}
+  }}
+
+  // Restore speed on load
+  if (ytSpeedIdx !== 0) {{
+    var _sb = document.getElementById('vid-speed');
+    var _sl = ytSpeeds[ytSpeedIdx];
+    if (_sb) {{ _sb.textContent = _sl === 0.5 ? '½x' : '¼x'; _sb.title = 'Video speed: ' + _sl + 'x'; }}
   }}
 
   // Restore last selected video from localStorage
@@ -5423,6 +5485,7 @@ function onYouTubeIframeAPIReady() {{
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">1-3</kbd> Load layout slot</div>'
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">&#8679;1-3</kbd> Save layout slot</div>'
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">p</kbd> Pause/play video</div>'
+      + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">S</kbd> Cycle video speed</div>'
       + '<div><kbd style="display:inline-block;min-width:28px;text-align:center;background:rgba(255,255,255,0.1);border-radius:4px;padding:1px 6px;margin-right:8px;font-size:12px;">?</kbd> This help</div>'
       + '<div style="margin-top:14px;font-size:10px;color:rgba(255,255,255,0.3);">Press any key or click to close</div>'
       + '</div>';
@@ -5476,6 +5539,11 @@ function onYouTubeIframeAPIReady() {{
       }}
       if (key === 'p') {{
         if (typeof toggleVideoPause === 'function') toggleVideoPause();
+        e.preventDefault();
+        return;
+      }}
+      if (key === 'S') {{
+        if (typeof toggleVideoSpeed === 'function') toggleVideoSpeed();
         e.preventDefault();
         return;
       }}
@@ -5567,9 +5635,198 @@ def cmd_edit(args):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  Interactive hub menu
+#  CLI: avail (when2meet availability)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def cmd_avail(args):
+    config = load_config()
+    events = load_schedule()
+    td = today()
+
+    start_date = parse_date(args.start)
+    end_date = parse_date(args.end)
+    if end_date < start_date:
+        print("Error: end date is before start date.")
+        return
+
+    # Determine hour range
+    default_slots = get_work_hours(config)
+    default_start = min(s for s, e in default_slots)
+    default_end = max(e for s, e in default_slots)
+    hour_start = args.start_hour if args.start_hour is not None else default_start
+    hour_end = args.end_hour if args.end_hour is not None else default_end
+    slot_min = args.slot
+
+    # Collect dates
+    dates = []
+    d = start_date
+    while d <= end_date:
+        dates.append(d)
+        d += datetime.timedelta(days=1)
+
+    # Build per-slot event info: grid[date][(hh,mm)] = list of event titles
+    grid = {}
+    for d in dates:
+        day_events = expand_events_for_date(events, d)
+        slot_map = {}
+        h = hour_start
+        m = 0
+        while h < hour_end or (h == hour_end and m == 0):
+            if h >= hour_end:
+                break
+            slot_time = datetime.time(h, m)
+            slot_end_dt = datetime.datetime.combine(d, slot_time) + datetime.timedelta(minutes=slot_min)
+            slot_end = slot_end_dt.time()
+            overlapping = []
+            for ev in day_events:
+                ev_start_str = ev.get("start") or ev.get("depart")
+                ev_end_str = ev.get("end")
+                if not ev_start_str:
+                    continue
+                es = parse_time(ev_start_str)
+                if ev_end_str:
+                    ee = parse_time(ev_end_str)
+                elif ev.get("type") == "travel":
+                    ee = (datetime.datetime.combine(d, es) + datetime.timedelta(minutes=30)).time()
+                else:
+                    ee = (datetime.datetime.combine(d, es) + datetime.timedelta(hours=1)).time()
+                # Overlap check: slot [slot_time, slot_end) vs event [es, ee)
+                if es < slot_end and ee > slot_time:
+                    overlapping.append(ev)
+            slot_map[(h, m)] = overlapping
+            m += slot_min
+            if m >= 60:
+                h += m // 60
+                m = m % 60
+        grid[d] = slot_map
+
+    # Classify events by type for tiering
+    # Tier 1: only mark busy for hard events (not blocked)
+    # Tier 2: mark busy for hard events + blocked time
+    # Tier 3: mark busy for everything (including soft/tentative)
+    tiers = [
+        ("1 - ignore blocked time (most available)", lambda ev: ev.get("type") != "blocked"),
+        ("2 - include blocked time (default)", lambda ev: True),
+        ("3 - also block ±30min buffer around events", None),  # special handling
+    ]
+
+    tier = args.tier
+    if tier is None:
+        print("\n  Availability tiers — events above the chosen tier are marked BUSY:\n")
+        for i, (desc, _) in enumerate(tiers, 1):
+            print(f"    {desc}")
+        print()
+        while True:
+            try:
+                choice = input("  Choose tier [1-3, default=2]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+            if choice == "":
+                tier = 2
+                break
+            if choice in ("1", "2", "3"):
+                tier = int(choice)
+                break
+            print("  Invalid choice.")
+
+    # Determine busy filter
+    if tier == 1:
+        is_busy = lambda ev: ev.get("type") != "blocked"
+    else:
+        is_busy = lambda ev: True
+
+    buffer_min = 30 if tier == 3 else 0
+
+    # Build availability grid with buffer
+    avail = {}  # avail[date][(h,m)] = True (free) / False (busy)
+    for d in dates:
+        day_events = expand_events_for_date(events, d)
+        # Build busy intervals
+        busy_intervals = []
+        for ev in day_events:
+            if not is_busy(ev):
+                continue
+            ev_start_str = ev.get("start") or ev.get("depart")
+            ev_end_str = ev.get("end")
+            if not ev_start_str:
+                continue
+            es = parse_time(ev_start_str)
+            if ev_end_str:
+                ee = parse_time(ev_end_str)
+            elif ev.get("type") == "travel":
+                ee = (datetime.datetime.combine(d, es) + datetime.timedelta(minutes=30)).time()
+            else:
+                ee = (datetime.datetime.combine(d, es) + datetime.timedelta(hours=1)).time()
+            # Apply buffer
+            es_dt = datetime.datetime.combine(d, es) - datetime.timedelta(minutes=buffer_min)
+            ee_dt = datetime.datetime.combine(d, ee) + datetime.timedelta(minutes=buffer_min)
+            busy_intervals.append((es_dt.time(), ee_dt.time()))
+
+        slot_avail = {}
+        h = hour_start
+        m = 0
+        while h < hour_end:
+            slot_time = datetime.time(h, m)
+            slot_end_dt = datetime.datetime.combine(d, slot_time) + datetime.timedelta(minutes=slot_min)
+            slot_end = slot_end_dt.time()
+            busy = False
+            for bs, be in busy_intervals:
+                if bs < slot_end and be > slot_time:
+                    busy = True
+                    break
+            slot_avail[(h, m)] = not busy
+            m += slot_min
+            if m >= 60:
+                h += m // 60
+                m = m % 60
+        avail[d] = slot_avail
+
+    # Print grid
+    tier_desc = tiers[tier - 1][0]
+    print(f"\n  Availability — tier {tier_desc}")
+    print(f"  {fmt_date(start_date)} to {fmt_date(end_date)}, {hour_start}:00–{hour_end}:00, {slot_min}min slots\n")
+
+    # Header: time column + date columns
+    col_w = 12
+    header = "  Time     " + "".join(d.strftime(" %a %-m/%-d").ljust(col_w) for d in dates)
+    print(header)
+    print("  " + "─" * (9 + col_w * len(dates)))
+
+    h = hour_start
+    m = 0
+    while h < hour_end:
+        time_label = f"  {h:02d}:{m:02d}    "
+        cells = []
+        for d in dates:
+            is_free = avail[d].get((h, m), True)
+            if is_free:
+                cells.append(" ✓ FREE".ljust(col_w))
+            else:
+                # Show what's blocking
+                blocking = grid[d].get((h, m), [])
+                blocking = [ev for ev in blocking if is_busy(ev)]
+                if blocking:
+                    name = blocking[0].get("title", "busy")
+                    if len(name) > col_w - 2:
+                        name = name[:col_w - 4] + ".."
+                    cells.append(f" {name}".ljust(col_w))
+                else:
+                    cells.append(" ~buffer".ljust(col_w))
+        print(time_label + "".join(cells))
+        m += slot_min
+        if m >= 60:
+            h += m // 60
+            m = m % 60
+
+    # Summary
+    print()
+    for d in dates:
+        free_count = sum(1 for v in avail[d].values() if v)
+        total = len(avail[d])
+        free_hrs = free_count * slot_min / 60
+        print(f"  {d.strftime('%a %-m/%-d')}: {free_count}/{total} slots free ({free_hrs:.1f}h)")
+    print()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -5640,6 +5897,14 @@ def build_parser():
     cron_p = sub.add_parser("cron", help="Cron job management")
     cron_sub = cron_p.add_subparsers(dest="cron_action")
     cron_sub.add_parser("setup", help="Install daily dashboard scrontab entry")
+
+    avail_p = sub.add_parser("avail", help="Print availability grid for when2meet")
+    avail_p.add_argument("start", help="Start date (e.g. 2026-04-10, today, mon)")
+    avail_p.add_argument("end", help="End date (e.g. 2026-04-14, +4, fri)")
+    avail_p.add_argument("--start-hour", type=int, default=None, help="Override start hour (default: work_hours)")
+    avail_p.add_argument("--end-hour", type=int, default=None, help="Override end hour (default: work_hours)")
+    avail_p.add_argument("--slot", type=int, default=30, help="Slot size in minutes (default: 30)")
+    avail_p.add_argument("--tier", type=int, default=None, help="Availability tier (prompted if omitted)")
 
     return parser
 
@@ -5712,6 +5977,8 @@ def main():
             cmd_cron_setup(args)
         else:
             print("Usage: lori cron setup")
+    elif cmd == "avail":
+        cmd_avail(args)
     else:
         parser.print_help()
 

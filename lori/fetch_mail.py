@@ -204,6 +204,7 @@ def fetch_email_list(imap, unread=False, days=None, top=50, skip=0,
         cc_addr = decode_header(msg.get("Cc", ""))
         date_str = msg.get("Date", "")
         is_read = "\\Seen" in flags_raw or "\\Seen" in str(data)
+        is_flagged = "\\Flagged" in flags_raw
 
         message_id = msg.get("Message-ID", "").strip()
         in_reply_to = msg.get("In-Reply-To", "").strip()
@@ -220,6 +221,7 @@ def fetch_email_list(imap, unread=False, days=None, top=50, skip=0,
             "date": date_str,
             "preview": preview,
             "isRead": is_read,
+            "isFlagged": is_flagged,
             "messageId": message_id,
             "inReplyTo": in_reply_to,
             "references": references,

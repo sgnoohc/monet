@@ -4,6 +4,7 @@
 import copy
 import curses
 import datetime
+import re
 import subprocess
 import sys
 from collections import namedtuple
@@ -52,6 +53,12 @@ C_STATUS_BAR = 5
 C_BLUE = 6
 C_MAGENTA = 7
 C_NONWORK = 8
+C_MAIL_FROM = 9
+C_MAIL_DATE = 10
+C_RPANEL_BG = 11        # subtle background for focused right panel
+C_RPANEL_CYAN = 12
+C_RPANEL_FROM = 13
+C_RPANEL_DATE = 14
 
 
 def _init_colors():
@@ -68,6 +75,18 @@ def _init_colors():
         curses.init_pair(C_NONWORK, 240, 236)  # gray on dark gray
     else:
         curses.init_pair(C_NONWORK, curses.COLOR_BLACK, curses.COLOR_BLUE)
+    curses.init_pair(C_MAIL_FROM, curses.COLOR_CYAN, -1)
+    curses.init_pair(C_MAIL_DATE, curses.COLOR_YELLOW, -1)
+    if curses.COLORS >= 256:
+        curses.init_pair(C_RPANEL_BG, -1, 235)
+        curses.init_pair(C_RPANEL_CYAN, curses.COLOR_CYAN, 235)
+        curses.init_pair(C_RPANEL_FROM, curses.COLOR_CYAN, 235)
+        curses.init_pair(C_RPANEL_DATE, curses.COLOR_YELLOW, 235)
+    else:
+        curses.init_pair(C_RPANEL_BG, -1, curses.COLOR_BLACK)
+        curses.init_pair(C_RPANEL_CYAN, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(C_RPANEL_FROM, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(C_RPANEL_DATE, curses.COLOR_YELLOW, curses.COLOR_BLACK)
 
 
 # ─── String width helpers (East Asian wide chars) ────────────────────────────
@@ -81,6 +100,26 @@ def _char_width(ch):
 def _str_width(s):
     """Return display width of a string, accounting for wide characters."""
     return sum(_char_width(ch) for ch in s)
+
+
+def _sanitize_text(s):
+    """Replace tabs with spaces and strip control chars for safe curses display."""
+    s = s.replace("\t", "    ")
+    # Strip all C0 control chars except newline (null bytes cause addnstr to stop early)
+    return "".join(ch for ch in s if ch == "\n" or ch >= " ")
+
+
+_URL_RE = re.compile(r'https?://\S{40,}')
+
+
+def _shorten_urls(text):
+    """Replace long URLs with [link:N] placeholders, return (text, links_list)."""
+    links = []
+    def _repl(m):
+        links.append(m.group(0))
+        return f"[link:{len(links)}]"
+    shortened = _URL_RE.sub(_repl, text)
+    return shortened, links
 
 
 def _wc_truncate(s, width):
@@ -341,6 +380,8 @@ class ProjectBrowser:
         self._mail_body_cache = {}  # uid -> body text
         self._mail_body_pending = False
         self._mail_left_w_offset = 0  # user adjustment for left pane width
+        self._left_w_offset = 0      # user adjustment for task/project pane width
+        self._right_panel_hidden = False  # \ toggle to hide right panel
         self._mail_search_query = ""   # current search string
 
         # Threading state
@@ -351,6 +392,16 @@ class ProjectBrowser:
         self.mail_thread_body_idx = None    # index of thread shown in right panel
         self._mail_expanded = set()         # set of expanded thread indices
         self._mail_display_rows = []        # flat list of display rows (thread + email)
+
+        # Conversation view state
+        self._conv_emails = []              # list of email dicts in conversation order (newest first)
+        self._conv_pos = 0                  # index of focused email in _conv_emails
+        self._conv_collapsed = set()        # indices of collapsed emails (header-only)
+        self._conv_quotes_shown = set()     # indices where quoted text is expanded
+        self._conv_line_map = []            # list of (email_idx, line_type) per line
+        self._mail_raw_mode = False         # False=processed (collapse blank runs), True=raw
+
+        self._cmd_params = {}               # pre-filled params from command palette
 
         self._calc_dimensions()
 
@@ -605,12 +656,14 @@ class ProjectBrowser:
         else:
             proj = self.filtered[self.left_cursor]
 
+        # Title (editable)
+        self.detail_items.append(DetailItem("field", "name", f"Title: {proj.get('name', '???')}", True))
+
         # Category & status
         cat = proj.get("category", "")
         status = proj.get("status", "active")
-        if cat:
-            self.detail_items.append(DetailItem("info", None, f"Category: {cat}", False))
-        self.detail_items.append(DetailItem("info", None, f"Status: {status}", False))
+        self.detail_items.append(DetailItem("field", "category", f"Category: {cat or '—'}", True))
+        self.detail_items.append(DetailItem("field", "status", f"Status: {status}", True))
 
         # Deadline
         dl = proj.get("deadline")
@@ -618,18 +671,23 @@ class ProjectBrowser:
             try:
                 dl_date = parse_date(dl)
                 delta = (dl_date - today()).days
-                self.detail_items.append(DetailItem("info", None,
-                    f"Deadline: {fmt_date(dl_date)} ({delta}d)", False))
+                self.detail_items.append(DetailItem("field", "deadline",
+                    f"Deadline: {fmt_date(dl_date)} ({delta}d)", True))
             except ValueError:
-                self.detail_items.append(DetailItem("info", None, f"Deadline: {dl}", False))
+                self.detail_items.append(DetailItem("field", "deadline", f"Deadline: {dl}", True))
+        else:
+            self.detail_items.append(DetailItem("field", "deadline", "Deadline: —", True))
 
         # Description
         desc = proj.get("description", "")
         if desc:
             self.detail_items.append(DetailItem("blank", None, "", False))
-            self.detail_items.append(DetailItem("header", None, "Description", False))
+            self.detail_items.append(DetailItem("field", "description", "Description", True))
             for dline in textwrap.wrap(desc, width=60):
                 self.detail_items.append(DetailItem("info", None, f"  {dline}", False))
+        else:
+            self.detail_items.append(DetailItem("blank", None, "", False))
+            self.detail_items.append(DetailItem("field", "description", "Description: —", True))
 
         # Milestones
         milestones = proj.get("milestones", [])
@@ -996,6 +1054,11 @@ class ProjectBrowser:
 
     def _calc_dimensions(self):
         self.max_y, self.max_x = self.stdscr.getmaxyx()
+        if self._right_panel_hidden:
+            self.left_w = self.max_x - 3  # full width minus borders
+            self.right_w = 0
+            self.content_h = self.max_y - 4
+            return
         # Left panel width: 70% for schedule grid views, 40% for mail, 35% otherwise
         if self.view_mode in (VIEW_SCHED_DAY, VIEW_SCHED_WEEK, VIEW_SCHED_NDAY):
             self.left_w = max(40, min(self.max_x * 70 // 100, self.max_x - 25))
@@ -1003,7 +1066,8 @@ class ProjectBrowser:
             base = max(20, self.max_x * 40 // 100)
             self.left_w = max(20, min(self.max_x - 25, base + self._mail_left_w_offset))
         else:
-            self.left_w = max(20, min(40, self.max_x * 35 // 100))
+            base = max(20, min(40, self.max_x * 35 // 100))
+            self.left_w = max(20, min(self.max_x - 25, base + self._left_w_offset))
         self.right_w = self.max_x - self.left_w - 3  # 3 for borders
         self.content_h = self.max_y - 4  # top border + title + bottom border + status
 
@@ -1020,9 +1084,15 @@ class ProjectBrowser:
             self.stdscr.refresh()
             return
 
-        self._draw_borders()
+        # Auto-show right panel when it has focus
+        if self._right_panel_hidden and self.focus == RIGHT:
+            self._right_panel_hidden = False
+            self._calc_dimensions()
+
         self._draw_left_panel()
-        self._draw_right_panel()
+        if not self._right_panel_hidden:
+            self._draw_right_panel()
+        self._draw_borders()
         self._draw_status_bar()
         self.stdscr.refresh()
 
@@ -1030,9 +1100,13 @@ class ProjectBrowser:
         h, w = self.max_y, self.max_x
         lw = self.left_w
 
-        # Top border
-        top = "┌" + "─" * lw + "┬" + "─" * (w - lw - 3) + "┐"
-        self._safe_addstr(0, 0, top[:w])
+        if self._right_panel_hidden:
+            top = "┌" + "─" * lw + "┐"
+            self._safe_addstr(0, 0, top)
+        else:
+            # Top border — ┐ at col w-2 to align with right │ border
+            top = "┌" + "─" * lw + "┬" + "─" * max(0, w - lw - 4) + "┐"
+            self._safe_addstr(0, 0, top)
 
         # Left panel title
         if self.view_mode == VIEW_SCHED_DAY:
@@ -1063,7 +1137,7 @@ class ProjectBrowser:
         else:
             filter_label = "All Projects" if self.show_all else "Projects"
         title = f" {filter_label} "
-        self._safe_addstr(0, 2, title, curses.A_BOLD)
+        self._safe_addstr(0, 2, _wc_truncate(title, lw - 1), curses.A_BOLD)
 
         # Right panel title
         if self.view_mode == VIEW_SCHED_DAY:
@@ -1101,18 +1175,20 @@ class ProjectBrowser:
             else:
                 rtitle = " Details "
         elif self.view_mode == VIEW_MAIL_INBOX:
-            if self.mail_body_uid and self.mail_threaded and self._mail_display_rows and self.left_cursor < len(self._mail_display_rows):
+            if self._conv_emails and self.mail_body_uid == "__conv__":
+                # Conversation view title
+                pos = self._conv_pos + 1
+                total = len(self._conv_emails)
+                rtitle = f" Email {pos} of {total} "
+            elif self.mail_body_uid and self.mail_threaded and self._mail_display_rows and self.left_cursor < len(self._mail_display_rows):
                 row = self._mail_display_rows[self.left_cursor]
                 if row["type"] == "email":
-                    subj = row["email"].get("subject", "")[:self.right_w - 4]
-                    rtitle = f" {subj} "
+                    rtitle = " Email "
                 else:
-                    thread = row["thread"]
-                    n = len(thread["emails"])
-                    subj = thread["subject"][:self.right_w - 10]
-                    rtitle = f" {subj} ({n}) " if n > 1 else f" {subj} "
+                    n = len(row["thread"]["emails"])
+                    rtitle = f" Thread ({n} emails) " if n > 1 else " Thread "
             elif self.mail_body_uid and not self.mail_threaded and self.mail_emails and self.left_cursor < len(self.mail_emails):
-                rtitle = f" {self.mail_emails[self.left_cursor]['subject'][:self.right_w - 4]} "
+                rtitle = " Email "
             else:
                 rtitle = " Body "
         elif self.view_mode in (VIEW_TODAY, VIEW_WEEK, VIEW_MONTH):
@@ -1127,23 +1203,30 @@ class ProjectBrowser:
             rtitle = f" {proj['name']} "
         else:
             rtitle = " Details "
-        self._safe_addstr(0, lw + 3, rtitle[:self.right_w - 2], curses.A_BOLD)
+        if not self._right_panel_hidden:
+            self._safe_addstr(0, lw + 3, _wc_truncate(rtitle, self.right_w - 2), curses.A_BOLD)
 
         # Vertical borders for content rows
         for y in range(1, min(h - 2, 1 + self.content_h)):
             self._safe_addstr(y, 0, "│")
-            self._safe_addstr(y, lw + 1, "│")
-            self._safe_addstr(y, w - 2, "│")
+            if self._right_panel_hidden:
+                self._safe_addstr(y, lw + 1, "│")
+            else:
+                self._safe_addstr(y, lw + 1, "│")
+                self._safe_addstr(y, w - 2, "│")
 
         # Bottom border of content
         bot_y = min(h - 2, 1 + self.content_h)
-        bot = "├" + "─" * lw + "┴" + "─" * (w - lw - 3) + "┤"
-        self._safe_addstr(bot_y, 0, bot[:w])
+        if self._right_panel_hidden:
+            bot = "├" + "─" * lw + "┤"
+        else:
+            bot = "├" + "─" * lw + "┴" + "─" * max(0, w - lw - 4) + "┤"
+        self._safe_addstr(bot_y, 0, bot)
 
         # Status bar border
         if bot_y + 2 < h:
             final = "└" + "─" * (w - 3) + "┘"
-            self._safe_addstr(bot_y + 2, 0, final[:w])
+            self._safe_addstr(bot_y + 2, 0, final)
 
     def _draw_left_panel(self):
         if self.view_mode == VIEW_MAIL_INBOX:
@@ -1986,25 +2069,72 @@ class ProjectBrowser:
 
     def _draw_right_panel(self):
         x_offset = self.left_w + 2
-        max_w = self.right_w
+        max_w = max(0, self.right_w - 1)  # leave 1 col for right │ border
 
         if self.view_mode == VIEW_MAIL_INBOX:
             if not self.mail_body_lines:
                 self._safe_addstr(1, x_offset, "Press Enter to read an email.", curses.A_DIM)
                 return
+            # Conversation view (multi-email thread)
+            if self._conv_line_map and len(self._conv_line_map) == len(self.mail_body_lines):
+                rfocused = (self.focus == RIGHT)
+                bg = curses.color_pair(C_RPANEL_BG) if rfocused else 0
+                for i in range(self.content_h):
+                    li = self.mail_body_scroll + i
+                    if li >= len(self.mail_body_lines):
+                        # Fill remaining lines with background
+                        if rfocused:
+                            self._safe_addstr(1 + i, x_offset, " " * max_w, bg, max_n=max_w)
+                        continue
+                    line = self.mail_body_lines[li]
+                    # Pad to exact display width so curses overwrites full area
+                    line = _wc_ljust(_wc_truncate(line, max_w), max_w)
+                    eidx, ltype = self._conv_line_map[li]
+                    is_focused = (eidx == self._conv_pos)
+                    attr = 0
+                    color = bg
+                    if ltype in ("box_top", "box_bot", "collapsed_top", "collapsed_bot"):
+                        color = curses.color_pair(C_RPANEL_CYAN if rfocused else C_CYAN)
+                        if is_focused:
+                            attr = curses.A_BOLD
+                        else:
+                            attr = curses.A_DIM
+                    elif ltype == "header":
+                        if line.lstrip("│ ").startswith("Subject:"):
+                            attr = curses.A_BOLD
+                        elif line.lstrip("│ ").startswith("From:"):
+                            color = curses.color_pair(C_RPANEL_FROM if rfocused else C_MAIL_FROM)
+                        elif line.lstrip("│ ").startswith("Date:"):
+                            color = curses.color_pair(C_RPANEL_DATE if rfocused else C_MAIL_DATE)
+                        else:
+                            attr = curses.A_DIM
+                    elif ltype == "separator":
+                        attr = curses.A_DIM
+                    elif ltype == "body":
+                        attr = 0
+                    elif ltype == "quote":
+                        attr = curses.A_DIM
+                    elif ltype == "quote_hidden":
+                        attr = curses.A_DIM
+                    # spacer: default (bg only)
+                    self._safe_addstr(1 + i, x_offset, line, attr | color, max_n=max_w)
+                return
+            # Single-email fallback (flat mode or single-email thread)
             for i in range(self.content_h):
                 li = self.mail_body_scroll + i
                 if li >= len(self.mail_body_lines):
                     break
-                line = self.mail_body_lines[li][:max_w]
+                line = self.mail_body_lines[li]
+                # Pad to exact display width
+                line = _wc_ljust(_wc_truncate(line, max_w), max_w)
                 attr = 0
-                if li == 0:
-                    attr = curses.A_BOLD  # subject
+                if line.startswith("Subject:"):
+                    attr = curses.A_BOLD
                 elif line.startswith(("From:", "To:", "Cc:", "Date:")):
                     attr = curses.A_DIM
                 elif line.startswith("─"):
                     attr = curses.A_DIM
-                self._safe_addstr(1 + i, x_offset, line, attr)
+                self._safe_addstr(1 + i, x_offset, line, attr, max_n=max_w)
             return
 
         if self.view_mode == VIEW_PROJECTS and not self.filtered:
@@ -2043,6 +2173,9 @@ class ProjectBrowser:
             color = 0
 
             if item.kind == "header":
+                attr = curses.A_BOLD
+                color = curses.color_pair(C_CYAN)
+            elif item.kind == "field" and item.index == "description":
                 attr = curses.A_BOLD
                 color = curses.color_pair(C_CYAN)
             elif item.kind == "milestone":
@@ -2107,9 +2240,13 @@ class ProjectBrowser:
                 items = self._mail_display_rows if self.mail_threaded else self.mail_emails
                 pos = f" {self.left_cursor + 1}/{len(items)}" if items else ""
                 thread_label = "t:flat" if self.mail_threaded else "t:thread"
-                hints = pos + f" j/k:nav  Enter:expand/read  /:search  n/N:next/prev  x:select  X:all  T:tasks  #:del  e:archive  u:unread  r:refresh  +:more  m:mark  {thread_label}  c:tasks  q:quit"
+                hints = pos + f" j/k:nav  Enter:expand/read  /:search  n/N:next/prev  x:select  X:all  T:tasks  S:tldr  #:del  e:archive  s:star  m:mark  {thread_label}  ,:settings  q:quit"
             else:
-                hints = " j/k:scroll  J/K:page  h/Esc:back  q:quit"
+                raw_label = "w:raw" if not self._mail_raw_mode else "w:compact"
+                if self._conv_emails:
+                    hints = f" j/k:scroll  J/K:page  n/p:next/prev email  o:toggle quotes  \\:expand/collapse  S:tldr  {raw_label}  h:back"
+                else:
+                    hints = f" j/k:scroll  J/K:page  {raw_label}  h/Esc:back  q:quit"
             self._safe_addstr(bar_y, 1, hints[:w].ljust(w), curses.color_pair(C_STATUS_BAR))
             return
 
@@ -2167,9 +2304,16 @@ class ProjectBrowser:
         hints = hints[:w]
         self._safe_addstr(bar_y, 1, hints.ljust(w), curses.color_pair(C_STATUS_BAR))
 
-    def _safe_addstr(self, y, x, text, attr=0):
+    def _safe_addstr(self, y, x, text, attr=0, max_n=0):
         try:
-            self.stdscr.addnstr(y, x, text, self.max_x - x - 1, attr)
+            avail = self.max_x - x - 1
+            if max_n > 0:
+                avail = min(avail, max_n)
+            if avail <= 0:
+                return
+            # Clip by display width then write
+            text = _wc_truncate(text, avail)
+            self.stdscr.addstr(y, x, text, attr)
         except curses.error:
             pass
 
@@ -2179,21 +2323,19 @@ class ProjectBrowser:
         progress: optional (current, total) tuple to show a progress bar.
         """
         h, w = self.max_y, self.max_x
-        box_w = min(max(len(msg) + 6, 40), w - 4)
+        box_w = min(max(len(msg) + 12, 50), w - 4)
         if box_w < 20:
             box_w = w - 2
         inner = box_w - 4
 
         has_prog = progress is not None
-        box_h = 7 if has_prog else 5
+        box_h = 8 if has_prog else 7
         sy = max(0, (h - box_h) // 2)
         sx = max(0, (w - box_w) // 2)
 
-        # Clear a generous area to erase any previous loading box
-        clear_w = min(w - 2, box_w + 20)
-        clear_sx = max(0, (w - clear_w) // 2)
-        for cy in range(max(0, sy - 1), min(h, sy + box_h + 2)):
-            self._safe_addstr(cy, clear_sx, " " * clear_w)
+        # Clear the box area
+        for cy in range(sy, min(h, sy + box_h)):
+            self._safe_addstr(cy, sx, " " * box_w)
 
         title = "Loading"
         dashes = max(1, box_w - 5 - len(title))
@@ -2201,9 +2343,10 @@ class ProjectBrowser:
 
         self._safe_addstr(sy, sx, "┌─ " + title + " " + "─" * dashes + "┐")
         self._safe_addstr(sy + 1, sx, blank)
-        self._safe_addstr(sy + 2, sx,
+        self._safe_addstr(sy + 2, sx, blank)
+        self._safe_addstr(sy + 3, sx,
                           "│  " + msg[:inner].ljust(inner) + "│")
-        row = 3
+        row = 4
         if has_prog:
             cur, tot = progress
             tot = max(tot, 1)
@@ -2217,8 +2360,8 @@ class ProjectBrowser:
                               "│  " + bar[:inner].ljust(inner) + "│")
             row += 1
         self._safe_addstr(sy + row, sx, blank)
-        row += 1
-        self._safe_addstr(sy + row, sx, "└" + "─" * (box_w - 2) + "┘")
+        self._safe_addstr(sy + row + 1, sx, blank)
+        self._safe_addstr(sy + row + 2, sx, "└" + "─" * (box_w - 2) + "┘")
         self.stdscr.refresh()
 
     # ─── Navigation ───────────────────────────────────────────────────────
@@ -2277,16 +2420,17 @@ class ProjectBrowser:
 
         while True:
             h, w = self.stdscr.getmaxyx()
-            box_w = min(50, w - 4)
+            box_w = min(max(50, w // 2), w - 4)
             if box_w < 20:
                 box_w = w - 2
             inner = box_w - 4
+            blank = "│" + " " * (box_w - 2) + "│"
 
             lines = body_lines or []
-            max_body = max(0, h - 7)
+            max_body = max(0, h - 9)
             displayed = lines[:max_body]
             n = len(displayed)
-            box_h = 5 + n + (1 if n else 0)
+            box_h = 7 + n
             box_h = min(box_h, h - 2)
 
             sy = max(0, (h - box_h) // 2)
@@ -2298,7 +2442,6 @@ class ProjectBrowser:
             self._safe_addstr(sy, sx, "┌─ " + t + " " + "─" * dashes + "┐")
 
             row = 1
-            blank = "│" + " " * (box_w - 2) + "│"
             self._safe_addstr(sy + row, sx, blank)
             row += 1
 
@@ -2306,6 +2449,7 @@ class ProjectBrowser:
                 self._safe_addstr(sy + row, sx,
                                   "│  " + line[:inner].ljust(inner) + "│")
                 row += 1
+
             if displayed:
                 self._safe_addstr(sy + row, sx, blank)
                 row += 1
@@ -2362,29 +2506,33 @@ class ProjectBrowser:
         self.draw()
         while True:
             h, w = self.stdscr.getmaxyx()
-            box_w = min(50, w - 4)
+            box_w = min(max(len(message) + 12, 50), w - 4)
             if box_w < 20:
                 box_w = w - 2
             inner = box_w - 4
+            blank = "│" + " " * (box_w - 2) + "│"
 
-            sy = max(0, (h - 6) // 2)
+            box_h = 8
+            sy = max(0, (h - box_h) // 2)
             sx = max(0, (w - box_w) // 2)
 
             t = title[:inner]
             dashes = max(1, box_w - 5 - len(t))
             self._safe_addstr(sy, sx, "┌─ " + t + " " + "─" * dashes + "┐")
-
-            blank = "│" + " " * (box_w - 2) + "│"
             self._safe_addstr(sy + 1, sx, blank)
-            self._safe_addstr(sy + 2, sx,
+            self._safe_addstr(sy + 2, sx, blank)
+
+            self._safe_addstr(sy + 3, sx,
                               "│  " + message[:inner].ljust(inner) + "│")
-            self._safe_addstr(sy + 3, sx, blank)
+
+            self._safe_addstr(sy + 4, sx, blank)
 
             yn = "(y) yes  (n) no"
             pad = max(0, inner - len(yn))
-            self._safe_addstr(sy + 4, sx,
+            self._safe_addstr(sy + 5, sx,
                               "│  " + (" " * pad + yn)[:inner] + "│")
-            self._safe_addstr(sy + 5, sx, "└" + "─" * (box_w - 2) + "┘")
+            self._safe_addstr(sy + 6, sx, blank)
+            self._safe_addstr(sy + 7, sx, "└" + "─" * (box_w - 2) + "┘")
 
             self.stdscr.refresh()
 
@@ -2407,15 +2555,16 @@ class ProjectBrowser:
         curses.flushinp()
         self.draw()
         valid_keys = {ord(k.lower()): k for k, label in choices}
-        n_lines = 2 + len(choices)  # message + blank + choices
+        n_lines = 1 + len(choices) + 1  # message + choices + esc
         while True:
             h, w = self.stdscr.getmaxyx()
-            box_w = min(55, w - 4)
+            box_w = min(max(55, w // 2), w - 4)
             if box_w < 20:
                 box_w = w - 2
             inner = box_w - 4
+            blank = "│" + " " * (box_w - 2) + "│"
 
-            box_h = n_lines + 3  # top border + inner + bottom border
+            box_h = n_lines + 6  # top border + padding + inner + padding + bottom border
             sy = max(0, (h - box_h) // 2)
             sx = max(0, (w - box_w) // 2)
 
@@ -2423,7 +2572,6 @@ class ProjectBrowser:
             dashes = max(1, box_w - 5 - len(t))
             self._safe_addstr(sy, sx, "┌─ " + t + " " + "─" * dashes + "┐")
 
-            blank = "│" + " " * (box_w - 2) + "│"
             row = sy + 1
             self._safe_addstr(row, sx, blank)
             row += 1
@@ -2437,11 +2585,11 @@ class ProjectBrowser:
                 self._safe_addstr(row, sx,
                                   "│  " + line[:inner].ljust(inner) + "│")
                 row += 1
-            self._safe_addstr(row, sx, blank)
-            row += 1
             esc_line = "(Esc) cancel"
             self._safe_addstr(row, sx,
                               "│  " + esc_line[:inner].ljust(inner) + "│")
+            row += 1
+            self._safe_addstr(row, sx, blank)
             row += 1
             self._safe_addstr(row, sx, "└" + "─" * (box_w - 2) + "┘")
 
@@ -2460,6 +2608,82 @@ class ProjectBrowser:
                 self._calc_dimensions()
                 self.draw()
 
+    def _modal_scroll_text(self, title, text_lines):
+        """Show a scrollable read-only text popup. Press q/Esc to close."""
+        curses.flushinp()
+        scroll = 0
+        prev_inner = 0
+        wrapped = list(text_lines)
+        while True:
+            self.draw()
+            h, w = self.stdscr.getmaxyx()
+            box_w = min(max(60, w * 3 // 4), w - 4)
+            inner = box_w - 4
+            # Re-wrap when width changes
+            if inner != prev_inner:
+                prev_inner = inner
+                wrapped = []
+                for raw in text_lines:
+                    while len(raw) > inner:
+                        # Try to break at a space
+                        brk = raw.rfind(" ", 0, inner)
+                        if brk <= 0:
+                            brk = inner
+                        wrapped.append(raw[:brk])
+                        raw = raw[brk:].lstrip()
+                    wrapped.append(raw)
+            box_h = min(len(wrapped) + 4, h - 2)
+            view_h = box_h - 4
+            if view_h < 1:
+                view_h = 1
+                box_h = 5
+            sy = max(0, (h - box_h) // 2)
+            sx = max(0, (w - box_w) // 2)
+            blank = "│" + " " * (box_w - 2) + "│"
+
+            t = title[:inner]
+            dashes = max(1, box_w - 5 - len(t))
+            self._safe_addstr(sy, sx, "┌─ " + t + " " + "─" * dashes + "┐")
+            self._safe_addstr(sy + 1, sx, blank)
+
+            max_scroll = max(0, len(wrapped) - view_h)
+            scroll = max(0, min(scroll, max_scroll))
+            for vi in range(view_h):
+                li = scroll + vi
+                if li < len(wrapped):
+                    ln = wrapped[li][:inner]
+                else:
+                    ln = ""
+                self._safe_addstr(sy + 2 + vi, sx,
+                                  "│  " + ln.ljust(inner)[:inner] + "│")
+
+            self._safe_addstr(sy + 2 + view_h, sx, blank)
+            hint = "j/k scroll  q/Esc close"
+            self._safe_addstr(sy + 3 + view_h, sx,
+                              "└─ " + hint[:box_w - 5] + " " + "─" * max(1, box_w - 5 - len(hint) - 1) + "┘")
+
+            self.stdscr.refresh()
+            try:
+                ch = self.stdscr.getch()
+            except curses.error:
+                continue
+            if ch in (27, ord("q")):
+                return
+            elif ch in (ord("j"), curses.KEY_DOWN):
+                scroll = min(max_scroll, scroll + 1)
+            elif ch in (ord("k"), curses.KEY_UP):
+                scroll = max(0, scroll - 1)
+            elif ch in (ord("J"), ord(" ")):
+                scroll = min(max_scroll, scroll + view_h)
+            elif ch in (ord("K"),):
+                scroll = max(0, scroll - view_h)
+            elif ch == ord("g"):
+                scroll = 0
+            elif ch == ord("G"):
+                scroll = max_scroll
+            elif ch == curses.KEY_RESIZE:
+                self._calc_dimensions()
+
     def _modal_input_time(self, title, prompt, body_lines=None):
         """Prompt for a time value, re-prompting on invalid input."""
         extra = body_lines or []
@@ -2475,7 +2699,8 @@ class ProjectBrowser:
 
     def _modal_input_date(self, title, prompt, default=None, body_lines=None):
         """Prompt for a date value, re-prompting on invalid input."""
-        extra = body_lines or []
+        hint = ["Shortcuts: today, tomorrow, +3, -1, mon..sun"]
+        extra = (body_lines or []) + hint
         while True:
             val = self._modal_input(title, prompt, extra)
             if not val:
@@ -2823,7 +3048,7 @@ class ProjectBrowser:
                     return
                 t = tasks[item.index]
                 current_due = _task_due(t) or "none"
-                new_date_str = self._modal_input_date("Reschedule Task",
+                new_date_str = self._cmd_params.pop("date", None) or self._modal_input_date("Reschedule Task",
                     f"New due date ({current_due}): ",
                     body_lines=[f"Task: {_task_text(t)}"])
                 if not new_date_str:
@@ -2841,7 +3066,7 @@ class ProjectBrowser:
                     return
                 t = tasks[t_idx]
                 current_due = _task_due(t) or "none"
-                new_date_str = self._modal_input_date("Reschedule Task",
+                new_date_str = self._cmd_params.pop("date", None) or self._modal_input_date("Reschedule Task",
                     f"New due date ({current_due}): ",
                     body_lines=[f"Task: {_task_text(t)}"])
                 if not new_date_str:
@@ -2906,16 +3131,16 @@ class ProjectBrowser:
         if not proj:
             return
 
-        choice = self._modal_input("Add Item", "Type (m/t): ",
+        choice = self._cmd_params.pop("item_type", None) or self._modal_input("Add Item", "Type (m/t): ",
             ["(m) milestone", "(t) task"])
         if not choice:
             return
 
         if choice.lower().startswith("m"):
-            name = self._modal_input("Add Milestone", "Name: ")
+            name = self._cmd_params.pop("name", None) or self._modal_input("Add Milestone", "Name: ")
             if not name:
                 return
-            due_str = self._modal_input("Add Milestone", "Due date: ",
+            due_str = self._cmd_params.pop("due", None) or self._modal_input("Add Milestone", "Due date: ",
                 [f"Milestone: {name}", "", "Format: YYYY-MM-DD"])
             if not due_str:
                 return
@@ -2937,14 +3162,16 @@ class ProjectBrowser:
             elif item and item.kind == "ms_task":
                 ms_target = proj.get("milestones", [])[item.index[0]]
 
-            if ms_target:
-                desc = self._modal_input("Add Task", "Description: ",
-                    [f"Milestone: {ms_target['name']}"])
-            else:
-                desc = self._modal_input("Add Task", "Description: ")
+            desc = self._cmd_params.pop("desc", None)
+            if not desc:
+                if ms_target:
+                    desc = self._modal_input("Add Task", "Description: ",
+                        [f"Milestone: {ms_target['name']}"])
+                else:
+                    desc = self._modal_input("Add Task", "Description: ")
             if not desc:
                 return
-            due_str = self._modal_input_date("Task Due Date",
+            due_str = self._cmd_params.pop("due", None) or self._modal_input_date("Task Due Date",
                 "Due date (blank for none): ", body_lines=[f"Task: {desc}"])
             if due_str:
                 task_obj = {"desc": desc, "due": due_str}
@@ -2962,7 +3189,7 @@ class ProjectBrowser:
 
     def action_inbox_add(self):
         """Quick-capture an item into the Inbox project."""
-        text = self._modal_input("Inbox", "Add: ")
+        text = self._cmd_params.pop("text", None) or self._modal_input("Inbox", "Add: ")
         if not text:
             return
         inbox = self._get_or_create_inbox()
@@ -3035,14 +3262,14 @@ class ProjectBrowser:
 
     def action_add_project(self):
         """Guided Q&A to add a new project."""
-        name = self._modal_input("Add Project", "Name: ")
+        name = self._cmd_params.pop("name", None) or self._modal_input("Add Project", "Name: ")
         if not name:
             return
 
-        category = self._modal_input("Add Project", "Category: ",
+        category = self._cmd_params.pop("category", None) or self._modal_input("Add Project", "Category: ",
             [f"Project: {name}", "",
              "e.g., research, software, admin"])
-        deadline_str = self._modal_input("Add Project", "Deadline: ",
+        deadline_str = self._cmd_params.pop("deadline", None) or self._modal_input("Add Project", "Deadline: ",
             [f"Project: {name}", "",
              "Format: YYYY-MM-DD (blank to skip)"])
         deadline = None
@@ -3233,6 +3460,23 @@ class ProjectBrowser:
             f"Conversation:\n{transcript}"
         )
 
+    _MODEL_IDS = {
+        "haiku": "claude-haiku-4-5-20251001",
+        "sonnet": "claude-sonnet-4-6",
+    }
+
+    def _get_claude_model(self):
+        """Return the Claude model ID from config, or prompt user to choose."""
+        default = self.config.get("claude_model", "")
+        if default in self._MODEL_IDS:
+            return self._MODEL_IDS[default]
+        # No default configured — ask
+        choice = self._modal_choice("Model", "Choose model:",
+                                    [("h", "Haiku (fast)"), ("s", "Sonnet")])
+        if choice is None:
+            return None
+        return self._MODEL_IDS["haiku"] if choice == "h" else self._MODEL_IDS["sonnet"]
+
     def _chat_send_to_claude(self, prompt, model):
         """Send prompt to Claude CLI and return response text."""
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
@@ -3254,12 +3498,9 @@ class ProjectBrowser:
             return
 
         # Model selection
-        choice = self._modal_choice("Model", "Choose model for chat:",
-                                    [("h", "Haiku (fast)"), ("s", "Sonnet")])
-        if choice is None:
+        model = self._get_claude_model()
+        if model is None:
             return
-        model_map = {"h": "claude-haiku-4-5-20251001", "s": "claude-sonnet-4-6"}
-        model = model_map[choice]
 
         proj_name = project.get("name", "")
         category = project.get("category", "")
@@ -3721,10 +3962,412 @@ class ProjectBrowser:
             proj["notes"] = new_notes
             self._save_and_rebuild()
 
+    def _edit_project_field(self, field_name):
+        proj = self._current_project()
+        if not proj:
+            return
+        if field_name == "name":
+            cur = proj.get("name", "")
+            val = self._modal_input("Edit Title", "Title: ", default=cur)
+            if val and val != cur:
+                proj["name"] = val
+                self._save_and_rebuild()
+        elif field_name == "category":
+            cur = proj.get("category", "")
+            val = self._modal_input("Edit Category", "Category: ", default=cur)
+            if val and val != cur:
+                proj["category"] = val
+                self._save_and_rebuild()
+        elif field_name == "status":
+            choices = [("a", "active"), ("p", "paused"), ("c", "completed")]
+            key = self._modal_choice("Edit Status", "Select status:", choices)
+            if key:
+                status_map = {"a": "active", "p": "paused", "c": "completed"}
+                val = status_map[key]
+                if val != proj.get("status", "active"):
+                    proj["status"] = val
+                    self._save_and_rebuild()
+        elif field_name == "deadline":
+            cur = proj.get("deadline", "")
+            val = self._modal_input_date("Edit Deadline", "Deadline (YYYY-MM-DD): ", default=cur)
+            if val and val != cur:
+                proj["deadline"] = val
+                self._save_and_rebuild()
+        elif field_name == "description":
+            cur = proj.get("description", "")
+            body = [f"Current: {cur}"] if cur else None
+            val = self._modal_input("Edit Description", "Description: ", body, default=cur)
+            if val and val != cur:
+                proj["description"] = val
+                self._save_and_rebuild()
+
+    # ─── Availability (when2meet) ────────────────────────────────────────
+
+    def action_show_avail(self):
+        """Interactive availability grid for when2meet."""
+        default_start = self.sched_date.strftime("%Y-%m-%d") if hasattr(self, "sched_date") else ""
+        start_str = self._cmd_params.pop("start_date", None) or self._modal_input_date("Availability", "Start date: ",
+                                           default=default_start,
+                                           body_lines=["Generate availability grid for when2meet."])
+        if not start_str:
+            return
+        start_date = parse_date(start_str)
+
+        end_str = self._cmd_params.pop("end_date", None) or self._modal_input_date("Availability", "End date: ",
+                                         default=(start_date + datetime.timedelta(days=4)).strftime("%Y-%m-%d"))
+        if not end_str:
+            return
+        end_date = parse_date(end_str)
+        if end_date < start_date:
+            self._modal_scroll_text("Error", ["End date is before start date."])
+            return
+
+        # Hour range
+        config = load_config()
+        default_slots = get_work_hours(config)
+        default_h_start = min(s for s, e in default_slots)
+        default_h_end = max(e for s, e in default_slots)
+
+        h_start_str = self._modal_input("Availability", "Start hour: ",
+                                        body_lines=[f"Default: {default_h_start}"],
+                                        default=str(default_h_start))
+        if not h_start_str:
+            return
+        h_end_str = self._modal_input("Availability", "End hour: ",
+                                      body_lines=[f"Default: {default_h_end}"],
+                                      default=str(default_h_end))
+        if not h_end_str:
+            return
+        try:
+            hour_start = int(h_start_str)
+            hour_end = int(h_end_str)
+        except ValueError:
+            self._modal_scroll_text("Error", ["Invalid hour value."])
+            return
+
+        # Tier selection
+        tier_choice = self._modal_choice("Availability Tier",
+            "How strict should availability be?",
+            [("1", "Ignore blocked time (most available)"),
+             ("2", "Include blocked time (default)"),
+             ("3", "Add ±30min buffer around events")])
+        if tier_choice is None:
+            return
+        tier = int(tier_choice)
+
+        # Slot size
+        slot_min = 30
+
+        # Collect dates
+        dates = []
+        d = start_date
+        while d <= end_date:
+            dates.append(d)
+            d += datetime.timedelta(days=1)
+
+        events = load_schedule()
+
+        # Build busy filter
+        if tier == 1:
+            is_busy = lambda ev: ev.get("type") != "blocked"
+        else:
+            is_busy = lambda ev: True
+        buffer_min = 30 if tier == 3 else 0
+
+        # Build per-slot event info and availability
+        grid = {}     # grid[date][(h,m)] = list of overlapping events
+        avail = {}    # avail[date][(h,m)] = True/False
+
+        for d in dates:
+            day_events = expand_events_for_date(events, d)
+
+            # Build busy intervals with buffer
+            busy_intervals = []
+            for ev in day_events:
+                if not is_busy(ev):
+                    continue
+                ev_start_str = ev.get("start") or ev.get("depart")
+                ev_end_str = ev.get("end")
+                if not ev_start_str:
+                    continue
+                es = parse_time(ev_start_str)
+                if ev_end_str:
+                    ee = parse_time(ev_end_str)
+                elif ev.get("type") == "travel":
+                    ee = (datetime.datetime.combine(d, es) + datetime.timedelta(minutes=30)).time()
+                else:
+                    ee = (datetime.datetime.combine(d, es) + datetime.timedelta(hours=1)).time()
+                es_dt = datetime.datetime.combine(d, es) - datetime.timedelta(minutes=buffer_min)
+                ee_dt = datetime.datetime.combine(d, ee) + datetime.timedelta(minutes=buffer_min)
+                busy_intervals.append((es_dt.time(), ee_dt.time()))
+
+            slot_map = {}
+            slot_avail = {}
+            h, m = hour_start, 0
+            while h < hour_end:
+                slot_time = datetime.time(h, m)
+                slot_end = (datetime.datetime.combine(d, slot_time) + datetime.timedelta(minutes=slot_min)).time()
+
+                # Find overlapping events (for display)
+                overlapping = []
+                for ev in day_events:
+                    ev_s = ev.get("start") or ev.get("depart")
+                    ev_e = ev.get("end")
+                    if not ev_s:
+                        continue
+                    es = parse_time(ev_s)
+                    if ev_e:
+                        ee = parse_time(ev_e)
+                    elif ev.get("type") == "travel":
+                        ee = (datetime.datetime.combine(d, es) + datetime.timedelta(minutes=30)).time()
+                    else:
+                        ee = (datetime.datetime.combine(d, es) + datetime.timedelta(hours=1)).time()
+                    if es < slot_end and ee > slot_time:
+                        overlapping.append(ev)
+                slot_map[(h, m)] = overlapping
+
+                # Check busy
+                busy = False
+                for bs, be in busy_intervals:
+                    if bs < slot_end and be > slot_time:
+                        busy = True
+                        break
+                slot_avail[(h, m)] = not busy
+
+                m += slot_min
+                if m >= 60:
+                    h += m // 60
+                    m = m % 60
+            grid[d] = slot_map
+            avail[d] = slot_avail
+
+        # Build output lines
+        tier_names = {1: "ignore blocked", 2: "include blocked", 3: "+30min buffer"}
+        lines = []
+        lines.append(f"Tier {tier}: {tier_names[tier]}")
+        lines.append(f"{fmt_date(start_date)} to {fmt_date(end_date)}, {hour_start}:00-{hour_end}:00, {slot_min}min slots")
+        lines.append("")
+
+        # Determine column width based on number of dates
+        col_w = max(10, min(14, 60 // max(1, len(dates))))
+
+        header = "Time    " + "".join(d.strftime(" %a %-m/%-d").ljust(col_w) for d in dates)
+        lines.append(header)
+        lines.append("─" * len(header))
+
+        h, m = hour_start, 0
+        while h < hour_end:
+            time_label = f"{h:02d}:{m:02d}   "
+            cells = []
+            for d in dates:
+                is_free = avail[d].get((h, m), True)
+                if is_free:
+                    cells.append(" ✓ FREE".ljust(col_w))
+                else:
+                    blocking = grid[d].get((h, m), [])
+                    blocking = [ev for ev in blocking if is_busy(ev)]
+                    if blocking:
+                        name = blocking[0].get("title", "busy")
+                        if len(name) > col_w - 2:
+                            name = name[:col_w - 4] + ".."
+                        cells.append(f" {name}".ljust(col_w))
+                    else:
+                        cells.append(" ~buffer".ljust(col_w))
+            lines.append(time_label + "".join(cells))
+            m += slot_min
+            if m >= 60:
+                h += m // 60
+                m = m % 60
+
+        lines.append("")
+        for d in dates:
+            free_count = sum(1 for v in avail[d].values() if v)
+            total = len(avail[d])
+            free_hrs = free_count * slot_min / 60
+            lines.append(f"{d.strftime('%a %-m/%-d')}: {free_count}/{total} slots free ({free_hrs:.1f}h)")
+
+        self._modal_scroll_text("Availability", lines)
+
+    # ─── Command palette ──────────────────────────────────────────────────
+
+    def action_command_palette(self):
+        """Open a natural-language command palette (vim-style : prompt)."""
+        command = self._modal_input("Command", ": ",
+            ['Examples: "add project Research Paper"',
+             '"inbox buy groceries"',
+             '"switch to calendar"',
+             '"mark done"',
+             '"add meeting tomorrow 2pm-3pm"'])
+        if not command:
+            return
+        self._show_loading("Parsing command...")
+        parsed = self._parse_command(command)
+        if not parsed:
+            return
+        action = parsed.get("action", "")
+        params = parsed.get("params", {})
+        # Normalize time params to HH:MM
+        for key in ("start", "end"):
+            if key in params:
+                try:
+                    params[key] = parse_time(params[key]).strftime("%H:%M")
+                except (ValueError, TypeError):
+                    pass
+        try:
+            self._cmd_params = params
+            self._dispatch_command(action)
+        finally:
+            self._cmd_params = {}
+
+    def _parse_command(self, command_text):
+        """Use Claude Haiku to parse a natural-language command into action + params."""
+        # Gather context
+        cur_mode = {0: "tasks", 1: "calendar", 2: "mail"}.get(self.mode, "tasks")
+        cur_project = ""
+        proj = self._current_project()
+        if proj:
+            cur_project = proj.get("name", "")
+        project_names = [p.get("name", "") for p in self.projects if p.get("status") == "active"]
+
+        prompt = f"""You are a command parser for a project management TUI.
+Parse the user's natural language command into a JSON action.
+
+USER COMMAND: {command_text}
+
+CONTEXT:
+- Today's date: {today()}
+- Current mode: {cur_mode}
+- Current project: {cur_project}
+- Active projects: {', '.join(project_names)}
+
+AVAILABLE ACTIONS AND EXTRACTABLE PARAMS:
+| Action | Params |
+|--------|--------|
+| add_project | name, category, deadline |
+| add_task | desc, due, project |
+| add_milestone | name, due, project |
+| add_event | title, date, start, end, location |
+| mark_done | (uses current selection) |
+| delete | (uses current selection) |
+| reschedule | date |
+| archive_project | (uses current selection) |
+| delete_project | (uses current selection) |
+| edit_notes | (uses current selection) |
+| inbox_add | text |
+| switch_calendar | |
+| switch_tasks | |
+| open_mail | |
+| show_avail | start_date, end_date |
+| cycle_view | |
+| undo | |
+
+RULES:
+- Dates should be YYYY-MM-DD format. Resolve relative dates (tomorrow, next monday, etc.) relative to today.
+- "inbox <text>" is shorthand for inbox_add with text param.
+- Only include params the user actually specified; omit unknown ones.
+- For add_task, if the user mentions a project name, include it as "project".
+- Return ONLY valid JSON, no markdown fences, no explanation.
+
+OUTPUT FORMAT:
+{{"action": "<action_name>", "params": {{...}}}}
+"""
+        model = self._MODEL_IDS["haiku"]
+        raw = self._chat_send_to_claude(prompt, model)
+        if not raw or raw.startswith("[Error"):
+            self._modal_scroll_text("Error", ["Failed to parse command.", "", raw or ""])
+            return None
+        # Strip markdown fences if present
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r'^```\w*\n?', '', text)
+            text = re.sub(r'\n?```$', '', text)
+            text = text.strip()
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if not m:
+            self._modal_scroll_text("Error", ["Could not parse response:", "", text])
+            return None
+        try:
+            return json.loads(m.group())
+        except json.JSONDecodeError:
+            self._modal_scroll_text("Error", ["Invalid JSON from Claude:", "", text])
+            return None
+
+    def _dispatch_command(self, action):
+        """Route a parsed command action to the appropriate handler."""
+        dispatch = {
+            "add_project":      lambda: self.action_add_project(),
+            "add_task":         self._cmd_add_task,
+            "add_milestone":    self._cmd_add_milestone,
+            "add_event":        lambda: self.action_add_event(),
+            "mark_done":        lambda: self.action_done(),
+            "delete":           lambda: self.action_delete(),
+            "reschedule":       lambda: self.action_reschedule(),
+            "archive_project":  lambda: self.action_archive_project(),
+            "delete_project":   lambda: self.action_delete_project(),
+            "edit_notes":       lambda: self.action_edit_notes(),
+            "inbox_add":        lambda: self.action_inbox_add(),
+            "switch_calendar":  lambda: self._set_mode(MODE_CALENDAR),
+            "switch_tasks":     lambda: self._set_mode(MODE_TASKS),
+            "open_mail":        lambda: self._enter_mail_mode(),
+            "show_avail":       lambda: self.action_show_avail(),
+            "cycle_view":       lambda: self._cycle_view(),
+            "undo":             lambda: self._pop_undo(),
+        }
+        handler = dispatch.get(action)
+        if handler:
+            handler()
+        else:
+            self._modal_scroll_text("Unknown Action",
+                [f"Action '{action}' is not recognized.", "",
+                 "Available: " + ", ".join(sorted(dispatch.keys()))])
+
+    def _cmd_add_task(self):
+        """Handle add_task from command palette — navigate to project first if specified."""
+        project_name = self._cmd_params.pop("project", None)
+        if project_name:
+            # Try to navigate to the named project
+            for i, p in enumerate(self.filtered):
+                if p.get("name", "").lower() == project_name.lower():
+                    self._set_mode(MODE_TASKS)
+                    if self.view_mode != VIEW_PROJECTS:
+                        self.view_mode = VIEW_PROJECTS
+                        self._rebuild_filtered()
+                    self.left_cursor = i
+                    self.left_scroll = max(0, i - 5)
+                    self._rebuild_detail()
+                    break
+        # Remap desc → desc for _cmd_params (already correct name)
+        self._cmd_params["item_type"] = "t"
+        self.action_add_item()
+
+    def _cmd_add_milestone(self):
+        """Handle add_milestone from command palette — navigate to project first if specified."""
+        project_name = self._cmd_params.pop("project", None)
+        if project_name:
+            for i, p in enumerate(self.filtered):
+                if p.get("name", "").lower() == project_name.lower():
+                    self._set_mode(MODE_TASKS)
+                    if self.view_mode != VIEW_PROJECTS:
+                        self.view_mode = VIEW_PROJECTS
+                        self._rebuild_filtered()
+                    self.left_cursor = i
+                    self.left_scroll = max(0, i - 5)
+                    self._rebuild_detail()
+                    break
+        self._cmd_params["item_type"] = "m"
+        self.action_add_item()
+
+    def _set_mode(self, target_mode):
+        """Switch to a specific mode without toggling."""
+        if target_mode == MODE_MAIL:
+            self._enter_mail_mode()
+        elif self.mode != target_mode:
+            self._toggle_mode()
+
     # ─── Schedule actions ─────────────────────────────────────────────────
 
     def action_add_event(self):
-        title = self._modal_input("Add New Event", "Title: ",
+        title = self._cmd_params.pop("title", None) or self._modal_input("Add New Event", "Title: ",
             ["Blank at any prompt to cancel."])
         if not title:
             return
@@ -3907,16 +4550,16 @@ class ProjectBrowser:
             if not ev["start"] or not ev["end"]:
                 return
         else:
-            ev["date"] = self._modal_input_date("One-time Event",
+            ev["date"] = self._cmd_params.pop("date", None) or self._modal_input_date("One-time Event",
                 f"Date [{self.sched_date}]: ",
                 str(self.sched_date))
-            ev["start"] = self._modal_input_time("One-time Event",
+            ev["start"] = self._cmd_params.pop("start", None) or self._modal_input_time("One-time Event",
                 "Start time (HH:MM): ")
-            ev["end"] = self._modal_input_time("One-time Event",
+            ev["end"] = self._cmd_params.pop("end", None) or self._modal_input_time("One-time Event",
                 "End time (HH:MM): ")
             if not ev["start"] or not ev["end"]:
                 return
-            loc = self._modal_input("One-time Event", "Location: ")
+            loc = self._cmd_params.pop("location", None) or self._modal_input("One-time Event", "Location: ")
             if loc:
                 ev["location"] = loc
             tz = self._modal_input("One-time Event", "Timezone: ", [
@@ -4569,6 +5212,33 @@ class ProjectBrowser:
                               [str(e)[:60], "", "Press Enter to dismiss."])
             raise
 
+    def _mail_fetch_body_with_retry(self, uid, auto=False):
+        """Fetch an email body, retrying once on connection failure.
+        Returns body text or None on failure. Caches to disk on success."""
+        for attempt in range(2):
+            try:
+                self._mail_connect()
+                body = fetch_email_body(self.mail_imap, uid)
+                self._mail_body_cache[uid] = body
+                body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+                os.makedirs(body_dir, exist_ok=True)
+                try:
+                    with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
+                        f.write(body)
+                except OSError:
+                    pass
+                return body
+            except Exception:
+                self.mail_imap = None
+                if attempt == 0:
+                    continue
+                if not auto:
+                    self._modal_input("Error",
+                                      "Could not load email body.",
+                                      ["Connection lost. Retry failed.",
+                                       "Press Enter."])
+                return None
+
     def _mail_fetch_list(self):
         try:
             self._mail_connect()
@@ -4647,13 +5317,13 @@ class ProjectBrowser:
         lines = []
 
         # Header block
-        subj = em.get("subject", "(no subject)")
-        frm = em.get("from", "")
-        to = em.get("to", "")
-        cc = em.get("cc", "")
+        subj = _sanitize_text(em.get("subject", "(no subject)"))
+        frm = _sanitize_text(em.get("from", ""))
+        to = _sanitize_text(em.get("to", ""))
+        cc = _sanitize_text(em.get("cc", ""))
         date = self._mail_format_date(em.get("date", ""))
 
-        lines.append(subj)
+        lines.append(f"Subject: {subj}")
         lines.append(f"From: {frm}")
         if to:
             lines.append(f"To: {to}")
@@ -4663,19 +5333,20 @@ class ProjectBrowser:
         lines.append("─" * wrap_w)
         lines.append("")
 
-        # Wrap body, collapsing runs of blank lines to at most 1
+        # Wrap body; in processed mode collapse runs of blank lines to at most 1
         blank_run = 0
-        for raw_line in body.splitlines():
+        for raw_line in _sanitize_text(body).splitlines():
             stripped = raw_line.strip()
             if not stripped:
                 blank_run += 1
-                if blank_run <= 1:
+                if self._mail_raw_mode or blank_run <= 1:
                     lines.append("")
                 continue
             blank_run = 0
-            while len(raw_line) > wrap_w:
-                lines.append(raw_line[:wrap_w])
-                raw_line = raw_line[wrap_w:]
+            while _str_width(raw_line) > wrap_w:
+                chunk = _wc_truncate(raw_line, wrap_w)
+                lines.append(chunk)
+                raw_line = raw_line[len(chunk):]
             lines.append(raw_line)
 
         self.mail_body_lines = lines
@@ -4687,32 +5358,51 @@ class ProjectBrowser:
             return
         em = self.mail_emails[self.left_cursor]
         uid = em["uid"]
-        if uid != self.mail_body_uid:
-            if uid in self._mail_body_cache:
-                body = self._mail_body_cache[uid]
-            else:
-                if not auto:
-                    self._show_loading("Loading email...")
-                try:
-                    self._mail_connect()
-                    body = fetch_email_body(self.mail_imap, uid)
-                except Exception:
-                    self.mail_imap = None
-                    if not auto:
-                        self._modal_input("Error",
-                                          "Could not load email body.",
-                                          ["Connection lost.", "Press Enter."])
-                    return
-                self._mail_body_cache[uid] = body
-                # Persist to disk
-                body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
-                os.makedirs(body_dir, exist_ok=True)
-                try:
-                    with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
-                        f.write(body)
-                except OSError:
-                    pass
-            self._mail_build_body_lines(em, body)
+
+        # If already showing this email's conversation view, just refocus
+        conv_uids = {e["uid"] for e in self._conv_emails} if self._conv_emails else set()
+        if conv_uids == {uid} and self.mail_body_uid == "__conv__":
+            if not auto:
+                self.focus = RIGHT
+            return
+
+        # Set up single-email conversation view
+        self._conv_emails = [em]
+        self._conv_collapsed = set()
+        self._conv_quotes_shown = set()
+        self._conv_pos = 0
+
+        # Fetch body
+        if uid not in self._mail_body_cache:
+            if not auto:
+                self._show_loading("Loading email...")
+            body = self._mail_fetch_body_with_retry(uid, auto)
+            if body is None:
+                return
+            self._mail_body_cache[uid] = body
+            body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
+            os.makedirs(body_dir, exist_ok=True)
+            try:
+                with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
+                    f.write(body)
+            except OSError:
+                pass
+
+        self._mail_build_conversation_lines()
+        self.mail_body_scroll = 0
+        self.mail_body_uid = "__conv__"
+
+        # Mark email as read
+        if not em.get("isRead", True):
+            try:
+                self._mail_connect()
+                self.mail_imap.select("INBOX", readonly=False)
+                set_flag(self.mail_imap, em["uid"], "\\Seen", enable=True)
+                self.mail_imap.select("INBOX", readonly=True)
+                em["isRead"] = True
+            except Exception:
+                pass
+
         if not auto:
             self.focus = RIGHT
 
@@ -4739,24 +5429,9 @@ class ProjectBrowser:
             if uid in self._mail_body_cache:
                 bodies.append((em, self._mail_body_cache[uid]))
             else:
-                try:
-                    self._mail_connect()
-                    body = fetch_email_body(self.mail_imap, uid)
-                except Exception:
-                    self.mail_imap = None
-                    if not auto:
-                        self._modal_input("Error",
-                                          "Could not load email body.",
-                                          ["Connection lost.", "Press Enter."])
+                body = self._mail_fetch_body_with_retry(uid, auto)
+                if body is None:
                     return
-                self._mail_body_cache[uid] = body
-                body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
-                os.makedirs(body_dir, exist_ok=True)
-                try:
-                    with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
-                        f.write(body)
-                except OSError:
-                    pass
                 bodies.append((em, body))
 
         # Build conversation lines
@@ -4812,6 +5487,303 @@ class ProjectBrowser:
         if not auto:
             self.focus = RIGHT
 
+    @staticmethod
+    def _mail_strip_quotes(body):
+        """Split email body into (main_text, quoted_text)."""
+        lines = body.splitlines()
+        cut = len(lines)
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Lines starting with '>'
+            if stripped.startswith(">"):
+                cut = i
+                break
+            # "On ... wrote:" pattern
+            if stripped.startswith("On ") and stripped.endswith("wrote:"):
+                cut = i
+                break
+            # "From: ... Sent:" or similar forwarding headers
+            if stripped.startswith("From:") and i > 0:
+                cut = i
+                break
+            if stripped.startswith("-----Original Message-----"):
+                cut = i
+                break
+            if stripped.startswith("_" * 10):
+                cut = i
+                break
+        main = "\n".join(lines[:cut]).rstrip()
+        quoted = "\n".join(lines[cut:]).rstrip()
+        return main, quoted
+
+    def _mail_open_conversation(self, thread_idx, auto=False, focus_email_uid=None):
+        """Open a thread as a conversation view in the right panel."""
+        if thread_idx >= len(self.mail_threads):
+            return
+        thread = self.mail_threads[thread_idx]
+        if not thread["emails"]:
+            return
+
+        # If already showing this thread's conversation, just refocus
+        thread_uids = {e["uid"] for e in thread["emails"]}
+        conv_uids = {e["uid"] for e in self._conv_emails} if self._conv_emails else set()
+        if thread_uids == conv_uids and self.mail_body_uid == "__conv__":
+            if focus_email_uid:
+                for i, em in enumerate(self._conv_emails):
+                    if em["uid"] == focus_email_uid:
+                        self._conv_pos = i
+                        self._conv_collapsed.discard(i)
+                        self._mail_build_conversation_lines()
+                        self._mail_scroll_to_conv_pos()
+                        break
+            if not auto:
+                self.focus = RIGHT
+            return
+
+        # Build conversation email list (newest first)
+        self._conv_emails = list(reversed(thread["emails"]))
+
+        # Auto-collapse if >5 emails
+        self._conv_collapsed = set()
+        if len(self._conv_emails) > 5:
+            self._conv_collapsed = set(range(1, len(self._conv_emails)))
+
+        self._conv_quotes_shown = set()
+
+        # Determine focused position
+        self._conv_pos = 0
+        if focus_email_uid:
+            for i, em in enumerate(self._conv_emails):
+                if em["uid"] == focus_email_uid:
+                    self._conv_pos = i
+                    self._conv_collapsed.discard(i)
+                    break
+
+        # Fetch bodies for all emails
+        if not auto:
+            self._show_loading("Loading conversation...",
+                               progress=(0, len(self._conv_emails)))
+        for idx, em in enumerate(self._conv_emails):
+            uid = em["uid"]
+            if uid not in self._mail_body_cache:
+                body = self._mail_fetch_body_with_retry(uid, auto)
+                if body is None:
+                    return
+            if not auto:
+                self._show_loading("Loading conversation...",
+                                   progress=(idx + 1, len(self._conv_emails)))
+
+        # Build the conversation lines
+        self._mail_build_conversation_lines()
+        self.mail_body_scroll = 0
+        self._mail_scroll_to_conv_pos()
+
+        # Mark all emails as read
+        for em in thread["emails"]:
+            if not em.get("isRead", True):
+                try:
+                    self._mail_connect()
+                    self.mail_imap.select("INBOX", readonly=False)
+                    set_flag(self.mail_imap, em["uid"], "\\Seen", enable=True)
+                    self.mail_imap.select("INBOX", readonly=True)
+                    em["isRead"] = True
+                except Exception:
+                    pass
+        thread["unread_count"] = 0
+
+        # Set body UID to a sentinel so single-email logic doesn't interfere
+        self.mail_body_uid = "__conv__"
+
+        if not auto:
+            self.focus = RIGHT
+
+    def _mail_build_conversation_lines(self):
+        """Build mail_body_lines and _conv_line_map from _conv_emails."""
+        lines = []
+        line_map = []
+        box_w = max(14, self.right_w - 2)  # leave room for panel border
+        wrap_w = max(6, box_w - 4)          # 2 for "│ " left + 2 for " │" right
+
+        def _box_line(content, lpad="│ ", rpad=" │"):
+            """Build a box content line: lpad + content padded to wrap_w + rpad, truncated to box_w."""
+            cw = _str_width(content)
+            if cw > wrap_w:
+                content = _wc_truncate(content, wrap_w)
+                cw = _str_width(content)
+            s = lpad + content + " " * max(0, wrap_w - cw) + rpad
+            return _wc_truncate(s, box_w)
+
+        def _wrap_text(text, ww):
+            """Wrap text to ww display columns, returning list of strings."""
+            result = []
+            for raw_line in _sanitize_text(text).splitlines():
+                stripped = raw_line.strip()
+                if not stripped:
+                    result.append("")
+                    continue
+                while _str_width(raw_line) > ww:
+                    chunk = _wc_truncate(raw_line, ww)
+                    result.append(chunk)
+                    raw_line = raw_line[len(chunk):]
+                result.append(raw_line)
+            return result
+
+        for i, em in enumerate(self._conv_emails):
+            # Parse from/date for box header
+            frm = _sanitize_text(em.get("from", "")).replace("\n", " ")
+            if "<" in frm:
+                display_name = frm.split("<")[0].strip().strip('"')
+                email_addr = frm.split("<")[-1].rstrip(">").strip()
+                if display_name:
+                    header_from = f"{display_name} ({email_addr})"
+                else:
+                    header_from = email_addr
+            else:
+                header_from = frm
+            date = self._mail_format_date(em.get("date", ""))
+
+            # Build top border with from/date label — truncate name to keep date visible
+            date_part = f" · {date} "
+            date_part_w = _str_width(date_part)
+            max_label_w = box_w - 4  # reserve "╭─" + "─" + "╮"
+            name_part = f" {header_from}"
+            name_budget = max_label_w - date_part_w
+            if name_budget >= 4:
+                # Enough room for truncated name + date
+                if _str_width(name_part) > name_budget:
+                    name_part = _wc_truncate(name_part, name_budget - 1) + "…"
+                label = name_part + date_part
+            else:
+                # Too narrow — just show what fits
+                label = f" {header_from} · {date} "
+            if _str_width(label) > max_label_w:
+                label = _wc_truncate(label, max_label_w - 1) + "…"
+            label_w = _str_width(label)
+            fill = max(0, box_w - 3 - label_w)
+            top = "╭─" + label + "─" * fill + "╮"
+            top = _wc_truncate(top, box_w)
+            bot = _wc_truncate("╰" + "─" * max(0, box_w - 2) + "╯", box_w)
+
+            if i in self._conv_collapsed:
+                # Collapsed: two-line box
+                lines.append(top)
+                line_map.append((i, "collapsed_top"))
+                lines.append(bot)
+                line_map.append((i, "collapsed_bot"))
+            else:
+                # Expanded box — top
+                lines.append(top)
+                line_map.append((i, "box_top"))
+
+                # Header lines inside box (collapse newlines from RFC header folding)
+                to = _sanitize_text(em.get("to", "")).replace("\n", " ")
+                cc = _sanitize_text(em.get("cc", "")).replace("\n", " ")
+                email_subj = _sanitize_text(em.get("subject", "(no subject)")).replace("\n", " ")
+                hdr_lines = [f"Subject: {email_subj}", f"From: {frm}"]
+                if to:
+                    hdr_lines.append(f"To: {to}")
+                if cc:
+                    hdr_lines.append(f"Cc: {cc}")
+                hdr_lines.append(f"Date: {date}")
+                for hl in hdr_lines:
+                    lines.append(_box_line(_wc_truncate(hl, wrap_w)))
+                    line_map.append((i, "header"))
+
+                # Separator + blank padding line
+                sep = _wc_truncate("│" + "─" * max(0, box_w - 2) + "│", box_w)
+                lines.append(sep)
+                line_map.append((i, "separator"))
+                lines.append(_box_line(""))
+                line_map.append((i, "body"))
+
+                # Body text
+                uid = em["uid"]
+                body = self._mail_body_cache.get(uid, "")
+                main_text, quoted_text = self._mail_strip_quotes(body)
+                main_text, main_links = _shorten_urls(main_text)
+
+                # Wrap and add main body lines
+                blank_run = 0
+                for wline in _wrap_text(main_text, wrap_w):
+                    if not wline.strip():
+                        blank_run += 1
+                        if self._mail_raw_mode or blank_run <= 1:
+                            lines.append(_box_line(""))
+                            line_map.append((i, "body"))
+                        continue
+                    blank_run = 0
+                    lines.append(_box_line(wline))
+                    line_map.append((i, "body"))
+
+                # Links footnote section
+                if main_links:
+                    lines.append(_box_line(""))
+                    line_map.append((i, "body"))
+                    lines.append(_box_line("─" * min(20, wrap_w)))
+                    line_map.append((i, "separator"))
+                    for li, url in enumerate(main_links, 1):
+                        for chunk in _wrap_text(f"[{li}] {url}", wrap_w):
+                            lines.append(_box_line(chunk))
+                            line_map.append((i, "body"))
+
+                # Quoted text handling
+                if quoted_text.strip():
+                    if i in self._conv_quotes_shown:
+                        blank_run = 0
+                        for wline in _wrap_text(quoted_text, wrap_w):
+                            if not wline.strip():
+                                blank_run += 1
+                                if self._mail_raw_mode or blank_run <= 1:
+                                    lines.append(_box_line(""))
+                                    line_map.append((i, "quote"))
+                                continue
+                            blank_run = 0
+                            lines.append(_box_line(wline))
+                            line_map.append((i, "quote"))
+                    else:
+                        hint = "··· quoted text hidden (o to show) ···"
+                        lines.append(_box_line(_wc_truncate(hint, wrap_w)))
+                        line_map.append((i, "quote_hidden"))
+
+                # Blank padding + bottom border
+                lines.append(_box_line(""))
+                line_map.append((i, "body"))
+                bot = "╰" + "─" * max(0, box_w - 2) + "╯"
+                lines.append(bot[:box_w])
+                line_map.append((i, "box_bot"))
+
+            # Spacer between emails
+            if i < len(self._conv_emails) - 1:
+                lines.append("")
+                line_map.append((i, "spacer"))
+
+        self.mail_body_lines = lines
+        self._conv_line_map = line_map
+
+    def _mail_scroll_to_conv_pos(self):
+        """Scroll to make the focused email visible."""
+        for li, (idx, ltype) in enumerate(self._conv_line_map):
+            if idx == self._conv_pos:
+                self.mail_body_scroll = li
+                return
+
+    def _mail_sync_left_to_conv(self):
+        """Move the left panel cursor to match the current conversation email."""
+        if not self._conv_emails or not self._mail_display_rows:
+            return
+        if self._conv_pos >= len(self._conv_emails):
+            return
+        target_uid = self._conv_emails[self._conv_pos]["uid"]
+        for i, row in enumerate(self._mail_display_rows):
+            if row["type"] == "email" and row["email"]["uid"] == target_uid:
+                self.left_cursor = i
+                # Adjust scroll to keep cursor visible
+                if self.left_cursor < self.left_scroll:
+                    self.left_scroll = self.left_cursor
+                elif self.left_cursor >= self.left_scroll + self.content_h:
+                    self.left_scroll = self.left_cursor - self.content_h + 1
+                return
+
     def _mail_open_current_row(self, auto=False):
         """Open the email for the current display row (threaded mode)."""
         if not self._mail_display_rows:
@@ -4819,61 +5791,13 @@ class ProjectBrowser:
         if self.left_cursor >= len(self._mail_display_rows):
             return
         row = self._mail_display_rows[self.left_cursor]
-        if row["type"] == "email":
-            em = row["email"]
-        else:
-            thread = row["thread"]
-            if not thread["emails"]:
-                return
-            em = thread["emails"][-1]
 
-        uid = em["uid"]
-        if uid == self.mail_body_uid:
-            if not auto:
-                self.focus = RIGHT
+        # Delegate all threads (single or multi-email) to conversation view
+        tidx = row["thread_idx"]
+        if tidx < len(self.mail_threads):
+            focus_uid = row["email"]["uid"] if row["type"] == "email" else None
+            self._mail_open_conversation(tidx, auto=auto, focus_email_uid=focus_uid)
             return
-
-        if uid in self._mail_body_cache:
-            body = self._mail_body_cache[uid]
-        else:
-            if not auto:
-                self._show_loading("Loading email...")
-            try:
-                self._mail_connect()
-                body = fetch_email_body(self.mail_imap, uid)
-            except Exception:
-                self.mail_imap = None
-                if not auto:
-                    self._modal_input("Error",
-                                      "Could not load email body.",
-                                      ["Connection lost.", "Press Enter."])
-                return
-            self._mail_body_cache[uid] = body
-            body_dir = os.path.join(self._MAIL_CACHE_DIR, "bodies")
-            os.makedirs(body_dir, exist_ok=True)
-            try:
-                with open(os.path.join(body_dir, f"{uid}.txt"), "w") as f:
-                    f.write(body)
-            except OSError:
-                pass
-
-        self._mail_build_body_lines(em, body)
-
-        # Mark email as read
-        if not em.get("isRead", True):
-            try:
-                self._mail_connect()
-                self.mail_imap.select("INBOX", readonly=False)
-                set_flag(self.mail_imap, em["uid"], "\\Seen", enable=True)
-                self.mail_imap.select("INBOX", readonly=True)
-                em["isRead"] = True
-                tidx = row["thread_idx"]
-                if tidx < len(self.mail_threads):
-                    t = self.mail_threads[tidx]
-                    t["unread_count"] = sum(1 for e in t["emails"]
-                                            if not e.get("isRead", True))
-            except Exception:
-                pass
 
         if not auto:
             self.focus = RIGHT
@@ -4910,19 +5834,25 @@ class ProjectBrowser:
         if self.mail_threaded and self._mail_display_rows:
             if self.left_cursor < len(self._mail_display_rows):
                 row = self._mail_display_rows[self.left_cursor]
-                if row["type"] == "email":
-                    uid = row["email"]["uid"]
-                else:
-                    uid = row["thread"]["emails"][-1]["uid"] if row["thread"]["emails"] else None
-                if uid and uid != self.mail_body_uid:
-                    self.mail_body_lines = []
-                    self.mail_body_uid = None
-                    self._mail_body_pending = True
+                tidx = row["thread_idx"]
+                # Check if we're already showing the right thread
+                if tidx < len(self.mail_threads):
+                    thread_uids = set(self.mail_threads[tidx]["uids"])
+                    conv_uids = {e["uid"] for e in self._conv_emails} if self._conv_emails else set()
+                    if thread_uids != conv_uids or self.mail_body_uid != "__conv__":
+                        self.mail_body_lines = []
+                        self.mail_body_uid = None
+                        self._conv_emails = []
+                        self._conv_line_map = []
+                        self._mail_body_pending = True
         elif self.mail_emails:
             uid = self.mail_emails[self.left_cursor]["uid"]
-            if uid != self.mail_body_uid:
+            conv_uids = {e["uid"] for e in self._conv_emails} if self._conv_emails else set()
+            if conv_uids != {uid}:
                 self.mail_body_lines = []
                 self.mail_body_uid = None
+                self._conv_emails = []
+                self._conv_line_map = []
                 self._mail_body_pending = True
 
     def _mail_idle_load(self):
@@ -4938,7 +5868,9 @@ class ProjectBrowser:
         self._mail_left_w_offset += delta
         self._calc_dimensions()
         # Re-wrap body lines for new right_w
-        if self.mail_body_uid:
+        if self._conv_emails:
+            self._mail_build_conversation_lines()
+        elif self.mail_body_uid:
             self.mail_body_uid = None  # force re-wrap on next open
         if self.mail_thread_body_idx is not None:
             self.mail_thread_body_idx = None  # force re-wrap on next open
@@ -4970,6 +5902,35 @@ class ProjectBrowser:
             self.mail_imap.select("INBOX", readonly=True)
             em["isRead"] = not em["isRead"]
 
+    def _mail_toggle_flag(self):
+        """Toggle \\Flagged (star) on current email or thread."""
+        if self.mail_threaded:
+            tidx = self._mail_current_thread_idx()
+            if tidx is None or tidx >= len(self.mail_threads):
+                return
+            thread = self.mail_threads[tidx]
+            # Toggle: if any flagged, unflag all; else flag all
+            any_flagged = any(e.get("isFlagged") for e in thread["emails"])
+            new_flag = not any_flagged
+            self._show_loading("Updating flag...")
+            self._mail_connect()
+            self.mail_imap.select("INBOX", readonly=False)
+            for em in thread["emails"]:
+                set_flag(self.mail_imap, em["uid"], "\\Flagged", enable=new_flag)
+                em["isFlagged"] = new_flag
+            self.mail_imap.select("INBOX", readonly=True)
+        else:
+            if not self.mail_emails:
+                return
+            em = self.mail_emails[self.left_cursor]
+            new_flag = not em.get("isFlagged", False)
+            self._show_loading("Updating flag...")
+            self._mail_connect()
+            self.mail_imap.select("INBOX", readonly=False)
+            set_flag(self.mail_imap, em["uid"], "\\Flagged", enable=new_flag)
+            self.mail_imap.select("INBOX", readonly=True)
+            em["isFlagged"] = new_flag
+
     def _mail_delete(self):
         """Delete selected emails/threads (or current if none selected)."""
         if self.mail_threaded:
@@ -4998,12 +5959,17 @@ class ProjectBrowser:
         if self.mail_body_uid in target_uids:
             self.mail_body_uid = None
             self.mail_body_lines = []
+            self._conv_emails = []
+            self._conv_line_map = []
         self.mail_thread_body_lines = []
         self.mail_thread_body_idx = None
         self._mail_expanded.clear()
         self._mail_rebuild_threads()
         n_items = len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
         self.left_cursor = min(self.left_cursor, max(0, n_items - 1))
+        # Auto-load the now-selected email/thread into the right panel
+        if n_items > 0:
+            self._mail_body_pending = True
 
     def _mail_archive(self):
         """Archive selected emails/threads (or current if none selected)."""
@@ -5035,12 +6001,17 @@ class ProjectBrowser:
         if self.mail_body_uid in target_uids:
             self.mail_body_uid = None
             self.mail_body_lines = []
+            self._conv_emails = []
+            self._conv_line_map = []
         self.mail_thread_body_lines = []
         self.mail_thread_body_idx = None
         self._mail_expanded.clear()
         self._mail_rebuild_threads()
         n_items = len(self._mail_display_rows) if self.mail_threaded else len(self.mail_emails)
         self.left_cursor = min(self.left_cursor, max(0, n_items - 1))
+        # Auto-load the now-selected email/thread into the right panel
+        if n_items > 0:
+            self._mail_body_pending = True
 
     def _mail_scroll_list(self, delta):
         items = self._mail_display_rows if self.mail_threaded else self.mail_emails
@@ -5133,12 +6104,7 @@ class ProjectBrowser:
                 thread = row["thread"]
                 count = len(thread["emails"])
 
-                # Expand indicator
-                if count > 1:
-                    arrow = "▼ " if tidx in self._mail_expanded else "▶ "
-                else:
-                    arrow = "  "
-
+                # Status indicators
                 if is_sel_marked:
                     dot = "[*]"
                 elif thread["unread_count"] > 0:
@@ -5146,14 +6112,24 @@ class ProjectBrowser:
                 else:
                     dot = "  "
 
-                frm = thread["from_summary"]
+                # Star indicator
+                has_flag = any(e.get("isFlagged") for e in thread["emails"])
+                star = "★ " if has_flag else "  "
+
+                # Expand indicator
+                if count > 1:
+                    arrow = "▼ " if tidx in self._mail_expanded else "▶ "
+                else:
+                    arrow = "  "
+
+                frm = _sanitize_text(thread["from_summary"]).replace("\n", " ")
                 date = self._mail_format_date(thread["latest_date"])
-                subj = thread["subject"] or "(no subject)"
+                subj = _sanitize_text(thread["subject"] or "(no subject)").replace("\n", " ")
                 if count > 1:
                     subj = f"{subj} ({count})"
 
                 avail = self.left_w - 2
-                prefix = arrow + dot
+                prefix = dot + star + arrow
                 prefix_w = _str_width(prefix)
                 date_w = _str_width(date)
                 from_w = min(15, max(8, avail // 4))
@@ -5163,25 +6139,33 @@ class ProjectBrowser:
                     from_w = 0
                 subj_w = max(0, subj_w)
 
-                line = prefix
-                line += _wc_ljust(_wc_truncate(subj, subj_w), subj_w)
+                line = prefix + _wc_ljust(_wc_truncate(subj, subj_w), subj_w)
                 if from_w > 0:
                     line += " " + _wc_ljust(_wc_truncate(frm, from_w), from_w)
                 line += " " + date
 
                 attr = 0
-                if is_cursor and self.focus == LEFT:
-                    attr = curses.A_REVERSE
-                elif is_cursor:
-                    attr = curses.A_REVERSE | curses.A_DIM
-                if is_sel_marked and not is_cursor:
-                    attr |= curses.color_pair(C_CYAN)
-                elif is_sel_marked and is_cursor:
-                    attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
-                if thread["unread_count"] > 0:
-                    attr |= curses.A_BOLD
+                if self.focus == LEFT:
+                    if is_cursor:
+                        attr = curses.A_REVERSE | curses.color_pair(C_BLUE)
+                    if is_sel_marked and not is_cursor:
+                        attr |= curses.color_pair(C_CYAN)
+                    elif is_sel_marked and is_cursor:
+                        attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
+                    if thread["unread_count"] > 0:
+                        attr |= curses.A_BOLD
+                else:
+                    # Right panel focused — dim non-cursor items
+                    if is_cursor:
+                        attr = curses.A_BOLD
+                    elif is_sel_marked:
+                        attr = curses.color_pair(C_CYAN)
+                    else:
+                        attr = curses.A_DIM
+                    if thread["unread_count"] > 0 and not is_cursor:
+                        attr |= curses.A_BOLD
 
-                self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr)
+                self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr, max_n=display_w)
 
             else:  # email row
                 em = row["email"]
@@ -5195,13 +6179,15 @@ class ProjectBrowser:
                 else:
                     dot = "  "
 
-                frm = em.get("from", "")
+                star = "★ " if em.get("isFlagged") else "  "
+
+                frm = _sanitize_text(em.get("from", "")).replace("\n", " ")
                 if "<" in frm:
                     frm = frm.split("<")[0].strip().strip('"') or frm
                 date = self._mail_format_date(em.get("date", ""))
 
                 avail = self.left_w - 2
-                prefix = "   " + connector + dot
+                prefix = "   " + connector + dot + star
                 prefix_w = _str_width(prefix)
                 date_w = _str_width(date)
                 name_w = max(0, avail - prefix_w - date_w - 1)
@@ -5210,19 +6196,26 @@ class ProjectBrowser:
                 line += _wc_ljust(_wc_truncate(frm, name_w), name_w)
                 line += " " + date
 
-                attr = curses.A_DIM
-                if is_cursor and self.focus == LEFT:
-                    attr = curses.A_REVERSE
-                elif is_cursor:
-                    attr = curses.A_REVERSE | curses.A_DIM
-                if is_sel_marked and not is_cursor:
-                    attr = curses.color_pair(C_CYAN) | curses.A_DIM
-                elif is_sel_marked and is_cursor:
-                    attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
-                if not em.get("isRead", True):
-                    attr |= curses.A_BOLD
+                if self.focus == LEFT:
+                    attr = curses.A_DIM
+                    if is_cursor:
+                        attr = curses.A_REVERSE | curses.color_pair(C_BLUE)
+                    if is_sel_marked and not is_cursor:
+                        attr = curses.color_pair(C_CYAN) | curses.A_DIM
+                    elif is_sel_marked and is_cursor:
+                        attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
+                    if not em.get("isRead", True):
+                        attr |= curses.A_BOLD
+                else:
+                    # Right panel focused — dim non-cursor items
+                    if is_cursor:
+                        attr = curses.A_BOLD
+                    elif is_sel_marked:
+                        attr = curses.color_pair(C_CYAN)
+                    else:
+                        attr = curses.A_DIM
 
-                self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr)
+                self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr, max_n=display_w)
 
     def _draw_left_panel_mail_flat(self):
         if not self.mail_emails:
@@ -5245,11 +6238,13 @@ class ProjectBrowser:
             else:
                 dot = "  "
 
-            frm = em["from"]
+            star = "★ " if em.get("isFlagged") else "  "
+
+            frm = _sanitize_text(em["from"]).replace("\n", " ")
             if "<" in frm:
                 frm = frm.split("<")[0].strip().strip('"')
             if not frm:
-                frm = em["from"]
+                frm = _sanitize_text(em["from"]).replace("\n", " ")
 
             date = em["date"]
             for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z",
@@ -5264,10 +6259,12 @@ class ProjectBrowser:
             else:
                 date = date[:11]
 
-            subj = em["subject"] or "(no subject)"
+            subj = _sanitize_text(em["subject"] or "(no subject)").replace("\n", " ")
 
+            display_w = min(self.left_w, self.max_x - 3)
             avail = self.left_w - 2
-            prefix_w = _str_width(dot)
+            prefix = dot + star
+            prefix_w = _str_width(prefix)
             date_w = _str_width(date)
             from_w = min(15, max(8, avail // 4))
             subj_w = avail - prefix_w - from_w - 1 - date_w - 1
@@ -5276,7 +6273,7 @@ class ProjectBrowser:
                 from_w = 0
             subj_w = max(0, subj_w)
 
-            line = dot
+            line = prefix
             line += _wc_ljust(_wc_truncate(subj, subj_w), subj_w)
             if from_w > 0:
                 line += " " + _wc_ljust(_wc_truncate(frm, from_w), from_w)
@@ -5284,20 +6281,28 @@ class ProjectBrowser:
 
             is_selected = (idx == self.left_cursor)
             is_sel_marked = em["uid"] in self.mail_selected
-            attr = 0
-            if is_selected and self.focus == LEFT:
-                attr = curses.A_REVERSE
-            elif is_selected:
-                attr = curses.A_REVERSE | curses.A_DIM
-            if is_sel_marked and not is_selected:
-                attr |= curses.color_pair(C_CYAN)
-            elif is_sel_marked and is_selected:
-                attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
-            if not em["isRead"]:
-                attr |= curses.A_BOLD
+            if self.focus == LEFT:
+                attr = 0
+                if is_selected:
+                    attr = curses.A_REVERSE | curses.color_pair(C_BLUE)
+                if is_sel_marked and not is_selected:
+                    attr |= curses.color_pair(C_CYAN)
+                elif is_sel_marked and is_selected:
+                    attr = curses.color_pair(C_CYAN) | curses.A_REVERSE
+                if not em["isRead"]:
+                    attr |= curses.A_BOLD
+            else:
+                # Right panel focused — dim non-cursor items
+                if is_selected:
+                    attr = curses.A_BOLD
+                elif is_sel_marked:
+                    attr = curses.color_pair(C_CYAN)
+                else:
+                    attr = curses.A_DIM
+                if not em["isRead"] and not is_selected:
+                    attr |= curses.A_BOLD
 
-            display_w = min(self.left_w, self.max_x - 3)
-            self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr)
+            self._safe_addstr(y, 1, _wc_ljust(_wc_truncate(line, display_w), display_w), attr, max_n=display_w)
 
     def _mail_extract_items(self):
         """Use Claude CLI to extract tasks and events from selected emails."""
@@ -5306,12 +6311,9 @@ class ProjectBrowser:
 
         if not self.mail_selected:
             return
-        choice = self._modal_choice("Model", "Choose model:",
-                                    [("h", "Haiku"), ("s", "Sonnet")])
-        if choice is None:
+        model = self._get_claude_model()
+        if model is None:
             return
-        model_map = {"h": "claude-haiku-4-5-20251001", "s": "claude-sonnet-4-6"}
-        model = model_map[choice]
 
         self._show_loading("Extracting tasks & events with Claude...")
 
@@ -5346,84 +6348,112 @@ class ProjectBrowser:
         else:
             target_uids = set(self.mail_selected)
 
+        # Collect all email content into a single prompt for one Claude call
+        email_sections = []
+        n_emails = 0
         for em in self.mail_emails:
             if em["uid"] not in target_uids:
                 continue
+            n_emails += 1
+            self._show_loading(f"Loading email bodies ({n_emails})...")
             self._mail_connect()
-            body = fetch_email_body(self.mail_imap, em["uid"])
+            body = self._mail_body_cache.get(em["uid"])
+            if not body:
+                try:
+                    body = fetch_email_body(self.mail_imap, em["uid"])
+                    self._mail_body_cache[em["uid"]] = body
+                except Exception:
+                    body = ""
             preview = body[:2000] if body else ""
-            prompt = (
+            email_sections.append(
+                f"--- Email {n_emails} ---\n"
                 f"Subject: {em['subject']}\n"
-                f"From: {em['from']}\n\n"
-                f"{preview}\n\n"
-                f"Extract action items and calendar events from this email.\n"
-                f"Today's date is {today_str}.\n\n"
-                f"Active projects:\n{proj_ctx}\n\n"
-                f"Output format (one item per line):\n"
-                f"TASK|description|YYYY-MM-DD|project_name|milestone_name\n"
-                f"TASK|description|YYYY-MM-DD|project_name|\n"
-                f"TASK|description||project_name|\n"
-                f"TASK|description|||\n"
-                f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|location\n"
-                f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|\n\n"
-                f"Rules:\n"
-                f"- TASK = something someone needs to do\n"
-                f"- EVENT = something happening at a specific date/time (meeting, call, deadline)\n"
-                f"- Resolve relative dates (\"next Tuesday\") relative to today\n"
-                f"- If event has no clear time, use 09:00-10:00\n"
-                f"- Assign each TASK to the most relevant project from the list above\n"
-                f"- Use project descriptions to determine the best match\n"
-                f"- If a project has milestones, assign the task to the best-fitting milestone\n"
-                f"- If no project fits, leave project_name and milestone_name empty\n"
-                f"- If no actionable items, return NONE"
+                f"From: {em['from']}\n"
+                f"Date: {em.get('date', '')}\n\n"
+                f"{preview}"
             )
-            try:
-                result = subprocess.run(
-                    ["claude", "-p", "--model", model],
-                    input=prompt, capture_output=True, text=True, timeout=120,
-                    env=env,
-                )
-                text = result.stdout.strip()
-                if text and text.upper() != "NONE":
-                    for line in text.splitlines():
-                        line = line.strip()
-                        if not line or line.upper() == "NONE":
-                            continue
-                        if line.startswith("```"):
-                            continue
-                        parts = line.split("|")
-                        if len(parts) >= 2 and parts[0].strip().upper() == "TASK":
-                            desc = parts[1].strip()
-                            due = parts[2].strip() if len(parts) > 2 else ""
-                            proj = parts[3].strip() if len(parts) > 3 else ""
-                            ms = parts[4].strip() if len(parts) > 4 else ""
-                            if desc:
-                                all_tasks.append({"desc": desc, "due": due,
-                                                  "project": proj, "milestone": ms})
-                        elif len(parts) >= 4 and parts[0].strip().upper() == "EVENT":
-                            title = parts[1].strip()
-                            date_s = parts[2].strip()
-                            start_s = parts[3].strip() if len(parts) > 3 else "09:00"
-                            end_s = parts[4].strip() if len(parts) > 4 else "10:00"
-                            loc = parts[5].strip() if len(parts) > 5 else ""
-                            if title and date_s:
-                                ev = {
-                                    "title": title,
-                                    "date": date_s,
-                                    "start": start_s or "09:00",
-                                    "end": end_s or "10:00",
-                                }
-                                if loc:
-                                    ev["location"] = loc
-                                all_events.append(ev)
-                        else:
-                            # Fallback: old line-by-line task parsing
-                            line = re.sub(r"^[\d]+[.)]\s*", "", line)
-                            line = line.lstrip("-•* ")
-                            if line and line.upper() != "NONE":
-                                all_tasks.append(line)
-            except Exception:
-                pass
+
+        if not email_sections:
+            return
+
+        combined = "\n\n".join(email_sections)
+        # Cap total input to avoid excessive token usage
+        combined = combined[:12000]
+
+        prompt = (
+            f"{combined}\n\n"
+            f"Extract action items and calendar events from the above email(s).\n"
+            f"Today's date is {today_str}.\n\n"
+            f"Active projects:\n{proj_ctx}\n\n"
+            f"Output format (one item per line):\n"
+            f"TASK|description|YYYY-MM-DD|project_name|milestone_name\n"
+            f"TASK|description|YYYY-MM-DD|project_name|\n"
+            f"TASK|description||project_name|\n"
+            f"TASK|description|||\n"
+            f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|location\n"
+            f"EVENT|title|YYYY-MM-DD|HH:MM|HH:MM|\n\n"
+            f"Rules:\n"
+            f"- TASK = something someone needs to do\n"
+            f"- EVENT = something happening at a specific date/time (meeting, call, deadline)\n"
+            f"- Resolve relative dates (\"next Tuesday\") relative to today\n"
+            f"- If event has no clear time, use 09:00-10:00\n"
+            f"- Assign each TASK to the most relevant project from the list above\n"
+            f"- Use project descriptions to determine the best match\n"
+            f"- If a project has milestones, assign the task to the best-fitting milestone\n"
+            f"- If no project fits, leave project_name and milestone_name empty\n"
+            f"- Deduplicate: if the same action is mentioned across emails, emit it once\n"
+            f"- If no actionable items, return NONE"
+        )
+
+        self._show_loading(f"Extracting from {n_emails} email(s) with Claude...")
+
+        try:
+            result = subprocess.run(
+                ["claude", "-p", "--model", model],
+                input=prompt, capture_output=True, text=True, timeout=180,
+                env=env,
+            )
+            text = result.stdout.strip()
+            if text and text.upper() != "NONE":
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.upper() == "NONE":
+                        continue
+                    if line.startswith("```"):
+                        continue
+                    parts = line.split("|")
+                    if len(parts) >= 2 and parts[0].strip().upper() == "TASK":
+                        desc = parts[1].strip()
+                        due = parts[2].strip() if len(parts) > 2 else ""
+                        proj = parts[3].strip() if len(parts) > 3 else ""
+                        ms = parts[4].strip() if len(parts) > 4 else ""
+                        if desc:
+                            all_tasks.append({"desc": desc, "due": due,
+                                              "project": proj, "milestone": ms})
+                    elif len(parts) >= 4 and parts[0].strip().upper() == "EVENT":
+                        title = parts[1].strip()
+                        date_s = parts[2].strip()
+                        start_s = parts[3].strip() if len(parts) > 3 else "09:00"
+                        end_s = parts[4].strip() if len(parts) > 4 else "10:00"
+                        loc = parts[5].strip() if len(parts) > 5 else ""
+                        if title and date_s:
+                            ev = {
+                                "title": title,
+                                "date": date_s,
+                                "start": start_s or "09:00",
+                                "end": end_s or "10:00",
+                            }
+                            if loc:
+                                ev["location"] = loc
+                            all_events.append(ev)
+                    else:
+                        # Fallback: old line-by-line task parsing
+                        line = re.sub(r"^[\d]+[.)]\s*", "", line)
+                        line = line.lstrip("-•* ")
+                        if line and line.upper() != "NONE":
+                            all_tasks.append(line)
+        except Exception:
+            pass
 
         if not all_tasks and not all_events:
             self._modal_input("Info", "No items found", ["No actionable items extracted."])
@@ -5848,16 +6878,20 @@ class ProjectBrowser:
             if self.mail_threaded:
                 if self._mail_display_rows and self.left_cursor < len(self._mail_display_rows):
                     row = self._mail_display_rows[self.left_cursor]
+                    tidx = row["thread_idx"]
                     if row["type"] == "thread" and len(row["thread"]["emails"]) > 1:
-                        # Toggle expand/collapse
-                        tidx = row["thread_idx"]
-                        if tidx in self._mail_expanded:
-                            self._mail_expanded.discard(tidx)
-                        else:
+                        # Expand thread in left panel and open conversation
+                        if tidx not in self._mail_expanded:
                             self._mail_expanded.add(tidx)
-                        self._mail_build_display_rows()
+                            self._mail_build_display_rows()
+                        self._mail_open_conversation(tidx)
+                        self._mail_sync_left_to_conv()
+                    elif row["type"] == "email":
+                        # Email row inside expanded thread: open conversation, focus that email
+                        self._mail_open_conversation(tidx, focus_email_uid=row["email"]["uid"])
+                        self._mail_sync_left_to_conv()
                     else:
-                        # Single-email thread or email row: open in right panel
+                        # Single-email thread: open in conversation view
                         self._mail_open_current_row()
             else:
                 self._mail_open()
@@ -5908,6 +6942,10 @@ class ProjectBrowser:
             self.mail_thread_body_scroll = 0
             self.mail_body_lines = []
             self.mail_body_uid = None
+            self._conv_emails = []
+            self._conv_line_map = []
+            self._conv_collapsed = set()
+            self._conv_quotes_shown = set()
             self.mail_body_scroll = 0
         elif key == ord("u"):
             self.mail_unread_filter = not self.mail_unread_filter
@@ -5938,6 +6976,8 @@ class ProjectBrowser:
             self.mail_selected.clear()
         elif key == ord("m"):
             self._mail_toggle_seen()
+        elif key == ord("s"):
+            self._mail_toggle_flag()
         elif key == ord("#"):
             self._mail_delete()
         elif key == ord("e"):
@@ -5958,10 +6998,19 @@ class ProjectBrowser:
         elif key == ord("N"):
             if self._mail_search_query:
                 self._mail_search_next(self.left_cursor - 1, -1)
+        elif key == ord("\\"):
+            self._right_panel_hidden = not self._right_panel_hidden
+            self._calc_dimensions()
         elif key == ord(">"):
             self._mail_resize_left(5)
         elif key == ord("<"):
             self._mail_resize_left(-5)
+        elif key == ord("S"):
+            self._mail_summarize()
+        elif key == ord(","):
+            self._show_settings()
+        elif key == ord("?"):
+            self._show_help()
         elif key == ord("c"):
             self._toggle_mode()
         elif key == ord("v"):
@@ -5979,8 +7028,289 @@ class ProjectBrowser:
             self.mail_body_scroll = min(max_scroll, self.mail_body_scroll + self.content_h // 2)
         elif key == ord("K"):
             self.mail_body_scroll = max(0, self.mail_body_scroll - self.content_h // 2)
+        elif key == ord("n"):
+            # Next email in conversation
+            if self._conv_emails and self._conv_pos < len(self._conv_emails) - 1:
+                self._conv_pos += 1
+                self._conv_collapsed.discard(self._conv_pos)
+                self._mail_build_conversation_lines()
+                self._mail_scroll_to_conv_pos()
+                self._mail_sync_left_to_conv()
+        elif key == ord("p"):
+            # Previous email in conversation
+            if self._conv_emails and self._conv_pos > 0:
+                self._conv_pos -= 1
+                self._conv_collapsed.discard(self._conv_pos)
+                self._mail_build_conversation_lines()
+                self._mail_scroll_to_conv_pos()
+                self._mail_sync_left_to_conv()
+        elif key == ord("o"):
+            # Toggle quoted text on focused email
+            if self._conv_emails:
+                if self._conv_pos in self._conv_quotes_shown:
+                    self._conv_quotes_shown.discard(self._conv_pos)
+                else:
+                    self._conv_quotes_shown.add(self._conv_pos)
+                self._mail_build_conversation_lines()
+        elif key == ord("\\"):
+            # Toggle collapse/expand all
+            if self._conv_emails and len(self._conv_emails) > 1:
+                if self._conv_collapsed:
+                    self._conv_collapsed.clear()
+                else:
+                    self._conv_collapsed = set(range(len(self._conv_emails))) - {self._conv_pos}
+                self._mail_build_conversation_lines()
+        elif key in (10, 13):
+            # Enter on collapsed email -> expand it
+            if self._conv_line_map and self._conv_emails:
+                # Find which email is at the current scroll position
+                vis_line = self.mail_body_scroll
+                if vis_line < len(self._conv_line_map):
+                    eidx, ltype = self._conv_line_map[vis_line]
+                    if ltype in ("collapsed_top", "collapsed_bot") and eidx in self._conv_collapsed:
+                        self._conv_collapsed.discard(eidx)
+                        self._conv_pos = eidx
+                        self._mail_build_conversation_lines()
+                        self._mail_scroll_to_conv_pos()
+        elif key == ord("w"):
+            # Toggle raw/processed view
+            self._mail_raw_mode = not self._mail_raw_mode
+            if self._conv_emails:
+                self._mail_build_conversation_lines()
+        elif key == ord("S"):
+            self._mail_summarize()
+        elif key == ord(","):
+            self._show_settings()
+        elif key == ord("?"):
+            self._show_help()
         elif key in (ord("h"), 27, curses.KEY_LEFT):
+            # Collapse the current thread and move cursor to its header row
+            if self.mail_threaded and self._mail_display_rows:
+                tidx = None
+                if self.left_cursor < len(self._mail_display_rows):
+                    tidx = self._mail_display_rows[self.left_cursor]["thread_idx"]
+                if tidx is not None and tidx in self._mail_expanded:
+                    self._mail_expanded.discard(tidx)
+                    self._mail_build_display_rows()
+                    # Find the thread header row
+                    for i, row in enumerate(self._mail_display_rows):
+                        if row["type"] == "thread" and row["thread_idx"] == tidx:
+                            self.left_cursor = i
+                            if self.left_cursor < self.left_scroll:
+                                self.left_scroll = self.left_cursor
+                            elif self.left_cursor >= self.left_scroll + self.content_h:
+                                self.left_scroll = self.left_cursor - self.content_h + 1
+                            break
             self.focus = LEFT
+
+    # ─── Help ─────────────────────────────────────────────────────────────
+
+    def _show_help(self):
+        """Show keybinding help popup for the current mode."""
+        sections = []
+
+        sections.append(("Global", [
+            (":",  "Command palette"),
+            ("M",  "Open mail"),
+            ("q",  "Quit"),
+            (",",  "Settings"),
+            ("?",  "This help"),
+        ]))
+
+        if self.mode == MODE_MAIL:
+            sections.append(("Mail ─ List", [
+                ("j/k",     "Navigate up/down"),
+                ("g/G",     "Jump to top/bottom"),
+                ("Enter",   "Open / expand thread"),
+                ("/",       "Search"),
+                ("n/N",     "Next/prev search match"),
+                ("x",       "Select email"),
+                ("X",       "Select all"),
+                ("t",       "Toggle threaded/flat"),
+                ("T",       "Extract tasks (Claude)"),
+                ("S",       "Summarize email (Claude)"),
+                ("s",       "Toggle star"),
+                ("m",       "Toggle read/unread"),
+                ("e",       "Archive"),
+                ("#",       "Delete"),
+                ("r",       "Refresh inbox"),
+                ("+",       "Load more emails"),
+                (">/<",     "Resize left pane"),
+                ("c",       "Switch to tasks"),
+                ("v",       "Cycle view"),
+            ]))
+            sections.append(("Mail ─ Body", [
+                ("j/k",     "Scroll up/down"),
+                ("J/K",     "Page up/down"),
+                ("n/p",     "Next/prev email in thread"),
+                ("o",       "Toggle quoted text"),
+                ("\\",      "Expand/collapse all"),
+                ("S",       "Summarize email (Claude)"),
+                ("w",       "Toggle raw/compact"),
+                ("h/Esc",   "Back to list"),
+            ]))
+        elif self.mode == MODE_TASKS:
+            sections.append(("Projects", [
+                ("j/k",     "Navigate up/down"),
+                ("Enter",   "View details"),
+                ("a",       "Add project"),
+                ("x",       "Delete project"),
+                ("A",       "Archive project"),
+                ("D",       "Claude Code session"),
+                ("s",       "Sort projects"),
+                ("v",       "Cycle view"),
+                ("f",       "Toggle filter"),
+                ("i",       "Inbox quick-capture"),
+                ("u",       "Undo"),
+                ("c",       "Switch to calendar"),
+            ]))
+            sections.append(("Details (right)", [
+                ("j/k",     "Navigate fields"),
+                ("Enter",   "Edit field"),
+                ("a",       "Add item"),
+                ("d",       "Toggle done"),
+                ("x",       "Delete item"),
+                ("r",       "Reschedule"),
+                ("n",       "Edit notes"),
+                ("h/Esc",   "Back to list"),
+            ]))
+        elif self.mode == MODE_CALENDAR:
+            sections.append(("Calendar", [
+                ("j/k",     "Navigate events"),
+                ("h/l",     "Prev/next day"),
+                ("t",       "Jump to today"),
+                ("a",       "Add event"),
+                ("e",       "Edit event"),
+                ("x",       "Delete event"),
+                ("y",       "Copy event"),
+                ("p",       "Paste event"),
+                ("o",       "Open event details"),
+                ("v",       "Cycle view"),
+                ("u",       "Undo"),
+                ("c",       "Switch to tasks"),
+            ]))
+
+        # Flatten into display lines
+        lines = []
+        for title, keys in sections:
+            if lines:
+                lines.append("")
+            lines.append(f"── {title} ──")
+            for key, desc in keys:
+                lines.append(f"  {key:<10} {desc}")
+
+        self._modal_scroll_text("Help", lines)
+
+    # ─── Settings ──────────────────────────────────────────────────────────
+
+    def _show_settings(self):
+        """Show settings dialog to configure defaults."""
+        curses.flushinp()
+        items = [
+            ("claude_model", "Claude model", [("h", "Haiku (fast)", "haiku"), ("s", "Sonnet", "sonnet"), ("a", "Always ask", "ask")]),
+        ]
+        cursor = 0
+        while True:
+            self.draw()
+            h, w = self.stdscr.getmaxyx()
+            box_w = min(max(55, w // 2), w - 4)
+            inner = box_w - 4
+            blank = "│" + " " * (box_w - 2) + "│"
+            box_h = len(items) * 2 + 5
+            sy = max(0, (h - box_h) // 2)
+            sx = max(0, (w - box_w) // 2)
+
+            t = "Settings"
+            dashes = max(1, box_w - 5 - len(t))
+            self._safe_addstr(sy, sx, "┌─ " + t + " " + "─" * dashes + "┐")
+            self._safe_addstr(sy + 1, sx, blank)
+
+            row = sy + 2
+            for idx, (key, label, options) in enumerate(items):
+                current = self.config.get(key, "")
+                display_val = current if current else "ask"
+                for _shortcut, olabel, cfg_val in options:
+                    if current == cfg_val:
+                        display_val = olabel
+                        break
+                line = f"  {label}: {display_val}"
+                attr = curses.A_REVERSE if idx == cursor else 0
+                self._safe_addstr(row, sx,
+                                  "│" + line[:box_w - 2].ljust(box_w - 2) + "│", attr)
+                row += 1
+                self._safe_addstr(row, sx, blank)
+                row += 1
+
+            hint = "Enter: change  q/Esc: close"
+            self._safe_addstr(row, sx,
+                              "└─ " + hint[:box_w - 5] + " " + "─" * max(1, box_w - 5 - len(hint) - 1) + "┘")
+            self.stdscr.refresh()
+
+            try:
+                ch = self.stdscr.getch()
+            except curses.error:
+                continue
+            if ch in (27, ord("q")):
+                return
+            elif ch in (ord("j"), curses.KEY_DOWN):
+                cursor = min(len(items) - 1, cursor + 1)
+            elif ch in (ord("k"), curses.KEY_UP):
+                cursor = max(0, cursor - 1)
+            elif ch in (10, curses.KEY_ENTER, ord("\n")):
+                key, label, options = items[cursor]
+                shortcut_to_cfg = {sc: cv for sc, _ol, cv in options}
+                choice = self._modal_choice(label, f"Choose {label.lower()}:",
+                                            [(sc, ol) for sc, ol, _cv in options])
+                if choice is not None:
+                    cfg_val = shortcut_to_cfg[choice]
+                    if cfg_val == "ask":
+                        self.config.pop(key, None)
+                    else:
+                        self.config[key] = cfg_val
+                    save_config(self.config)
+            elif ch == curses.KEY_RESIZE:
+                self._calc_dimensions()
+
+    # ─── Mail summarize ──────────────────────────────────────────────────
+
+    def _mail_summarize(self):
+        """Summarize the current email using Claude and display in a popup."""
+        import os
+        # Get current email body
+        if self._conv_emails:
+            bodies = []
+            for em in self._conv_emails:
+                uid = em["uid"]
+                body = self._mail_body_cache.get(uid, "")
+                if body.strip():
+                    frm = em.get("from", "")
+                    subj = em.get("subject", "")
+                    bodies.append(f"From: {frm}\nSubject: {subj}\n\n{body}")
+            full_text = "\n---\n".join(bodies)
+        else:
+            return
+        if not full_text.strip():
+            return
+
+        model = self._get_claude_model()
+        if model is None:
+            return
+        self._show_loading("Summarizing with Claude...")
+
+        prompt = (
+            "Summarize the following email thread in TL;DR style. "
+            "Be concise — use bullet points for key points, action items, "
+            "and deadlines. Keep it short (5-10 lines max).\n\n"
+            f"{full_text[:8000]}"
+        )
+
+        response = self._chat_send_to_claude(prompt, model)
+        if not response or response.startswith("[Error"):
+            self._modal_input("Error", "Press Enter.",
+                              ["Claude summarization failed.", response or ""])
+            return
+
+        self._modal_scroll_text("TL;DR", response.splitlines())
 
     # ─── Main loop ────────────────────────────────────────────────────────
 
@@ -6009,6 +7339,7 @@ class ProjectBrowser:
                 continue
 
             if key == ord("q"):
+                self._show_loading("Quitting...")
                 if self.mail_imap:
                     try:
                         self.mail_imap.socket().settimeout(2)
@@ -6020,6 +7351,21 @@ class ProjectBrowser:
             # Global: M → mail mode
             if key == ord("M"):
                 self._enter_mail_mode()
+                continue
+
+            # Global: , → settings
+            if key == ord(","):
+                self._show_settings()
+                continue
+
+            # Global: ? → help
+            if key == ord("?"):
+                self._show_help()
+                continue
+
+            # Global: : → command palette
+            if key == ord(":"):
+                self.action_command_palette()
                 continue
 
             # Mail mode handles its own keys
@@ -6136,6 +7482,7 @@ class ProjectBrowser:
         self.right_scroll = 0
         self.focus = LEFT
         self.mail_thread_body_lines = []
+        self._mail_body_pending = True
         self.mail_thread_body_idx = None
         self.mail_thread_body_scroll = 0
         self._rebuild_filtered()
@@ -6213,6 +7560,15 @@ class ProjectBrowser:
         elif key == ord("D"):
             if self.view_mode == VIEW_PROJECTS:
                 self.action_claude_session()
+        elif key == ord("\\"):
+            self._right_panel_hidden = not self._right_panel_hidden
+            self._calc_dimensions()
+        elif key == ord(">"):
+            self._left_w_offset += 5
+            self._calc_dimensions()
+        elif key == ord("<"):
+            self._left_w_offset -= 5
+            self._calc_dimensions()
 
     def _handle_sched_day_keys(self, key):
         if key in (curses.KEY_UP, ord("k")):
@@ -6266,6 +7622,8 @@ class ProjectBrowser:
             if count > 0:
                 self.left_cursor = count - 1
                 self._rebuild_detail()
+        elif key == ord("W"):
+            self.action_show_avail()
         elif key == ord("S"):
             self._toggle_week_start()
 
@@ -6363,6 +7721,8 @@ class ProjectBrowser:
                 events = self.sched_week_data[self.left_cursor]["events"]
                 self.week_event_cursor = max(0, len(events) - 1)
                 self._rebuild_detail()
+        elif key == ord("W"):
+            self.action_show_avail()
         elif key == ord("S"):
             self._toggle_week_start()
             self._rebuild_schedule_week()
@@ -6564,6 +7924,8 @@ class ProjectBrowser:
                 events = self.sched_nday_data[self.left_cursor]["events"]
                 self.nday_event_cursor = max(0, len(events) - 1)
                 self._rebuild_detail()
+        elif key == ord("W"):
+            self.action_show_avail()
         elif key == ord("S"):
             self._toggle_week_start()
 
@@ -6621,6 +7983,8 @@ class ProjectBrowser:
             if count > 0:
                 self.left_cursor = count - 1
                 self._rebuild_detail()
+        elif key == ord("W"):
+            self.action_show_avail()
         elif key == ord("S"):
             self._toggle_week_start()
             self._rebuild_schedule_month()
@@ -6682,6 +8046,17 @@ class ProjectBrowser:
             self.action_move_task(1)
         elif key == ord("D"):
             self.action_claude_session()
+        elif key == ord(">"):
+            self._left_w_offset += 5
+            self._calc_dimensions()
+        elif key == ord("<"):
+            self._left_w_offset -= 5
+            self._calc_dimensions()
+        elif key in (curses.KEY_ENTER, 10, 13):
+            if self.detail_items and 0 <= self.right_cursor < len(self.detail_items):
+                item = self.detail_items[self.right_cursor]
+                if item.kind == "field":
+                    self._edit_project_field(item.index)
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
