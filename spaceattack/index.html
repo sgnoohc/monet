@@ -2,18 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Space Attack</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100dvh; height: 100vh; }
   body {
     background: #000;
     display: flex;
     justify-content: center;
     align-items: center;
+    height: 100dvh;
     height: 100vh;
     overflow: hidden;
     font-family: monospace;
+  }
+  @supports (height: 100dvh) {
+    html, body { height: 100dvh; }
   }
   canvas {
     display: block;
@@ -23,6 +28,8 @@
   body.mobile {
     flex-direction: column;
     justify-content: flex-start;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     touch-action: none;
     -webkit-touch-callout: none;
     -webkit-user-select: none;
@@ -30,6 +37,7 @@
   }
   body.mobile canvas {
     touch-action: none;
+    flex-shrink: 0;
   }
   body.mobile #controls {
     display: flex;
@@ -41,6 +49,7 @@
     background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1a 100%);
     border-top: 2px solid #333;
     touch-action: none;
+    max-height: 45dvh;
     max-height: 45vh;
     min-height: 180px;
   }
@@ -195,9 +204,13 @@ let touchActive = false;
 
 function fitCanvas() {
   const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  // Use visualViewport if available (accounts for browser chrome)
+  const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   if (touchActive) {
-    const availH = vh * 0.55;
+    // Reserve space for controls; read actual controls height if available
+    const ctrl = document.getElementById('controls');
+    const ctrlH = ctrl && ctrl.offsetHeight > 0 ? ctrl.offsetHeight : vh * 0.4;
+    const availH = vh - ctrlH;
     const scaleX = vw / W;
     const scaleY = availH / H;
     const scale = Math.min(scaleX, scaleY);
@@ -213,6 +226,7 @@ function fitCanvas() {
 }
 fitCanvas();
 window.addEventListener("resize", fitCanvas);
+if (window.visualViewport) window.visualViewport.addEventListener("resize", fitCanvas);
 
 // ── Sound (Web Audio API) ────────────────────────────────────────────
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
