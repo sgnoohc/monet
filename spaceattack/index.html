@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Space Attack</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: monospace;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+"use strict";
+
+// ── Canvas setup ─────────────────────────────────────────────────────
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = 780, H = 580;
+canvas.width = W;
+canvas.height = H;
+
+function fitCanvas() {
+  const scaleX = window.innerWidth / W;
+  const scaleY = window.innerHeight / H;
+  const scale = Math.min(scaleX, scaleY);
+  canvas.style.width = (W * scale) + "px";
+  canvas.style.height = (H * scale) + "px";
+}
+fitCanvas();
+window.addEventListener("resize", fitCanvas);
+
+// ── Colors ───────────────────────────────────────────────────────────
+const COL = {
+  player:     "#00ff00",
+  fighterA:   "#ff4444",
+  fighterB:   "#ffff00",
+  bomber:     "#ff44ff",
+  bunker:     "#00cccc",
+  projPlayer: "#ffff00",
+  projAlien:  "#ff4444",
+  bomb:       "#ff44ff",
+  border:     "#888888",
+  status:     "#ffffff",
+  msg:        "#ffff00",
+  hpMid:      "#ffff00",
+  hpLow:      "#ffffff",
+  explosion:  "#ff2200",
+  logo:       "#00cccc",
+  menuSel:    "#00ff00",
+  menu:       "#cccccc",
+  bg:         "#000000",
+};
+
+// ── Game constants ───────────────────────────────────────────────────
+const FPS = 30;
+const FIELD_X = 15, FIELD_Y = 30;
+const FIELD_W = W - 30, FIELD_H = H - 45;
+
+const DIFFICULTIES = {
+  easy:      { label: "EASY",      shootChance: 0.02,  moveInterval: 6,  desc: "Relaxed pace, slow aliens" },
+  medium:    { label: "MEDIUM",    shootChance: 0.04,  moveInterval: 4,  desc: "Balanced challenge" },
+  difficult: { label: "DIFFICULT", shootChance: 0.07,  moveInterval: 2,  desc: "Fast and aggressive" },
+  insane:    { label: "INSANE",    shootChance: 0.13,  moveInterval: 1,  desc: "Pure chaos" },
+};
+const DIFF_ORDER = ["easy", "medium", "difficult", "insane"];
+
+const PROJ_SPEED = 4;
+const BOMB_SPEED = 2.5;
+const PLAYER_SPEED = 5;
+const PLAYER_SHOOT_COOLDOWN = 10;
+const FIGHTER_HP = 2;
+const BOMBER_HP = 3;
+const BOMB_BLAST_RADIUS = 12;
+const LASER_BLAST_RADIUS = 6;
+
+// ── Sprite definitions (drawn procedurally) ──────────────────────────
+
+// ── Input ────────────────────────────────────────────────────────────
+const keys = {};
+window.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space"].includes(e.code)) {
+    e.preventDefault();
+  }
+});
+window.addEventListener("keyup", e => { keys[e.code] = false; });
+
+// ── Utility ──────────────────────────────────────────────────────────
+function drawText(text, x, y, color, size, align) {
+  ctx.fillStyle = color;
+  ctx.font = `bold ${size}px monospace`;
+  ctx.textAlign = align || "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, x, y);
+}
+
+function rectCollide(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
+// ── Entity classes ───────────────────────────────────────────────────
+
+class Player {
+  constructor() {
+    this.w = 30;
+    this.h = 20;
+    this.x = FIELD_X + (FIELD_W - this.w) / 2;
+    this.y = FIELD_Y + FIELD_H - this.h - 5;
+    this.cooldown = 0;
+    this.alive = true;
+  }
+
+  update() {
+    if (keys["ArrowLeft"] || keys["KeyA"])  this.x -= PLAYER_SPEED;
+    if (keys["ArrowRight"] || keys["KeyD"]) this.x += PLAYER_SPEED;
+    this.x = Math.max(FIELD_X, Math.min(FIELD_X + FIELD_W - this.w, this.x));
+    if (this.cooldown > 0) this.cooldown--;
+  }
+
+  shoot() {
+    if (this.cooldown > 0) return null;
+    this.cooldown = PLAYER_SHOOT_COOLDOWN;
+    return new Projectile(this.x + this.w / 2 - 1, this.y - 4, -1);
+  }
+
+  draw() {
+    ctx.fillStyle = COL.player;
+    // ship body
+    ctx.beginPath();
+    ctx.moveTo(this.x + this.w / 2, this.y);
+    ctx.lineTo(this.x + this.w, this.y + this.h);
+    ctx.lineTo(this.x, this.y + this.h);
+    ctx.closePath();
+    ctx.fill();
+    // cockpit
+    ctx.fillStyle = "#003300";
+    ctx.fillRect(this.x + this.w / 2 - 3, this.y + 8, 6, 6);
+  }
+}
+
+class Alien {
+  constructor(x, y, hp, shootChance, isBomber, variant) {
+    this.x = x;
+    this.y = y;
+    this.w = 28;
+    this.h = 22;
+    this.hp = hp;
+    this.maxHp = hp;
+    this.shootChance = shootChance;
+    this.isBomber = isBomber;
+    this.variant = variant || 0;
+    this.alive = true;
+    this.points = isBomber ? 150 : 100;
+  }
+
+  get color() {
+    const ratio = this.hp / this.maxHp;
+    if (ratio > 0.6) {
+      if (this.isBomber) return COL.bomber;
+      return this.variant === 0 ? COL.fighterA : COL.fighterB;
+    }
+    if (ratio > 0.3) return COL.hpMid;
+    return COL.hpLow;
+  }
+
+  takeHit() {
+    this.hp--;
+    if (this.hp <= 0) { this.alive = false; return true; }
+    return false;
+  }
+
+  tryShoot() {
+    if (Math.random() < this.shootChance) {
+      const px = this.x + this.w / 2;
+      const py = this.y + this.h;
+      if (this.isBomber) return new Bomb(px, py);
+      return new Projectile(px, py, 1);
+    }
+    return null;
+  }
+
+  draw() {
+    const c = this.color;
+    ctx.fillStyle = c;
+    if (this.isBomber) {
+      // bomber: wider square with details
+      ctx.fillRect(this.x + 2, this.y + 2, this.w - 4, this.h - 4);
+      ctx.fillStyle = "#000";
+      ctx.fillRect(this.x + 7, this.y + 6, 5, 5);
+      ctx.fillRect(this.x + this.w - 12, this.y + 6, 5, 5);
+      ctx.fillStyle = c;
+      ctx.fillRect(this.x, this.y + this.h - 6, this.w, 3);
+    } else if (this.variant === 0) {
+      // fighter A: triangle-ish
+      ctx.beginPath();
+      ctx.moveTo(this.x + this.w / 2, this.y);
+      ctx.lineTo(this.x + this.w, this.y + this.h);
+      ctx.lineTo(this.x, this.y + this.h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#000";
+      ctx.fillRect(this.x + 9, this.y + 10, 4, 4);
+      ctx.fillRect(this.x + 15, this.y + 10, 4, 4);
+    } else {
+      // fighter B: diamond-ish
+      ctx.beginPath();
+      ctx.moveTo(this.x + this.w / 2, this.y);
+      ctx.lineTo(this.x + this.w, this.y + this.h / 2);
+      ctx.lineTo(this.x + this.w / 2, this.y + this.h);
+      ctx.lineTo(this.x, this.y + this.h / 2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#000";
+      ctx.fillRect(this.x + 10, this.y + 8, 3, 3);
+      ctx.fillRect(this.x + 15, this.y + 8, 3, 3);
+    }
+  }
+}
+
+class Projectile {
+  constructor(x, y, dir) {
+    this.x = x;
+    this.y = y;
+    this.w = 3;
+    this.h = 8;
+    this.dir = dir;
+    this.alive = true;
+    this.isBomb = false;
+  }
+
+  update() {
+    this.y += this.dir * PROJ_SPEED;
+    if (this.y < FIELD_Y || this.y > FIELD_Y + FIELD_H) this.alive = false;
+  }
+
+  draw() {
+    ctx.fillStyle = this.dir === -1 ? COL.projPlayer : COL.projAlien;
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+  }
+}
+
+class Bomb extends Projectile {
+  constructor(x, y) {
+    super(x, y, 1);
+    this.w = 6;
+    this.h = 6;
+    this.isBomb = true;
+  }
+
+  update() {
+    this.y += BOMB_SPEED;
+    if (this.y > FIELD_Y + FIELD_H) this.alive = false;
+  }
+
+  draw() {
+    ctx.fillStyle = COL.bomb;
+    ctx.beginPath();
+    ctx.arc(this.x + 3, this.y + 3, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+class Bunker {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.w = 48;
+    this.h = 30;
+    // pixel grid (6x5 blocks of 8x6 each)
+    this.cols = 8;
+    this.rows = 5;
+    this.blockW = this.w / this.cols;
+    this.blockH = this.h / this.rows;
+    this.grid = [];
+    for (let r = 0; r < this.rows; r++) {
+      this.grid[r] = [];
+      for (let c = 0; c < this.cols; c++) {
+        // archway in bottom center
+        if (r >= 3 && (c === 3 || c === 4)) {
+          this.grid[r][c] = false;
+        } else {
+          this.grid[r][c] = true;
+        }
+      }
+    }
+  }
+
+  get isDestroyed() {
+    for (let r = 0; r < this.rows; r++)
+      for (let c = 0; c < this.cols; c++)
+        if (this.grid[r][c]) return false;
+    return true;
+  }
+
+  damageAt(gx, gy, radius) {
+    let hit = false;
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (!this.grid[r][c]) continue;
+        const bx = this.x + c * this.blockW + this.blockW / 2;
+        const by = this.y + r * this.blockH + this.blockH / 2;
+        const dx = gx - bx, dy = gy - by;
+        if (Math.sqrt(dx * dx + dy * dy) < radius) {
+          this.grid[r][c] = false;
+          hit = true;
+        }
+      }
+    }
+    return hit;
+  }
+
+  draw() {
+    ctx.fillStyle = COL.bunker;
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.grid[r][c]) {
+          ctx.fillRect(
+            this.x + c * this.blockW,
+            this.y + r * this.blockH,
+            this.blockW - 1,
+            this.blockH - 1
+          );
+        }
+      }
+    }
+  }
+}
+
+class Explosion {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.frame = 0;
+    this.maxFrames = 12;
+    this.alive = true;
+  }
+
+  update() {
+    this.frame++;
+    if (this.frame >= this.maxFrames) this.alive = false;
+  }
+
+  draw() {
+    const progress = this.frame / this.maxFrames;
+    const radius = 8 + progress * 10;
+    const alpha = 1 - progress;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = COL.explosion;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffaa00";
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, radius * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ── Alien grid builder ───────────────────────────────────────────────
+function makeAlienGrid(shootChance) {
+  const cols = 8, rows = 5;
+  const alienW = 28, hGap = 14, vGap = 6;
+  const gridW = cols * alienW + (cols - 1) * hGap;
+  const startX = FIELD_X + (FIELD_W - gridW) / 2;
+  const startY = FIELD_Y + 15;
+  const aliens = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ax = startX + c * (alienW + hGap);
+      const ay = startY + r * (22 + vGap);
+      if (r < 2) {
+        aliens.push(new Alien(ax, ay, BOMBER_HP, shootChance, true, 0));
+      } else {
+        aliens.push(new Alien(ax, ay, FIGHTER_HP, shootChance, false, c % 2));
+      }
+    }
+  }
+  return aliens;
+}
+
+// ── Star field background ────────────────────────────────────────────
+const stars = [];
+for (let i = 0; i < 100; i++) {
+  stars.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    size: Math.random() * 1.5 + 0.5,
+    speed: Math.random() * 0.3 + 0.1,
+    brightness: Math.random() * 0.5 + 0.3,
+  });
+}
+
+function drawStars() {
+  for (const s of stars) {
+    s.y += s.speed;
+    if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
+    ctx.fillStyle = `rgba(255,255,255,${s.brightness})`;
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+//  Game states
+// ════════════════════════════════════════════════════════════════════════
+
+let gameState = "title"; // title | playing | won | lost
+let selectedDiff = 1;
+let difficulty = "medium";
+
+let player, aliens, bunkers, projectiles, explosions;
+let alienDir, alienMoveTimer, moveInterval, score;
+
+function startGame(diffKey) {
+  difficulty = diffKey;
+  const diff = DIFFICULTIES[diffKey];
+  moveInterval = diff.moveInterval;
+  player = new Player();
+  aliens = makeAlienGrid(diff.shootChance);
+  const bunkY = FIELD_Y + FIELD_H - 60;
+  const spacing = FIELD_W / 5;
+  bunkers = [
+    new Bunker(FIELD_X + spacing * 1 - 24, bunkY),
+    new Bunker(FIELD_X + spacing * 2 - 24, bunkY),
+    new Bunker(FIELD_X + spacing * 3 - 24, bunkY),
+    new Bunker(FIELD_X + spacing * 4 - 24, bunkY),
+  ];
+  projectiles = [];
+  explosions = [];
+  alienDir = 1;
+  alienMoveTimer = 0;
+  score = 0;
+  gameState = "playing";
+}
+
+// ── Title screen ─────────────────────────────────────────────────────
+let titleKeyDebounce = {};
+
+function updateTitle() {
+  const upPressed = keys["ArrowUp"] || keys["KeyW"];
+  const downPressed = keys["ArrowDown"] || keys["KeyS"];
+  const enterPressed = keys["Enter"] || keys["Space"];
+
+  if (upPressed && !titleKeyDebounce.up) {
+    selectedDiff = (selectedDiff - 1 + DIFF_ORDER.length) % DIFF_ORDER.length;
+  }
+  if (downPressed && !titleKeyDebounce.down) {
+    selectedDiff = (selectedDiff + 1) % DIFF_ORDER.length;
+  }
+  if (enterPressed && !titleKeyDebounce.enter) {
+    startGame(DIFF_ORDER[selectedDiff]);
+  }
+
+  titleKeyDebounce.up = upPressed;
+  titleKeyDebounce.down = downPressed;
+  titleKeyDebounce.enter = enterPressed;
+}
+
+function drawTitle() {
+  // Logo
+  const logoText = "SPACE ATTACK";
+  drawText(logoText, W / 2, 100, COL.logo, 48, "center");
+
+  // Subtitle
+  drawText("~ Defend Earth from the alien invasion ~", W / 2, 155, COL.menu, 16, "center");
+
+  // Decorative ships
+  ctx.fillStyle = COL.player;
+  for (const ox of [-120, 120]) {
+    ctx.beginPath();
+    ctx.moveTo(W / 2 + ox, 80);
+    ctx.lineTo(W / 2 + ox + 12, 100);
+    ctx.lineTo(W / 2 + ox - 12, 100);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Difficulty menu
+  drawText("SELECT DIFFICULTY", W / 2, 220, COL.msg, 20, "center");
+
+  for (let i = 0; i < DIFF_ORDER.length; i++) {
+    const d = DIFFICULTIES[DIFF_ORDER[i]];
+    const y = 270 + i * 45;
+    const selected = i === selectedDiff;
+    const color = selected ? COL.menuSel : COL.menu;
+    const prefix = selected ? "> " : "  ";
+    const size = selected ? 18 : 16;
+    drawText(`${prefix}${d.label}`, W / 2 - 140, y, color, size, "left");
+    drawText(d.desc, W / 2 + 20, y, selected ? COL.menuSel : "#777777", 14, "left");
+  }
+
+  // Controls
+  drawText("UP/DOWN = Select    ENTER/SPACE = Start", W / 2, 480, COL.status, 14, "center");
+  drawText("ARROWS/WASD = Move    SPACE = Shoot    ESC = Menu", W / 2, 505, "#666666", 12, "center");
+}
+
+// ── Gameplay ─────────────────────────────────────────────────────────
+function updateGame() {
+  if (gameState !== "playing") return;
+
+  player.update();
+
+  // shooting
+  if (keys["Space"]) {
+    const p = player.shoot();
+    if (p) projectiles.push(p);
+  }
+
+  // alien movement
+  alienMoveTimer++;
+  const alive = aliens.filter(a => a.alive);
+  if (alienMoveTimer >= moveInterval && alive.length > 0) {
+    alienMoveTimer = 0;
+    let reverse = false;
+    for (const a of alive) {
+      const nx = a.x + alienDir * 2;
+      if (nx <= FIELD_X || nx >= FIELD_X + FIELD_W - a.w) {
+        reverse = true;
+        break;
+      }
+    }
+    if (reverse) {
+      alienDir *= -1;
+      for (const a of alive) a.y += 4;
+    } else {
+      for (const a of alive) a.x += alienDir * 2;
+    }
+  }
+
+  // aliens reached bottom?
+  for (const a of alive) {
+    if (a.y + a.h >= FIELD_Y + FIELD_H) {
+      gameState = "lost";
+      return;
+    }
+  }
+
+  // random alien shoot
+  if (alive.length > 0) {
+    const shooter = alive[Math.floor(Math.random() * alive.length)];
+    const ap = shooter.tryShoot();
+    if (ap) projectiles.push(ap);
+  }
+
+  // update projectiles
+  for (const p of projectiles) p.update();
+  projectiles = projectiles.filter(p => p.alive);
+
+  // update explosions
+  for (const e of explosions) e.update();
+  explosions = explosions.filter(e => e.alive);
+
+  // collision: player projectiles -> aliens
+  const remaining = [];
+  for (const p of projectiles) {
+    let hit = false;
+    if (p.dir === -1) {
+      for (const a of alive) {
+        if (a.alive && rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
+          const dead = a.takeHit();
+          explosions.push(new Explosion(p.x, p.y));
+          if (dead) score += a.points;
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) {
+        for (const b of bunkers) {
+          if (!b.isDestroyed && rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
+            if (b.damageAt(p.x, p.y, LASER_BLAST_RADIUS)) {
+              explosions.push(new Explosion(p.x, p.y));
+              hit = true;
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      // alien projectile -> player
+      if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
+        explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
+        gameState = "lost";
+        hit = true;
+      }
+      // alien projectile -> bunkers
+      if (!hit) {
+        for (const b of bunkers) {
+          if (!b.isDestroyed && rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
+            const radius = p.isBomb ? BOMB_BLAST_RADIUS : LASER_BLAST_RADIUS;
+            if (b.damageAt(p.x, p.y, radius)) {
+              explosions.push(new Explosion(p.x, p.y));
+              hit = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (!hit) remaining.push(p);
+  }
+  projectiles = remaining;
+
+  // win condition
+  if (aliens.filter(a => a.alive).length === 0) {
+    gameState = "won";
+  }
+}
+
+function drawGame() {
+  // field border
+  ctx.strokeStyle = COL.border;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+
+  // bunkers
+  for (const b of bunkers) {
+    if (!b.isDestroyed) b.draw();
+  }
+
+  // aliens
+  for (const a of aliens) {
+    if (a.alive) a.draw();
+  }
+
+  // player
+  if (gameState === "playing" || gameState === "won") {
+    player.draw();
+  }
+
+  // projectiles
+  for (const p of projectiles) p.draw();
+
+  // explosions
+  for (const e of explosions) e.draw();
+
+  // status bar
+  const aliveCount = aliens.filter(a => a.alive).length;
+  const diffLabel = DIFFICULTIES[difficulty].label;
+  drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
+  drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
+  drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
+  drawText("Arrows=Move  Space=Shoot  Esc=Menu", FIELD_X + 560, FIELD_Y - 10, "#666666", 11, "left");
+
+  // end-state overlay
+  if (gameState === "won" || gameState === "lost") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+    const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
+    drawText(msg1, W / 2, H / 2 - 30, COL.msg, 36, "center");
+    drawText(`Score: ${score}`, W / 2, H / 2 + 10, COL.msg, 20, "center");
+    drawText("R = Restart    M / ESC = Menu", W / 2, H / 2 + 50, COL.status, 16, "center");
+  }
+}
+
+// ── End-state input ──────────────────────────────────────────────────
+let endKeyDebounce = {};
+
+function updateEndState() {
+  const rPressed = keys["KeyR"];
+  const mPressed = keys["KeyM"] || keys["Escape"];
+
+  if (rPressed && !endKeyDebounce.r) {
+    startGame(difficulty);
+  }
+  if (mPressed && !endKeyDebounce.m) {
+    gameState = "title";
+  }
+
+  endKeyDebounce.r = rPressed;
+  endKeyDebounce.m = mPressed;
+}
+
+// ── Escape to menu during gameplay ───────────────────────────────────
+let escDebounce = false;
+
+// ── Main loop ────────────────────────────────────────────────────────
+function gameLoop() {
+  ctx.fillStyle = COL.bg;
+  ctx.fillRect(0, 0, W, H);
+  drawStars();
+
+  if (gameState === "title") {
+    updateTitle();
+    drawTitle();
+    escDebounce = false;
+  } else if (gameState === "playing") {
+    // escape to menu
+    if (keys["Escape"] && !escDebounce) {
+      gameState = "title";
+    }
+    escDebounce = !!keys["Escape"];
+
+    updateGame();
+    drawGame();
+  } else {
+    // won or lost
+    updateGame(); // still animate explosions
+    drawGame();
+    updateEndState();
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Throttle to target FPS
+let lastFrame = 0;
+function throttledLoop(timestamp) {
+  const elapsed = timestamp - lastFrame;
+  if (elapsed >= 1000 / FPS) {
+    lastFrame = timestamp - (elapsed % (1000 / FPS));
+    gameLoop();
+  } else {
+    requestAnimationFrame(throttledLoop);
+  }
+}
+
+// Actually just use requestAnimationFrame directly for smoother feel
+gameLoop();
+</script>
+</body>
+</html>
