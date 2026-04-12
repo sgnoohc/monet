@@ -1343,9 +1343,9 @@ function updateGame() {
   // update projectiles
   for (const p of projectiles) p.update();
 
-  // BomberShot auto-explode after 200px travel or reaching top of field
+  // BomberShot auto-explode when reaching top of field
   for (const p of projectiles) {
-    if (p.isBomberShot && p.alive && (p.startY - p.y > 200 || p.y <= FIELD_Y)) {
+    if (p.isBomberShot && p.alive && p.y <= FIELD_Y) {
       triggerBombExplosion(p.x + p.w / 2, Math.max(p.y + p.h / 2, FIELD_Y + 5));
       p.alive = false;
     }
