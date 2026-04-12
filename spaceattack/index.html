@@ -298,96 +298,269 @@ if (window.visualViewport) window.visualViewport.addEventListener("resize", fitC
 // ── Sound (Web Audio API) ────────────────────────────────────────────
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
+// Helper: white noise buffer source
+function makeNoise(duration) {
+  const sr = audioCtx.sampleRate;
+  const buf = audioCtx.createBuffer(1, sr * duration, sr);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  return src;
+}
+
+// Helper: sigmoid distortion curve
+function makeDistortion(amount) {
+  const ws = audioCtx.createWaveShaper();
+  const k = amount;
+  const n = 256;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i * 2) / n - 1;
+    curve[i] = ((Math.PI + k) * x) / (Math.PI + k * Math.abs(x));
+  }
+  ws.curve = curve;
+  ws.oversample = "2x";
+  return ws;
+}
+
 function playSound(type) {
   if (audioCtx.state === "suspended") audioCtx.resume();
-
   const t = audioCtx.currentTime;
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
+  const dest = audioCtx.destination;
 
   switch (type) {
-    case "shoot":
+    case "shoot": {
+      // Main square with highpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.setValueAtTime(2000, t);
+      hp.frequency.exponentialRampToValueAtTime(500, t + 0.1);
       osc.type = "square";
       osc.frequency.setValueAtTime(880, t);
       osc.frequency.exponentialRampToValueAtTime(440, t + 0.1);
       gain.gain.setValueAtTime(0.12, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      osc.connect(hp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.1);
+      // Noise attack transient
+      const ns = makeNoise(0.05);
+      const ng = audioCtx.createGain();
+      const nhp = audioCtx.createBiquadFilter();
+      nhp.type = "highpass";
+      nhp.frequency.value = 8000;
+      ng.gain.setValueAtTime(0.08, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      ns.connect(nhp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.05);
       break;
+    }
 
-    case "hit":
+    case "hit": {
+      // Main impact with distortion + lowpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const dist = makeDistortion(30);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(1500, t);
+      lp.frequency.exponentialRampToValueAtTime(300, t + 0.15);
       osc.type = "square";
       osc.frequency.setValueAtTime(300, t);
       osc.frequency.exponentialRampToValueAtTime(100, t + 0.15);
-      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.setValueAtTime(0.12, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.connect(dist).connect(lp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.15);
+      // Percussive noise crack
+      const ns = makeNoise(0.08);
+      const ng = audioCtx.createGain();
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 2000;
+      bp.Q.value = 2;
+      ng.gain.setValueAtTime(0.1, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+      ns.connect(bp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.08);
       break;
+    }
 
     case "explode": {
+      // Main body with distortion + lowpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const dist = makeDistortion(40);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(2000, t);
+      lp.frequency.exponentialRampToValueAtTime(100, t + 0.3);
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(150, t);
       osc.frequency.exponentialRampToValueAtTime(30, t + 0.3);
-      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.setValueAtTime(0.16, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.connect(dist).connect(lp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.3);
-      const osc2 = audioCtx.createOscillator();
-      const gain2 = audioCtx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(audioCtx.destination);
-      osc2.type = "square";
-      osc2.frequency.setValueAtTime(200, t);
-      osc2.frequency.exponentialRampToValueAtTime(20, t + 0.25);
-      gain2.gain.setValueAtTime(0.1, t);
-      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
-      osc2.start(t);
-      osc2.stop(t + 0.25);
+      // Bandpass noise sweep (fireball texture)
+      const ns = makeNoise(0.25);
+      const ng = audioCtx.createGain();
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.setValueAtTime(4000, t);
+      bp.frequency.exponentialRampToValueAtTime(400, t + 0.25);
+      bp.Q.value = 3;
+      ng.gain.setValueAtTime(0.12, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      ns.connect(bp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.25);
+      // Sub-bass sine for weight
+      const sub = audioCtx.createOscillator();
+      const sg = audioCtx.createGain();
+      sub.type = "sine";
+      sub.frequency.setValueAtTime(80, t);
+      sub.frequency.exponentialRampToValueAtTime(20, t + 0.3);
+      sg.gain.setValueAtTime(0.15, t);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      sub.connect(sg).connect(dest);
+      sub.start(t);
+      sub.stop(t + 0.3);
       break;
     }
 
     case "playerDeath": {
+      // Main descent with distortion + lowpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const dist = makeDistortion(35);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(3000, t);
+      lp.frequency.exponentialRampToValueAtTime(200, t + 0.8);
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(600, t);
       osc.frequency.exponentialRampToValueAtTime(40, t + 0.8);
-      gain.gain.setValueAtTime(0.2, t);
-      gain.gain.linearRampToValueAtTime(0.15, t + 0.3);
+      gain.gain.setValueAtTime(0.16, t);
+      gain.gain.linearRampToValueAtTime(0.12, t + 0.3);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      osc.connect(dist).connect(lp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.8);
+      // Detuned oscillator for chorusing warble
       const osc2 = audioCtx.createOscillator();
-      const gain2 = audioCtx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(audioCtx.destination);
-      osc2.type = "square";
-      osc2.frequency.setValueAtTime(400, t);
-      osc2.frequency.exponentialRampToValueAtTime(20, t + 0.7);
-      gain2.gain.setValueAtTime(0.12, t);
-      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      const g2 = audioCtx.createGain();
+      osc2.type = "sawtooth";
+      osc2.frequency.setValueAtTime(607, t);
+      osc2.frequency.exponentialRampToValueAtTime(43, t + 0.8);
+      g2.gain.setValueAtTime(0.1, t);
+      g2.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      osc2.connect(lp).connect(gain); // share filter chain
       osc2.start(t);
-      osc2.stop(t + 0.7);
+      osc2.stop(t + 0.8);
+      // Bandpass noise for chaos/breakup
+      const ns = makeNoise(0.7);
+      const ng = audioCtx.createGain();
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.setValueAtTime(5000, t);
+      bp.frequency.exponentialRampToValueAtTime(500, t + 0.7);
+      bp.Q.value = 2;
+      ng.gain.setValueAtTime(0.08, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      ns.connect(bp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.7);
+      // Bright alarm ping at start
+      const ping = audioCtx.createOscillator();
+      const pg = audioCtx.createGain();
+      const pbp = audioCtx.createBiquadFilter();
+      pbp.type = "bandpass";
+      pbp.frequency.value = 1200;
+      pbp.Q.value = 15;
+      ping.type = "sine";
+      ping.frequency.value = 1200;
+      pg.gain.setValueAtTime(0.14, t);
+      pg.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      ping.connect(pbp).connect(pg).connect(dest);
+      ping.start(t);
+      ping.stop(t + 0.15);
       break;
     }
 
     case "win": {
+      // Lead with bandpass filter for horn-like quality
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 1000;
+      bp.Q.value = 3;
       osc.type = "square";
-      gain.gain.setValueAtTime(0.12, t);
-      gain.gain.setValueAtTime(0.12, t + 0.5);
+      gain.gain.setValueAtTime(0.1, t);
+      gain.gain.setValueAtTime(0.1, t + 0.5);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
       osc.frequency.setValueAtTime(523, t);
       osc.frequency.setValueAtTime(659, t + 0.12);
       osc.frequency.setValueAtTime(784, t + 0.24);
       osc.frequency.setValueAtTime(1047, t + 0.36);
+      osc.connect(bp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.7);
+      // Triangle octave below for body
+      const oct = audioCtx.createOscillator();
+      const og = audioCtx.createGain();
+      oct.type = "triangle";
+      og.gain.setValueAtTime(0.06, t);
+      og.gain.setValueAtTime(0.06, t + 0.5);
+      og.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      oct.frequency.setValueAtTime(261, t);
+      oct.frequency.setValueAtTime(329, t + 0.12);
+      oct.frequency.setValueAtTime(392, t + 0.24);
+      oct.frequency.setValueAtTime(523, t + 0.36);
+      oct.connect(og).connect(dest);
+      oct.start(t);
+      oct.stop(t + 0.7);
+      // Detuned sine for shimmer chorus
+      const det = audioCtx.createOscillator();
+      const dg = audioCtx.createGain();
+      det.type = "sine";
+      dg.gain.setValueAtTime(0.04, t);
+      dg.gain.setValueAtTime(0.04, t + 0.5);
+      dg.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      det.frequency.setValueAtTime(528, t);
+      det.frequency.setValueAtTime(664, t + 0.12);
+      det.frequency.setValueAtTime(789, t + 0.24);
+      det.frequency.setValueAtTime(1052, t + 0.36);
+      det.connect(dg).connect(dest);
+      det.start(t);
+      det.stop(t + 0.7);
+      // Highpass noise flourish on final note (cymbal)
+      const ns = makeNoise(0.3);
+      const ng = audioCtx.createGain();
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 6000;
+      ng.gain.setValueAtTime(0.001, t + 0.36);
+      ng.gain.linearRampToValueAtTime(0.06, t + 0.4);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.68);
+      ns.connect(hp).connect(ng).connect(dest);
+      ns.start(t + 0.36);
+      ns.stop(t + 0.68);
       break;
     }
 
-    case "menuSelect":
+    case "menuSelect": {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain).connect(dest);
       osc.type = "square";
       osc.frequency.setValueAtTime(660, t);
       gain.gain.setValueAtTime(0.08, t);
@@ -395,8 +568,12 @@ function playSound(type) {
       osc.start(t);
       osc.stop(t + 0.05);
       break;
+    }
 
-    case "menuConfirm":
+    case "menuConfirm": {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain).connect(dest);
       osc.type = "square";
       osc.frequency.setValueAtTime(880, t);
       osc.frequency.setValueAtTime(1100, t + 0.08);
@@ -405,8 +582,12 @@ function playSound(type) {
       osc.start(t);
       osc.stop(t + 0.15);
       break;
+    }
 
     case "powerup": {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain).connect(dest);
       osc.type = "sine";
       osc.frequency.setValueAtTime(600, t);
       osc.frequency.exponentialRampToValueAtTime(2400, t + 0.3);
@@ -415,161 +596,318 @@ function playSound(type) {
       osc.start(t);
       osc.stop(t + 0.35);
       const osc2 = audioCtx.createOscillator();
-      const gain2 = audioCtx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(audioCtx.destination);
+      const g2 = audioCtx.createGain();
+      osc2.connect(g2).connect(dest);
       osc2.type = "triangle";
       osc2.frequency.setValueAtTime(900, t + 0.05);
       osc2.frequency.exponentialRampToValueAtTime(3200, t + 0.3);
-      gain2.gain.setValueAtTime(0.08, t + 0.05);
-      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      g2.gain.setValueAtTime(0.08, t + 0.05);
+      g2.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
       osc2.start(t + 0.05);
       osc2.stop(t + 0.35);
       break;
     }
 
     case "railgun": {
-      // High-pitch electric zap splash
+      // Main zap: sawtooth → distortion → bandpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const dist = makeDistortion(50);
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.setValueAtTime(3000, t);
+      bp.frequency.exponentialRampToValueAtTime(8000, t + 0.05);
+      bp.frequency.exponentialRampToValueAtTime(2000, t + 0.35);
+      bp.Q.value = 4;
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(1200, t);
       osc.frequency.exponentialRampToValueAtTime(4800, t + 0.05);
       osc.frequency.exponentialRampToValueAtTime(800, t + 0.35);
-      gain.gain.setValueAtTime(0.18, t);
-      gain.gain.linearRampToValueAtTime(0.12, t + 0.05);
+      gain.gain.setValueAtTime(0.14, t);
+      gain.gain.linearRampToValueAtTime(0.1, t + 0.05);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.connect(dist).connect(bp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.35);
-      // Bright crackle layer
-      const osc2 = audioCtx.createOscillator();
-      const gain2 = audioCtx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(audioCtx.destination);
-      osc2.type = "square";
-      osc2.frequency.setValueAtTime(3000, t);
-      osc2.frequency.exponentialRampToValueAtTime(6000, t + 0.03);
-      osc2.frequency.exponentialRampToValueAtTime(1500, t + 0.2);
-      gain2.gain.setValueAtTime(0.1, t);
-      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-      osc2.start(t);
-      osc2.stop(t + 0.2);
-      // Shimmer tail
+      // Noise crackle through highpass for electric sizzle
+      const ns = makeNoise(0.2);
+      const ng = audioCtx.createGain();
+      const nhp = audioCtx.createBiquadFilter();
+      nhp.type = "highpass";
+      nhp.frequency.value = 4000;
+      ng.gain.setValueAtTime(0.08, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      ns.connect(nhp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.2);
+      // Shimmer tail through delay for reverberant ring
       const osc3 = audioCtx.createOscillator();
-      const gain3 = audioCtx.createGain();
-      osc3.connect(gain3);
-      gain3.connect(audioCtx.destination);
+      const g3 = audioCtx.createGain();
+      const delay = audioCtx.createDelay();
+      const dg = audioCtx.createGain();
+      delay.delayTime.value = 0.06;
+      dg.gain.value = 0.3;
       osc3.type = "sine";
       osc3.frequency.setValueAtTime(2400, t + 0.05);
       osc3.frequency.exponentialRampToValueAtTime(5000, t + 0.15);
       osc3.frequency.exponentialRampToValueAtTime(1800, t + 0.4);
-      gain3.gain.setValueAtTime(0.001, t);
-      gain3.gain.linearRampToValueAtTime(0.08, t + 0.06);
-      gain3.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      g3.gain.setValueAtTime(0.001, t);
+      g3.gain.linearRampToValueAtTime(0.06, t + 0.06);
+      g3.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc3.connect(g3).connect(dest);
+      g3.connect(delay).connect(dg).connect(delay); // feedback loop
+      dg.connect(dest);
       osc3.start(t);
       osc3.stop(t + 0.4);
+      // FM synthesis layer for metallic zing
+      const mod = audioCtx.createOscillator();
+      const modGain = audioCtx.createGain();
+      const carrier = audioCtx.createOscillator();
+      const cg = audioCtx.createGain();
+      mod.type = "sine";
+      mod.frequency.setValueAtTime(3200, t);
+      mod.frequency.exponentialRampToValueAtTime(800, t + 0.25);
+      modGain.gain.setValueAtTime(600, t);
+      modGain.gain.exponentialRampToValueAtTime(50, t + 0.25);
+      carrier.type = "sine";
+      carrier.frequency.setValueAtTime(1600, t);
+      cg.gain.setValueAtTime(0.05, t);
+      cg.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      mod.connect(modGain).connect(carrier.frequency);
+      carrier.connect(cg).connect(dest);
+      mod.start(t);
+      mod.stop(t + 0.25);
+      carrier.start(t);
+      carrier.stop(t + 0.25);
       break;
     }
 
     case "torpedoBlast": {
-      // Deep booming blast with rumble
+      // Main body: sawtooth → distortion → lowpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const dist = makeDistortion(45);
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(2000, t);
+      lp.frequency.exponentialRampToValueAtTime(200, t + 0.6);
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(200, t);
       osc.frequency.exponentialRampToValueAtTime(25, t + 0.6);
-      gain.gain.setValueAtTime(0.3, t);
-      gain.gain.linearRampToValueAtTime(0.2, t + 0.15);
+      gain.gain.setValueAtTime(0.24, t);
+      gain.gain.linearRampToValueAtTime(0.16, t + 0.15);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      osc.connect(dist).connect(lp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.6);
-      // Crackle layer
-      const tbOsc2 = audioCtx.createOscillator();
-      const tbGain2 = audioCtx.createGain();
-      tbOsc2.connect(tbGain2);
-      tbGain2.connect(audioCtx.destination);
-      tbOsc2.type = "square";
-      tbOsc2.frequency.setValueAtTime(400, t);
-      tbOsc2.frequency.exponentialRampToValueAtTime(30, t + 0.4);
-      tbGain2.gain.setValueAtTime(0.15, t);
-      tbGain2.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-      tbOsc2.start(t);
-      tbOsc2.stop(t + 0.4);
-      // Sub-bass thump
-      const tbOsc3 = audioCtx.createOscillator();
-      const tbGain3 = audioCtx.createGain();
-      tbOsc3.connect(tbGain3);
-      tbGain3.connect(audioCtx.destination);
-      tbOsc3.type = "sine";
-      tbOsc3.frequency.setValueAtTime(60, t);
-      tbOsc3.frequency.exponentialRampToValueAtTime(20, t + 0.5);
-      tbGain3.gain.setValueAtTime(0.25, t);
-      tbGain3.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-      tbOsc3.start(t);
-      tbOsc3.stop(t + 0.5);
+      // Bandpass noise sweep for debris
+      const ns = makeNoise(0.4);
+      const ng = audioCtx.createGain();
+      const bp = audioCtx.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.setValueAtTime(3000, t);
+      bp.frequency.exponentialRampToValueAtTime(300, t + 0.4);
+      bp.Q.value = 3;
+      ng.gain.setValueAtTime(0.1, t);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      ns.connect(bp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.4);
+      // Detuned sub-bass pair for chorus thickness
+      const sub1 = audioCtx.createOscillator();
+      const sub2 = audioCtx.createOscillator();
+      const sg = audioCtx.createGain();
+      sub1.type = "sine";
+      sub1.frequency.setValueAtTime(60, t);
+      sub1.frequency.exponentialRampToValueAtTime(20, t + 0.5);
+      sub2.type = "sine";
+      sub2.frequency.setValueAtTime(62, t);
+      sub2.frequency.exponentialRampToValueAtTime(21, t + 0.5);
+      sg.gain.setValueAtTime(0.2, t);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      sub1.connect(sg);
+      sub2.connect(sg);
+      sg.connect(dest);
+      sub1.start(t);
+      sub1.stop(t + 0.5);
+      sub2.start(t);
+      sub2.stop(t + 0.5);
+      // Shrapnel sparkle (highpass noise)
+      const ns2 = makeNoise(0.15);
+      const ng2 = audioCtx.createGain();
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 5000;
+      ng2.gain.setValueAtTime(0.06, t);
+      ng2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      ns2.connect(hp).connect(ng2).connect(dest);
+      ns2.start(t);
+      ns2.stop(t + 0.15);
+      // Resonant impact ping
+      const ping = audioCtx.createOscillator();
+      const pg = audioCtx.createGain();
+      const pbp = audioCtx.createBiquadFilter();
+      pbp.type = "bandpass";
+      pbp.frequency.value = 800;
+      pbp.Q.value = 20;
+      ping.type = "sine";
+      ping.frequency.value = 800;
+      pg.gain.setValueAtTime(0.1, t);
+      pg.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      ping.connect(pbp).connect(pg).connect(dest);
+      ping.start(t);
+      ping.stop(t + 0.12);
       break;
     }
 
     case "heal": {
-      // Starry sparkle chime cascade
+      // Sparkle chimes through bandpass + delay
       const notes = [1200, 1600, 2000, 2400, 2800];
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(notes[0], t);
-      gain.gain.setValueAtTime(0.1, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-      osc.start(t);
-      osc.stop(t + 0.12);
-      for (let i = 1; i < notes.length; i++) {
+      const delay = audioCtx.createDelay();
+      const dfb = audioCtx.createGain();
+      delay.delayTime.value = 0.08;
+      dfb.gain.value = 0.25;
+      delay.connect(dfb).connect(delay); // feedback loop
+      delay.connect(dest);
+      for (let i = 0; i < notes.length; i++) {
         const hOsc = audioCtx.createOscillator();
         const hGain = audioCtx.createGain();
-        hOsc.connect(hGain);
-        hGain.connect(audioCtx.destination);
+        const hBp = audioCtx.createBiquadFilter();
+        hBp.type = "bandpass";
+        hBp.frequency.value = notes[i];
+        hBp.Q.value = 12;
         hOsc.type = i % 2 === 0 ? "sine" : "triangle";
         const offset = i * 0.07;
         hOsc.frequency.setValueAtTime(notes[i], t + offset);
         hOsc.frequency.exponentialRampToValueAtTime(notes[i] * 1.5, t + offset + 0.15);
         hGain.gain.setValueAtTime(0.001, t + offset);
-        hGain.gain.linearRampToValueAtTime(0.08, t + offset + 0.02);
+        hGain.gain.linearRampToValueAtTime(0.07, t + offset + 0.02);
         hGain.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.18);
+        hOsc.connect(hBp).connect(hGain);
+        hGain.connect(dest);
+        hGain.connect(delay);
         hOsc.start(t + offset);
         hOsc.stop(t + offset + 0.18);
       }
+      // Fairy dust shimmer (highpass noise)
+      const ns = makeNoise(0.5);
+      const ng = audioCtx.createGain();
+      const nhp = audioCtx.createBiquadFilter();
+      nhp.type = "highpass";
+      nhp.frequency.value = 6000;
+      ng.gain.setValueAtTime(0.001, t);
+      ng.gain.linearRampToValueAtTime(0.04, t + 0.05);
+      ng.gain.linearRampToValueAtTime(0.03, t + 0.3);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      ns.connect(nhp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.5);
+      // Sub-harmonic warm body
+      const sub = audioCtx.createOscillator();
+      const sg = audioCtx.createGain();
+      sub.type = "sine";
+      sub.frequency.value = 600;
+      sg.gain.setValueAtTime(0.001, t);
+      sg.gain.linearRampToValueAtTime(0.05, t + 0.05);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      sub.connect(sg).connect(dest);
+      sub.start(t);
+      sub.stop(t + 0.45);
       break;
     }
 
     case "slowmo": {
-      // Mysterious ethereal wash
+      // Deep drone through lowpass sweep
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(800, t);
+      lp.frequency.exponentialRampToValueAtTime(200, t + 0.8);
+      lp.Q.value = 8;
       osc.type = "sine";
       osc.frequency.setValueAtTime(220, t);
       osc.frequency.exponentialRampToValueAtTime(110, t + 0.8);
       gain.gain.setValueAtTime(0.001, t);
-      gain.gain.linearRampToValueAtTime(0.15, t + 0.1);
-      gain.gain.linearRampToValueAtTime(0.12, t + 0.4);
+      gain.gain.linearRampToValueAtTime(0.12, t + 0.1);
+      gain.gain.linearRampToValueAtTime(0.1, t + 0.4);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      osc.connect(lp).connect(gain).connect(dest);
       osc.start(t);
       osc.stop(t + 0.8);
-      // Detuned ghost tone
-      const smOsc2 = audioCtx.createOscillator();
-      const smGain2 = audioCtx.createGain();
-      smOsc2.connect(smGain2);
-      smGain2.connect(audioCtx.destination);
-      smOsc2.type = "triangle";
-      smOsc2.frequency.setValueAtTime(227, t);
-      smOsc2.frequency.exponentialRampToValueAtTime(113, t + 0.8);
-      smGain2.gain.setValueAtTime(0.001, t);
-      smGain2.gain.linearRampToValueAtTime(0.1, t + 0.15);
-      smGain2.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
-      smOsc2.start(t);
-      smOsc2.stop(t + 0.8);
-      // High shimmer
-      const smOsc3 = audioCtx.createOscillator();
-      const smGain3 = audioCtx.createGain();
-      smOsc3.connect(smGain3);
-      smGain3.connect(audioCtx.destination);
-      smOsc3.type = "sine";
-      smOsc3.frequency.setValueAtTime(880, t + 0.1);
-      smOsc3.frequency.exponentialRampToValueAtTime(440, t + 0.7);
-      smGain3.gain.setValueAtTime(0.001, t);
-      smGain3.gain.linearRampToValueAtTime(0.06, t + 0.2);
-      smGain3.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-      smOsc3.start(t);
-      smOsc3.stop(t + 0.7);
+      // 3 detuned oscillators for thick chorus
+      const freqs = [220, 227, 215];
+      for (let i = 0; i < freqs.length; i++) {
+        const co = audioCtx.createOscillator();
+        const cg = audioCtx.createGain();
+        co.type = "triangle";
+        co.frequency.setValueAtTime(freqs[i], t);
+        co.frequency.exponentialRampToValueAtTime(freqs[i] / 2, t + 0.8);
+        cg.gain.setValueAtTime(0.001, t);
+        cg.gain.linearRampToValueAtTime(0.06, t + 0.15);
+        cg.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+        co.connect(lp).connect(gain); // share filter chain
+        co.start(t);
+        co.stop(t + 0.8);
+      }
+      // High shimmer through bandpass + delay
+      const sh = audioCtx.createOscillator();
+      const sg = audioCtx.createGain();
+      const sbp = audioCtx.createBiquadFilter();
+      sbp.type = "bandpass";
+      sbp.frequency.setValueAtTime(880, t + 0.1);
+      sbp.frequency.exponentialRampToValueAtTime(440, t + 0.7);
+      sbp.Q.value = 5;
+      const delay = audioCtx.createDelay();
+      const dfb = audioCtx.createGain();
+      delay.delayTime.value = 0.12;
+      dfb.gain.value = 0.4;
+      sh.type = "sine";
+      sh.frequency.setValueAtTime(880, t + 0.1);
+      sh.frequency.exponentialRampToValueAtTime(440, t + 0.7);
+      sg.gain.setValueAtTime(0.001, t);
+      sg.gain.linearRampToValueAtTime(0.05, t + 0.2);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      sh.connect(sbp).connect(sg);
+      sg.connect(dest);
+      sg.connect(delay).connect(dfb).connect(delay);
+      delay.connect(dest);
+      sh.start(t);
+      sh.stop(t + 0.7);
+      // FM wobble: LFO → 330 Hz tone ("time decelerating")
+      const lfo = audioCtx.createOscillator();
+      const lfoG = audioCtx.createGain();
+      const fmCarrier = audioCtx.createOscillator();
+      const fmG = audioCtx.createGain();
+      lfo.type = "sine";
+      lfo.frequency.setValueAtTime(4, t);
+      lfo.frequency.exponentialRampToValueAtTime(1, t + 0.8);
+      lfoG.gain.setValueAtTime(40, t);
+      lfoG.gain.exponentialRampToValueAtTime(10, t + 0.8);
+      fmCarrier.type = "sine";
+      fmCarrier.frequency.value = 330;
+      fmG.gain.setValueAtTime(0.001, t);
+      fmG.gain.linearRampToValueAtTime(0.04, t + 0.15);
+      fmG.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      lfo.connect(lfoG).connect(fmCarrier.frequency);
+      fmCarrier.connect(fmG).connect(dest);
+      lfo.start(t);
+      lfo.stop(t + 0.8);
+      fmCarrier.start(t);
+      fmCarrier.stop(t + 0.8);
+      // Bandpass noise whisper for atmosphere
+      const ns = makeNoise(0.7);
+      const ng = audioCtx.createGain();
+      const nbp = audioCtx.createBiquadFilter();
+      nbp.type = "bandpass";
+      nbp.frequency.value = 400;
+      nbp.Q.value = 2;
+      ng.gain.setValueAtTime(0.001, t);
+      ng.gain.linearRampToValueAtTime(0.035, t + 0.1);
+      ng.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      ns.connect(nbp).connect(ng).connect(dest);
+      ns.start(t);
+      ns.stop(t + 0.7);
       break;
     }
   }
