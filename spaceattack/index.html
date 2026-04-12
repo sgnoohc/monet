@@ -1363,12 +1363,14 @@ function updateGame() {
     if (p.dir === -1) {
       // Check power-up (not for torpedoes)
       if (!p.isTorpedo && powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
+        const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo > 0;
         switch (powerUp.type) {
           case "rail": railAmmo++; break;
           case "bomb": bombAmmo++; break;
           case "heal": healAmmo++; break;
           case "slow": slowAmmo++; break;
         }
+        if (!hadAny) selectedWeapon = WEAPON_TYPES.indexOf(powerUp.type);
         explosions.push(new Explosion(powerUp.x + powerUp.w / 2, powerUp.y + powerUp.h / 2));
         powerUp = null;
         playSound("powerup");
