@@ -2633,7 +2633,7 @@ function updateGame() {
   if (difficulty !== "easy") {
     powerUpTimer++;
     if (powerUpTimer >= powerUpInterval) {
-      const randomType = Math.random() < 0.1 ? "life" : WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+      const randomType = Math.random() < 0.02 ? "life" : WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
       powerUps.push(new PowerUp(randomType));
       powerUpTimer = 0;
       const pui2 = POWERUP_INTERVAL[difficulty];
