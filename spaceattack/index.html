@@ -2483,36 +2483,44 @@ function updateGame() {
     if (wType === "rail" && railAmmo > 0 && player.cooldown <= 0) {
       railAmmo--;
       player.cooldown = PLAYER_SHOOT_COOLDOWN;
-      const beamX = player.x + player.w / 2;
-      explosions.push(new RailBeam(beamX));
+      // Collect all beam X positions (player + clones)
+      const beamXs = [player.x + player.w / 2];
+      if (cloneTimer > 0) {
+        for (const ox of [-36, 36]) {
+          beamXs.push(Math.max(FIELD_X, Math.min(FIELD_X + FIELD_W - player.w, player.x + ox)) + player.w / 2);
+        }
+      }
       playSound("railgun");
       const beamHalf = 24;
-      for (const a of aliens) {
-        if (!a.alive) continue;
-        const aCx = a.x + a.w / 2;
-        if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
-          a.alive = false;
-          score += a.points;
-          explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+      for (const beamX of beamXs) {
+        explosions.push(new RailBeam(beamX));
+        for (const a of aliens) {
+          if (!a.alive) continue;
+          const aCx = a.x + a.w / 2;
+          if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
+            a.alive = false;
+            score += a.points;
+            explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+          }
         }
-      }
-      // Rail beam vs boss minions
-      for (const m of bossMinions) {
-        if (!m.alive) continue;
-        const mCx = m.x + m.w / 2;
-        if (Math.abs(mCx - beamX) < beamHalf + m.w / 2) {
-          m.alive = false;
-          score += m.points;
-          explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
+        // Rail beam vs boss minions
+        for (const m of bossMinions) {
+          if (!m.alive) continue;
+          const mCx = m.x + m.w / 2;
+          if (Math.abs(mCx - beamX) < beamHalf + m.w / 2) {
+            m.alive = false;
+            score += m.points;
+            explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
+          }
         }
-      }
-      // Rail beam vs mothership
-      if (bossPhase && mothership && mothership.alive) {
-        const mCx = mothership.x + mothership.w / 2;
-        if (Math.abs(mCx - beamX) < beamHalf + mothership.w / 2) {
-          const dead = mothership.takeHit(24);
-          explosions.push(new Explosion(mCx, mothership.y + mothership.h / 2));
-          if (dead) handleBossDeath();
+        // Rail beam vs mothership
+        if (bossPhase && mothership && mothership.alive) {
+          const mCx = mothership.x + mothership.w / 2;
+          if (Math.abs(mCx - beamX) < beamHalf + mothership.w / 2) {
+            const dead = mothership.takeHit(24);
+            explosions.push(new Explosion(mCx, mothership.y + mothership.h / 2));
+            if (dead) handleBossDeath();
+          }
         }
       }
     } else if (wType === "bomb" && bombAmmo > 0 && player.cooldown <= 0) {
@@ -2521,6 +2529,13 @@ function updateGame() {
       const bx = player.x + player.w / 2;
       const by = player.y - 4;
       projectiles.push(new Torpedo(bx, by));
+      // Clone wingmen fire torpedoes too
+      if (cloneTimer > 0) {
+        for (const ox of [-36, 36]) {
+          const cx = Math.max(FIELD_X, Math.min(FIELD_X + FIELD_W - player.w, player.x + ox)) + player.w / 2;
+          projectiles.push(new Torpedo(cx, player.y));
+        }
+      }
       playSound("shoot");
     } else if (wType === "heal" && healAmmo > 0) {
       healAmmo--;
