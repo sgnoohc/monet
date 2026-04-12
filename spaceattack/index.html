@@ -2786,19 +2786,6 @@ function updateGame() {
           }
         }
       }
-      // Check bunkers (torpedoes pass through)
-      if (!hit && !p.isTorpedo) {
-        for (const b of bunkers) {
-          if (!b.isDestroyed && rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
-            if (b.damageAt(p.x, p.y, LASER_BLAST_RADIUS)) {
-              explosions.push(new Explosion(p.x, p.y));
-              playSound("hit");
-              hit = true;
-              break;
-            }
-          }
-        }
-      }
     } else {
       // alien projectile -> player
       if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
