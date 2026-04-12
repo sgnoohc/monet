@@ -1900,28 +1900,31 @@ class RailBeam {
 const BOSS_HP = { easy: 40, medium: 60, difficult: 80, insane: 120, doomsday: 180 };
 
 class Mothership {
-  constructor(diffKey) {
-    this.w = 120;
-    this.h = 70;
+  constructor(diffKey, lvl) {
+    const cfg = BOSS_LEVEL_CONFIG[Math.min(lvl, 5) - 1];
+    this.w = cfg.w;
+    this.h = cfg.h;
     this.x = W / 2 - this.w / 2;
     this.y = FIELD_Y - this.h - 10;
     this.targetY = FIELD_Y + 30;
-    this.hp = BOSS_HP[diffKey] || 60;
+    this.hp = Math.round((BOSS_HP[diffKey] || 60) * cfg.hpMult);
     this.maxHp = this.hp;
     this.alive = true;
     this.deathHandled = false;
     this.entering = true;
-    this.enterSpeed = (this.targetY - this.y) / 40; // ~1.3s at 30fps
+    this.enterSpeed = (this.targetY - this.y) / 40;
     this.driftSpeed = 1.2;
     this.driftDir = 1;
     this.bobPhase = 0;
     this.shootChance = DIFFICULTIES[diffKey].shootChance;
     this.patternTimer = 0;
     this.pattern = 0;
+    this.numPatterns = cfg.numPatterns;
+    this.fanCount = cfg.fanCount;
     this.flashTimer = 0;
     this.frame = 0;
     this.spawnTimer = 0;
-    this.spawnInterval = Math.max(30, 90 - ({ easy: 0, medium: 0, difficult: 10, insane: 20, doomsday: 30 }[diffKey] || 0));
+    this.spawnInterval = cfg.spawnInterval;
   }
 
   update() {
@@ -1950,7 +1953,7 @@ class Mothership {
     this.patternTimer++;
     if (this.patternTimer >= 90) {
       this.patternTimer = 0;
-      this.pattern = (this.pattern + 1) % 4;
+      this.pattern = (this.pattern + 1) % this.numPatterns;
     }
 
     // Shooting
@@ -1961,8 +1964,10 @@ class Mothership {
         case 0: // single aimed shot down
           newProjectiles.push(new Projectile(cx, botY, 1));
           break;
-        case 1: { // fan of 3
-          for (let angle = -0.3; angle <= 0.3; angle += 0.3) {
+        case 1: { // fan of N
+          const fanStep = 0.6 / Math.max(1, this.fanCount - 1);
+          for (let i = 0; i < this.fanCount; i++) {
+            const angle = -0.3 + i * fanStep;
             const p = new Projectile(cx + angle * 30, botY, 1);
             p.vx = angle * PROJ_SPEED;
             const origUpdate = p.update.bind(p);
@@ -2282,8 +2287,9 @@ class Asteroid {
 }
 
 // ── Alien grid builder ───────────────────────────────────────────────
-function makeAlienGrid(shootChance) {
-  const cols = 8, rows = 5;
+function makeAlienGrid(shootChance, lvl) {
+  const grid = LEVEL_GRID[Math.min(lvl, 5) - 1];
+  const cols = grid.c, rows = grid.r;
   const alienW = 28, hGap = 14, vGap = 6;
   const gridW = cols * alienW + (cols - 1) * hGap;
   const startX = FIELD_X + (FIELD_W - gridW) / 2;
@@ -2428,13 +2434,26 @@ let powerUps, powerUpTimer, powerUpInterval;
 let lives, invulnTimer, cloneTimer;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer, bossMinions;
 let asteroids, asteroidTimer;
+let level, levelTransitionTimer;
+
+const LEVEL_GRID = [{c:5,r:2},{c:6,r:3},{c:7,r:4},{c:8,r:4},{c:8,r:5}];
+
+const BOSS_LEVEL_CONFIG = [
+  { w: 70,  h: 42, hpMult: 0.4, numPatterns: 2, fanCount: 2, spawnInterval: 120 },
+  { w: 85,  h: 50, hpMult: 0.6, numPatterns: 3, fanCount: 3, spawnInterval: 100 },
+  { w: 100, h: 58, hpMult: 0.8, numPatterns: 3, fanCount: 3, spawnInterval: 90 },
+  { w: 110, h: 64, hpMult: 1.0, numPatterns: 4, fanCount: 4, spawnInterval: 75 },
+  { w: 120, h: 70, hpMult: 1.2, numPatterns: 4, fanCount: 5, spawnInterval: 60 },
+];
 
 function startGame(diffKey) {
   difficulty = diffKey;
+  level = 1;
+  levelTransitionTimer = -1;
   const diff = DIFFICULTIES[diffKey];
   baseMoveInterval = diff.moveInterval;
   player = new Player();
-  aliens = makeAlienGrid(diff.shootChance);
+  aliens = makeAlienGrid(diff.shootChance, level);
   const bunkY = FIELD_Y + FIELD_H - 60;
   const spacing = FIELD_W / 5;
   bunkers = [
@@ -2593,6 +2612,34 @@ let shiftDebounce = false;
 
 function updateGame() {
   if (gameState !== "playing") return;
+
+  // Level transition interstitial — only tick the timer, skip gameplay
+  if (levelTransitionTimer > 0) {
+    levelTransitionTimer--;
+    if (levelTransitionTimer === 0) {
+      aliens = makeAlienGrid(DIFFICULTIES[difficulty].shootChance, level);
+      totalAliens = aliens.length;
+      alienMoveTimer = 0;
+      alienDir = 1;
+      bossPhase = false;
+      mothership = null;
+      bossTransitionTimer = -1;
+      bossDeathTimer = -1;
+      bossMinions = [];
+      projectiles = [];
+      asteroids = [];
+      asteroidTimer = 0;
+      const bunkY = FIELD_Y + FIELD_H - 60;
+      const spacing = FIELD_W / 5;
+      bunkers = [
+        new Bunker(FIELD_X + spacing * 1 - 24, bunkY),
+        new Bunker(FIELD_X + spacing * 2 - 24, bunkY),
+        new Bunker(FIELD_X + spacing * 3 - 24, bunkY),
+        new Bunker(FIELD_X + spacing * 4 - 24, bunkY),
+      ];
+    }
+    return;
+  }
 
   player.update();
 
@@ -2784,7 +2831,7 @@ function updateGame() {
   const alive = aliens.filter(a => a.alive);
   const ratio = alive.length / totalAliens;
   const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio * slowMult));
-  const speed = Math.min(6, Math.max(2, Math.round(2 / (ratio * ratio + 0.04))));
+  const speed = Math.min(5, Math.max(2, Math.round(2 / (ratio * ratio + 0.04))));
   if (alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
     let reverse = false;
@@ -2987,7 +3034,7 @@ function updateGame() {
     bossTransitionTimer--;
     if (bossTransitionTimer === 0) {
       bossPhase = true;
-      mothership = new Mothership(difficulty);
+      mothership = new Mothership(difficulty, level);
     }
   }
 
@@ -3016,14 +3063,19 @@ function updateGame() {
   if (bossDeathTimer > 0) {
     bossDeathTimer--;
     if (bossDeathTimer === 0) {
-      playSound("win");
       score += mothership.maxHp * 10;
-      gameState = "won";
+      if (level >= 5) {
+        playSound("win");
+        gameState = "won";
+      } else {
+        level++;
+        levelTransitionTimer = 90; // ~2s interstitial
+      }
     }
   }
 
-  // Win condition (only if no boss fight pending)
-  if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0 && !mothership) {
+  // Win condition (only if no boss fight pending and no level transition)
+  if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0 && levelTransitionTimer < 0 && !mothership) {
     playSound("win");
     gameState = "won";
   }
@@ -3355,13 +3407,21 @@ function drawGame() {
     drawText("MOTHERSHIP INCOMING", W / 2, H / 2 + 15, "#ff3366", 18, "center");
   }
 
+  // Level transition overlay
+  if (levelTransitionTimer > 0) {
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+    drawText(`LEVEL ${level}`, W / 2, H / 2 - 20, "#ffcc00", 32, "center");
+    drawText("Incoming...", W / 2, H / 2 + 18, "#aaaaaa", 18, "center");
+  }
+
   // weapon bar
   drawWeaponBar();
 
   // status bar
   const aliveCount = aliens.filter(a => a.alive).length;
   const diffLabel = DIFFICULTIES[difficulty].label;
-  drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
+  drawText(`SPACE ATTACK  [${diffLabel}] Lv.${level}`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
   // Draw lives as mini ship icons
   for (let i = 0; i < lives; i++) {
     const lx = FIELD_X + 230 + i * 14;
