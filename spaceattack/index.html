@@ -1621,6 +1621,7 @@ function triggerBombExplosion(cx, cy) {
 let gameState = "title"; // title | playing | won | lost
 let selectedDiff = 1;
 let difficulty = "medium";
+let endCooldown = 0; // frames to ignore input after game ends
 
 let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
@@ -2208,7 +2209,6 @@ function drawGame() {
 
 // ── End-state input ──────────────────────────────────────────────────
 let endKeyDebounce = {};
-let endCooldown = 0; // frames to ignore input after game ends
 
 function updateEndState() {
   if (endCooldown > 0) { endCooldown--; return; }
