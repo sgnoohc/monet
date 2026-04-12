@@ -1027,10 +1027,10 @@ const LASER_BLAST_RADIUS = 6;
 const WEAPON_TYPES = ["rail", "bomb", "heal", "slow"];
 const POWERUP_INTERVAL = {
   easy:     null,
-  medium:   { base: 132, rand: 48 },
-  difficult:{ base: 90, rand: 42 },
-  insane:   { base: 60, rand: 30 },
-  doomsday: { base: 36, rand: 24 },
+  medium:   { base: 264, rand: 96 },
+  difficult:{ base: 180, rand: 84 },
+  insane:   { base: 120, rand: 60 },
+  doomsday: { base: 72, rand: 48 },
 };
 const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff", life: "#00ff00" };
 const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW" };
@@ -1751,8 +1751,8 @@ class BombExplosion {
 class PowerUp {
   constructor(type) {
     this.type = type || "rail";
-    this.w = 48;
-    this.h = 48;
+    this.w = 24;
+    this.h = 24;
     this.x = FIELD_X + 50 + Math.random() * (FIELD_W - 100);
     const thirdH = FIELD_H / 3;
     this.y = FIELD_Y + thirdH + Math.random() * thirdH;
@@ -1908,6 +1908,8 @@ class Mothership {
     this.pattern = 0;
     this.flashTimer = 0;
     this.frame = 0;
+    this.spawnTimer = 0;
+    this.spawnInterval = Math.max(30, 90 - ({ easy: 0, medium: 0, difficult: 10, insane: 20, doomsday: 30 }[diffKey] || 0));
   }
 
   update() {
@@ -2071,6 +2073,70 @@ class Mothership {
   }
 }
 
+class BossMinion {
+  constructor(x, y, shootChance) {
+    this.w = 16;
+    this.h = 14;
+    this.x = x - this.w / 2;
+    this.y = y;
+    this.hp = 1;
+    this.alive = true;
+    this.points = 50;
+    this.shootChance = shootChance * 0.5;
+    this.vx = (Math.random() - 0.5) * 2;
+    this.vy = 0.8 + Math.random() * 0.6;
+    this.frame = 0;
+  }
+
+  update() {
+    this.frame++;
+    this.x += this.vx;
+    this.y += this.vy;
+    // bounce off field edges
+    if (this.x <= FIELD_X) { this.x = FIELD_X; this.vx = Math.abs(this.vx); }
+    if (this.x + this.w >= FIELD_X + FIELD_W) { this.x = FIELD_X + FIELD_W - this.w; this.vx = -Math.abs(this.vx); }
+    // die if off bottom
+    if (this.y > FIELD_Y + FIELD_H) this.alive = false;
+  }
+
+  tryShoot() {
+    if (Math.random() < this.shootChance) {
+      return new Projectile(this.x + this.w / 2, this.y + this.h, 1);
+    }
+    return null;
+  }
+
+  takeHit() {
+    this.hp--;
+    if (this.hp <= 0) { this.alive = false; return true; }
+    return false;
+  }
+
+  draw() {
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    ctx.save();
+    // Small triangular fighter
+    ctx.fillStyle = "#cc4466";
+    ctx.beginPath();
+    ctx.moveTo(cx, this.y + this.h);        // bottom center (nose pointing down)
+    ctx.lineTo(this.x, this.y);             // top left
+    ctx.lineTo(this.x + this.w, this.y);    // top right
+    ctx.closePath();
+    ctx.fill();
+    // Cockpit dot
+    ctx.fillStyle = "#ff8888";
+    ctx.beginPath();
+    ctx.arc(cx, cy - 1, 2, 0, Math.PI * 2);
+    ctx.fill();
+    // Wing accents
+    ctx.fillStyle = "#ff2244";
+    ctx.fillRect(this.x, this.y, 2, 3);
+    ctx.fillRect(this.x + this.w - 2, this.y, 2, 3);
+    ctx.restore();
+  }
+}
+
 // ── Alien grid builder ───────────────────────────────────────────────
 function makeAlienGrid(shootChance) {
   const cols = 8, rows = 5;
@@ -2156,6 +2222,18 @@ function triggerBombExplosion(cx, cy) {
       b.damageAt(cx, cy, blastRadius);
     }
   }
+  // Blast vs boss minions
+  for (const m of bossMinions) {
+    if (!m.alive) continue;
+    const mx2 = m.x + m.w / 2;
+    const my2 = m.y + m.h / 2;
+    const dx2 = cx - mx2, dy2 = cy - my2;
+    if (Math.sqrt(dx2 * dx2 + dy2 * dy2) < blastRadius) {
+      m.alive = false;
+      score += m.points;
+      explosions.push(new Explosion(mx2, my2));
+    }
+  }
   // Blast vs mothership
   if (bossPhase && mothership && mothership.alive) {
     const mx = mothership.x + mothership.w / 2;
@@ -2180,6 +2258,14 @@ function handleBossDeath() {
     explosions.push(new BombExplosion(ex, ey));
   }
   bossDeathTimer = 30; // 1s delay before win
+  // Kill remaining minions
+  for (const m of bossMinions) {
+    if (m.alive) {
+      m.alive = false;
+      explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
+    }
+  }
+  bossMinions = [];
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2196,7 +2282,7 @@ let railAmmo, bombAmmo, healAmmo, slowAmmo, selectedWeapon, slowTimer;
 let bunkerHealFlash;
 let powerUps, powerUpTimer, powerUpInterval;
 let lives, invulnTimer;
-let mothership, bossPhase, bossTransitionTimer, bossDeathTimer;
+let mothership, bossPhase, bossTransitionTimer, bossDeathTimer, bossMinions;
 
 function startGame(diffKey) {
   difficulty = diffKey;
@@ -2235,6 +2321,7 @@ function startGame(diffKey) {
   bossPhase = false;
   bossTransitionTimer = -1;
   bossDeathTimer = -1;
+  bossMinions = [];
   generateStars(diffKey);
   // Reset mobile SPEC button from RETRY state
   if (touchActive) {
@@ -2393,6 +2480,16 @@ function updateGame() {
           a.alive = false;
           score += a.points;
           explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+        }
+      }
+      // Rail beam vs boss minions
+      for (const m of bossMinions) {
+        if (!m.alive) continue;
+        const mCx = m.x + m.w / 2;
+        if (Math.abs(mCx - beamX) < beamHalf + m.w / 2) {
+          m.alive = false;
+          score += m.points;
+          explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
         }
       }
       // Rail beam vs mothership
@@ -2632,6 +2729,19 @@ function updateGame() {
           }
         }
       }
+      // Check boss minions
+      if (!hit) {
+        for (const m of bossMinions) {
+          if (m.alive && rectCollide(p.x, p.y, p.w, p.h, m.x, m.y, m.w, m.h)) {
+            const dead = m.takeHit();
+            explosions.push(new Explosion(p.x, p.y));
+            playSound(dead ? "explode" : "hit");
+            if (dead) score += m.points;
+            hit = true;
+            break;
+          }
+        }
+      }
       // Check bunkers (torpedoes pass through)
       if (!hit && !p.isTorpedo) {
         for (const b of bunkers) {
@@ -2703,7 +2813,22 @@ function updateGame() {
   if (bossPhase && mothership && mothership.alive) {
     const bossProjs = mothership.update();
     for (const p of bossProjs) projectiles.push(p);
+    // Spawn minions
+    mothership.spawnTimer++;
+    if (mothership.spawnTimer >= mothership.spawnInterval) {
+      mothership.spawnTimer = 0;
+      const mx = mothership.x + mothership.w / 2 + (Math.random() - 0.5) * mothership.w * 0.6;
+      const my = mothership.y + mothership.h;
+      bossMinions.push(new BossMinion(mx, my, mothership.shootChance));
+    }
   }
+  // Update boss minions
+  for (const m of bossMinions) {
+    m.update();
+    const mp = m.tryShoot();
+    if (mp) projectiles.push(mp);
+  }
+  bossMinions = bossMinions.filter(m => m.alive);
 
   // Boss death timer
   if (bossDeathTimer > 0) {
@@ -2896,6 +3021,8 @@ function drawGame() {
   if (mothership) {
     mothership.draw();
   }
+  // boss minions
+  for (const m of bossMinions) if (m.alive) m.draw();
 
   // player
   if (gameState === "playing" || gameState === "won") {
