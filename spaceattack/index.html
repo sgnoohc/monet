@@ -911,6 +911,67 @@ function playSound(type) {
       ns.stop(t + 0.7);
       break;
     }
+
+    case "alarm": {
+      // Rising-falling sawtooth siren (4 cycles over 2s)
+      const siren = audioCtx.createOscillator();
+      const sg = audioCtx.createGain();
+      siren.type = "sawtooth";
+      siren.frequency.setValueAtTime(300, t);
+      for (let i = 0; i < 4; i++) {
+        const ct = t + i * 0.5;
+        siren.frequency.linearRampToValueAtTime(800, ct + 0.25);
+        siren.frequency.linearRampToValueAtTime(300, ct + 0.5);
+      }
+      sg.gain.setValueAtTime(0.08, t);
+      sg.gain.setValueAtTime(0.08, t + 1.8);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + 2.0);
+      siren.connect(sg).connect(dest);
+      siren.start(t);
+      siren.stop(t + 2.0);
+      // Low rumble noise
+      const rn = makeNoise(2.0);
+      const rng = audioCtx.createGain();
+      const rlp = audioCtx.createBiquadFilter();
+      rlp.type = "lowpass";
+      rlp.frequency.value = 150;
+      rng.gain.setValueAtTime(0.06, t);
+      rng.gain.exponentialRampToValueAtTime(0.001, t + 2.0);
+      rn.connect(rlp).connect(rng).connect(dest);
+      rn.start(t);
+      rn.stop(t + 2.0);
+      break;
+    }
+
+    case "bossExplode": {
+      // Staggered multi-layered explosions
+      for (let i = 0; i < 4; i++) {
+        const et = t + i * 0.15;
+        const eo = audioCtx.createOscillator();
+        const eg = audioCtx.createGain();
+        eo.type = "sawtooth";
+        eo.frequency.setValueAtTime(120 - i * 20, et);
+        eo.frequency.exponentialRampToValueAtTime(30, et + 0.3);
+        eg.gain.setValueAtTime(0.1, et);
+        eg.gain.exponentialRampToValueAtTime(0.001, et + 0.3);
+        eo.connect(eg).connect(dest);
+        eo.start(et);
+        eo.stop(et + 0.3);
+      }
+      // Noise burst
+      const bn = makeNoise(1.0);
+      const bng = audioCtx.createGain();
+      const blp = audioCtx.createBiquadFilter();
+      blp.type = "lowpass";
+      blp.frequency.setValueAtTime(3000, t);
+      blp.frequency.exponentialRampToValueAtTime(100, t + 1.0);
+      bng.gain.setValueAtTime(0.12, t);
+      bng.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+      bn.connect(blp).connect(bng).connect(dest);
+      bn.start(t);
+      bn.stop(t + 1.0);
+      break;
+    }
   }
 }
 
@@ -934,6 +995,10 @@ const COL = {
   menuSel:    "#00ff00",
   menu:       "#cccccc",
   bg:         "#000000",
+  mothership:   "#ff0066",
+  mothershipGlow: "#ff3388",
+  mothershipHP:   "#ff0044",
+  mothershipHPBg: "#440011",
 };
 
 // ── Game constants ───────────────────────────────────────────────────
@@ -1528,6 +1593,193 @@ class RailBeam {
   }
 }
 
+// ── Mothership boss ─────────────────────────────────────────────────
+const BOSS_HP = { easy: 40, medium: 60, difficult: 80, insane: 120, doomsday: 180 };
+
+class Mothership {
+  constructor(diffKey) {
+    this.w = 120;
+    this.h = 70;
+    this.x = W / 2 - this.w / 2;
+    this.y = FIELD_Y - this.h - 10;
+    this.targetY = FIELD_Y + 30;
+    this.hp = BOSS_HP[diffKey] || 60;
+    this.maxHp = this.hp;
+    this.alive = true;
+    this.deathHandled = false;
+    this.entering = true;
+    this.enterSpeed = (this.targetY - this.y) / 40; // ~1.3s at 30fps
+    this.driftSpeed = 1.2;
+    this.driftDir = 1;
+    this.bobPhase = 0;
+    this.shootChance = DIFFICULTIES[diffKey].shootChance;
+    this.patternTimer = 0;
+    this.pattern = 0;
+    this.flashTimer = 0;
+    this.frame = 0;
+  }
+
+  update() {
+    this.frame++;
+    const newProjectiles = [];
+
+    if (this.entering) {
+      this.y += this.enterSpeed;
+      if (this.y >= this.targetY) {
+        this.y = this.targetY;
+        this.entering = false;
+      }
+      return newProjectiles;
+    }
+
+    // Horizontal drift
+    this.x += this.driftSpeed * this.driftDir;
+    if (this.x <= FIELD_X + 10) this.driftDir = 1;
+    if (this.x + this.w >= FIELD_X + FIELD_W - 10) this.driftDir = -1;
+
+    // Vertical bob
+    this.bobPhase += 0.05;
+    this.y = this.targetY + Math.sin(this.bobPhase) * 8;
+
+    // Cycle pattern every 3s (90 frames)
+    this.patternTimer++;
+    if (this.patternTimer >= 90) {
+      this.patternTimer = 0;
+      this.pattern = (this.pattern + 1) % 4;
+    }
+
+    // Shooting
+    const cx = this.x + this.w / 2;
+    const botY = this.y + this.h;
+    if (Math.random() < this.shootChance) {
+      switch (this.pattern) {
+        case 0: // single aimed shot down
+          newProjectiles.push(new Projectile(cx, botY, 1));
+          break;
+        case 1: { // fan of 3
+          for (let angle = -0.3; angle <= 0.3; angle += 0.3) {
+            const p = new Projectile(cx + angle * 30, botY, 1);
+            p.vx = angle * PROJ_SPEED;
+            const origUpdate = p.update.bind(p);
+            const vx = p.vx;
+            p.update = function() {
+              origUpdate();
+              this.x += vx * (slowTimer > 0 ? 0.3 : 1);
+            };
+            newProjectiles.push(p);
+          }
+          break;
+        }
+        case 2: // double bombs
+          newProjectiles.push(new Bomb(cx - 15, botY));
+          newProjectiles.push(new Bomb(cx + 15, botY));
+          break;
+        case 3: { // spread of 5 random-offset shots
+          for (let i = 0; i < 5; i++) {
+            const offset = (Math.random() - 0.5) * 80;
+            const p = new Projectile(cx + offset, botY, 1);
+            const vx = (Math.random() - 0.5) * 1.5;
+            const origUpdate = p.update.bind(p);
+            p.update = function() {
+              origUpdate();
+              this.x += vx * (slowTimer > 0 ? 0.3 : 1);
+            };
+            newProjectiles.push(p);
+          }
+          break;
+        }
+      }
+    }
+
+    if (this.flashTimer > 0) this.flashTimer--;
+
+    return newProjectiles;
+  }
+
+  takeHit(damage) {
+    this.hp -= damage;
+    this.flashTimer = 6;
+    if (this.hp <= 0) {
+      this.hp = 0;
+      this.alive = false;
+      return true;
+    }
+    return false;
+  }
+
+  draw() {
+    if (!this.alive && this.deathHandled) return;
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+
+    // Engine glow
+    ctx.globalAlpha = 0.4 + 0.2 * Math.sin(this.frame * 0.2);
+    ctx.fillStyle = "#ff4400";
+    ctx.beginPath();
+    ctx.ellipse(cx - 30, this.y + this.h - 5, 10, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + 30, this.y + this.h - 5, 10, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Hit flash
+    const bodyColor = this.flashTimer > 0 ? "#ffffff" : COL.mothership;
+
+    // Hexagonal body
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.moveTo(this.x + 20, this.y);
+    ctx.lineTo(this.x + this.w - 20, this.y);
+    ctx.lineTo(this.x + this.w, this.y + this.h * 0.4);
+    ctx.lineTo(this.x + this.w - 10, this.y + this.h);
+    ctx.lineTo(this.x + 10, this.y + this.h);
+    ctx.lineTo(this.x, this.y + this.h * 0.4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Body detail lines
+    ctx.strokeStyle = "#cc0044";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(this.x + 10, this.y + this.h * 0.5);
+    ctx.lineTo(this.x + this.w - 10, this.y + this.h * 0.5);
+    ctx.stroke();
+
+    // Cockpit
+    ctx.fillStyle = this.flashTimer > 0 ? "#ffffff" : COL.mothershipGlow;
+    ctx.beginPath();
+    ctx.ellipse(cx, this.y + this.h * 0.3, 18, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(cx, this.y + this.h * 0.3, 10, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Wing cannons
+    ctx.fillStyle = bodyColor;
+    ctx.fillRect(this.x - 5, this.y + this.h * 0.3, 12, 8);
+    ctx.fillRect(this.x + this.w - 7, this.y + this.h * 0.3, 12, 8);
+
+    // HP bar (above ship)
+    const barW = this.w;
+    const barH = 6;
+    const barX = this.x;
+    const barY = this.y - 12;
+    const hpRatio = this.hp / this.maxHp;
+    ctx.fillStyle = COL.mothershipHPBg;
+    ctx.fillRect(barX, barY, barW, barH);
+    let hpColor = COL.mothershipHP;
+    if (hpRatio <= 0.25) hpColor = "#ffffff";
+    else if (hpRatio <= 0.5) hpColor = "#ffff00";
+    ctx.fillStyle = hpColor;
+    ctx.fillRect(barX, barY, barW * hpRatio, barH);
+    ctx.strokeStyle = "#666";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+  }
+}
+
 // ── Alien grid builder ───────────────────────────────────────────────
 function makeAlienGrid(shootChance) {
   const cols = 8, rows = 5;
@@ -1613,6 +1865,30 @@ function triggerBombExplosion(cx, cy) {
       b.damageAt(cx, cy, blastRadius);
     }
   }
+  // Blast vs mothership
+  if (bossPhase && mothership && mothership.alive) {
+    const mx = mothership.x + mothership.w / 2;
+    const my = mothership.y + mothership.h / 2;
+    const dx = cx - mx, dy = cy - my;
+    if (Math.sqrt(dx * dx + dy * dy) < blastRadius) {
+      const dead = mothership.takeHit(5);
+      if (dead) handleBossDeath();
+    }
+  }
+}
+
+// ── Boss death handler ──────────────────────────────────────────────
+function handleBossDeath() {
+  if (mothership.deathHandled) return;
+  mothership.deathHandled = true;
+  playSound("bossExplode");
+  // Spawn explosions across the body
+  for (let i = 0; i < 8; i++) {
+    const ex = mothership.x + Math.random() * mothership.w;
+    const ey = mothership.y + Math.random() * mothership.h;
+    explosions.push(new BombExplosion(ex, ey));
+  }
+  bossDeathTimer = 30; // 1s delay before win
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1628,6 +1904,7 @@ let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
 let railAmmo, bombAmmo, healAmmo, slowAmmo, selectedWeapon, slowTimer;
 let bunkerHealFlash;
 let powerUp, powerUpTimer, powerUpInterval;
+let mothership, bossPhase, bossTransitionTimer, bossDeathTimer;
 
 function startGame(diffKey) {
   difficulty = diffKey;
@@ -1659,6 +1936,10 @@ function startGame(diffKey) {
   powerUp = null;
   powerUpTimer = 0;
   powerUpInterval = 500 + Math.floor(Math.random() * 200);
+  mothership = null;
+  bossPhase = false;
+  bossTransitionTimer = -1;
+  bossDeathTimer = -1;
   generateStars(diffKey);
   // Reset mobile SPEC button from RETRY state
   if (touchActive) {
@@ -1819,6 +2100,15 @@ function updateGame() {
           explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
         }
       }
+      // Rail beam vs mothership
+      if (bossPhase && mothership && mothership.alive) {
+        const mCx = mothership.x + mothership.w / 2;
+        if (Math.abs(mCx - beamX) < beamHalf + mothership.w / 2) {
+          const dead = mothership.takeHit(8);
+          explosions.push(new Explosion(mCx, mothership.y + mothership.h / 2));
+          if (dead) handleBossDeath();
+        }
+      }
     } else if (wType === "bomb" && bombAmmo > 0 && player.cooldown <= 0) {
       bombAmmo--;
       player.cooldown = PLAYER_SHOOT_COOLDOWN;
@@ -1880,6 +2170,15 @@ function updateGame() {
       playSound("explode");
     }
     dk.n = !!keys["KeyN"];
+    if (keys["KeyB"] && !dk.b) {
+      if (bossPhase && mothership && mothership.alive) {
+        mothership.hp = 0;
+        mothership.alive = false;
+        handleBossDeath();
+        playSound("explode");
+      }
+    }
+    dk.b = !!keys["KeyB"];
   }
 
   // ── Normal fire (Space) ──
@@ -1999,6 +2298,26 @@ function updateGame() {
           }
         }
       }
+      // Check mothership
+      if (!hit && bossPhase && mothership && mothership.alive) {
+        if (rectCollide(p.x, p.y, p.w, p.h, mothership.x, mothership.y, mothership.w, mothership.h)) {
+          if (p.isTorpedo) {
+            const bcx = mothership.x + mothership.w / 2;
+            const bcy = mothership.y + mothership.h / 2;
+            explosions.push(new BombExplosion(bcx, bcy));
+            playSound("torpedoBlast");
+            const dead = mothership.takeHit(5);
+            if (dead) handleBossDeath();
+            hit = true;
+          } else {
+            const dead = mothership.takeHit(1);
+            explosions.push(new Explosion(p.x, p.y));
+            playSound(dead ? "explode" : "hit");
+            if (dead) handleBossDeath();
+            hit = true;
+          }
+        }
+      }
       // Check bunkers (torpedoes pass through)
       if (!hit && !p.isTorpedo) {
         for (const b of bunkers) {
@@ -2044,13 +2363,48 @@ function updateGame() {
   }
   projectiles = remaining;
 
-  // win condition
-  if (aliens.filter(a => a.alive).length === 0) {
+  // ── Boss transition & fight ──
+  const allAliensDead = aliens.filter(a => a.alive).length === 0;
+
+  if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0) {
+    // Start alarm/warning phase
+    playSound("alarm");
+    bossTransitionTimer = 60; // 2s at 30fps
+    projectiles = [];
+    powerUp = null;
+  }
+
+  if (bossTransitionTimer > 0) {
+    bossTransitionTimer--;
+    if (bossTransitionTimer === 0) {
+      bossPhase = true;
+      mothership = new Mothership(difficulty);
+    }
+  }
+
+  // Boss update
+  if (bossPhase && mothership && mothership.alive) {
+    const bossProjs = mothership.update();
+    for (const p of bossProjs) projectiles.push(p);
+  }
+
+  // Boss death timer
+  if (bossDeathTimer > 0) {
+    bossDeathTimer--;
+    if (bossDeathTimer === 0) {
+      playSound("win");
+      score += mothership.maxHp * 10;
+      gameState = "won";
+    }
+  }
+
+  // Win condition (only if no boss fight pending)
+  if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0 && !mothership) {
     playSound("win");
     gameState = "won";
   }
 
-  if (bunkers.every(b => b.isDestroyed) && !debugInvincible) {
+  if (bunkers.every(b => b.isDestroyed) && !debugInvincible && bossDeathTimer < 0) {
     playSound("playerDeath");
     gameState = "lost";
   }
@@ -2136,6 +2490,11 @@ function drawGame() {
     if (a.alive) a.draw();
   }
 
+  // mothership boss
+  if (mothership) {
+    mothership.draw();
+  }
+
   // player
   if (gameState === "playing" || gameState === "won") {
     player.draw();
@@ -2163,6 +2522,17 @@ function drawGame() {
     drawText(`SLOW: ${secs}s`, W / 2, FIELD_Y + 20, "#9944ff", 16, "center");
   }
 
+  // Boss warning overlay
+  if (bossTransitionTimer > 0) {
+    const flash = Math.sin(bossTransitionTimer * 0.3) > 0 ? 0.15 : 0.05;
+    ctx.globalAlpha = flash;
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+    ctx.globalAlpha = 1;
+    drawText("! WARNING !", W / 2, H / 2 - 20, "#ff0044", 32, "center");
+    drawText("MOTHERSHIP INCOMING", W / 2, H / 2 + 15, "#ff3366", 18, "center");
+  }
+
   // weapon bar
   drawWeaponBar();
 
@@ -2171,7 +2541,11 @@ function drawGame() {
   const diffLabel = DIFFICULTIES[difficulty].label;
   drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
-  drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
+  if (bossPhase && mothership) {
+    drawText(`BOSS: ${mothership.hp}/${mothership.maxHp}`, FIELD_X + 450, FIELD_Y - 10, "#ff0044", 14, "left");
+  } else {
+    drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
+  }
   if (debugMode) {
     let debugLabel = "[DEBUG]";
     if (debugInvincible) debugLabel += " [INV]";
