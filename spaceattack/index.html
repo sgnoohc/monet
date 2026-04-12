@@ -1027,15 +1027,15 @@ const LASER_BLAST_RADIUS = 6;
 const WEAPON_TYPES = ["rail", "bomb", "heal", "slow"];
 const POWERUP_INTERVAL = {
   easy:     null,
-  medium:   { base: 110, rand: 40 },
-  difficult:{ base: 75, rand: 35 },
-  insane:   { base: 50, rand: 25 },
-  doomsday: { base: 30, rand: 20 },
+  medium:   { base: 132, rand: 48 },
+  difficult:{ base: 90, rand: 42 },
+  insane:   { base: 60, rand: 30 },
+  doomsday: { base: 36, rand: 24 },
 };
-const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff" };
+const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff", life: "#00ff00" };
 const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW" };
-const WEAPON_KEYS = { rail: "R", bomb: "T", heal: "+", slow: "S" };
-const WEAPON_HUES = { rail: 180, bomb: 30, heal: 120, slow: 270 };
+const WEAPON_KEYS = { rail: "R", bomb: "T", heal: "+", slow: "S", life: "♥" };
+const WEAPON_HUES = { rail: 180, bomb: 30, heal: 120, slow: 270, life: 120 };
 
 // ── Star field config ────────────────────────────────────────────────
 const STAR_CONFIG = {
@@ -1172,6 +1172,9 @@ class Player {
   }
 
   draw() {
+    // Flash (skip draw every other 4 frames) while invulnerable
+    if (invulnTimer > 0 && Math.floor(invulnTimer / 4) % 2 === 0) return;
+
     const cx = this.x + this.w / 2;
     const by = this.y + this.h;
     ctx.save();
@@ -1748,8 +1751,8 @@ class BombExplosion {
 class PowerUp {
   constructor(type) {
     this.type = type || "rail";
-    this.w = 20;
-    this.h = 20;
+    this.w = 48;
+    this.h = 48;
     this.x = FIELD_X + 50 + Math.random() * (FIELD_W - 100);
     const thirdH = FIELD_H / 3;
     this.y = FIELD_Y + thirdH + Math.random() * thirdH;
@@ -1783,7 +1786,22 @@ class PowerUp {
     ctx.globalAlpha = 1;
     ctx.fillStyle = `hsl(${hue}, 100%, 60%)`;
     const hs = size * 0.5;
-    if (this.type === "bomb") {
+    if (this.type === "life") {
+      // mini ship silhouette (green)
+      ctx.fillStyle = "#00ff00";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - hs);             // nose
+      ctx.lineTo(cx + hs * 0.3, cy - hs * 0.4);
+      ctx.lineTo(cx + hs, cy + hs * 0.6);  // right wing tip
+      ctx.lineTo(cx + hs * 0.2, cy + hs * 0.4);
+      ctx.lineTo(cx + hs * 0.2, cy + hs);  // bottom right
+      ctx.lineTo(cx - hs * 0.2, cy + hs);  // bottom left
+      ctx.lineTo(cx - hs * 0.2, cy + hs * 0.4);
+      ctx.lineTo(cx - hs, cy + hs * 0.6);  // left wing tip
+      ctx.lineTo(cx - hs * 0.3, cy - hs * 0.4);
+      ctx.closePath();
+      ctx.fill();
+    } else if (this.type === "bomb") {
       // circle shape
       ctx.beginPath();
       ctx.arc(cx, cy, hs, 0, Math.PI * 2);
@@ -2177,6 +2195,7 @@ let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
 let railAmmo, bombAmmo, healAmmo, slowAmmo, selectedWeapon, slowTimer;
 let bunkerHealFlash;
 let powerUps, powerUpTimer, powerUpInterval;
+let lives, invulnTimer;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer;
 
 function startGame(diffKey) {
@@ -2206,6 +2225,8 @@ function startGame(diffKey) {
   selectedWeapon = 0;
   slowTimer = 0;
   bunkerHealFlash = 0;
+  lives = 3;
+  invulnTimer = 0;
   powerUps = [];
   powerUpTimer = 0;
   const pui = POWERUP_INTERVAL[diffKey];
@@ -2472,7 +2493,7 @@ function updateGame() {
   if (difficulty !== "easy") {
     powerUpTimer++;
     if (powerUpTimer >= powerUpInterval) {
-      const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+      const randomType = Math.random() < 0.1 ? "life" : WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
       powerUps.push(new PowerUp(randomType));
       powerUpTimer = 0;
       const pui2 = POWERUP_INTERVAL[difficulty];
@@ -2511,10 +2532,13 @@ function updateGame() {
   for (const a of alive) {
     if (a.y + a.h >= FIELD_Y + FIELD_H) {
       if (!debugInvincible) {
-        playSound("playerDeath");
-        gameState = "lost";
-
-        return;
+        if (invulnTimer <= 0) {
+          lives--;
+          invulnTimer = 60;
+          playSound("playerDeath");
+          if (lives <= 0) { gameState = "lost"; return; }
+        }
+        break;
       }
     }
   }
@@ -2551,14 +2575,18 @@ function updateGame() {
       if (!p.isTorpedo) {
         for (const pu of powerUps) {
           if (pu.alive && rectCollide(p.x, p.y, p.w, p.h, pu.x, pu.y, pu.w, pu.h)) {
-            const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo > 0;
-            switch (pu.type) {
-              case "rail": railAmmo++; break;
-              case "bomb": bombAmmo++; break;
-              case "heal": healAmmo++; break;
-              case "slow": slowAmmo++; break;
+            if (pu.type === "life") {
+              lives = Math.min(5, lives + 1);
+            } else {
+              const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo > 0;
+              switch (pu.type) {
+                case "rail": railAmmo++; break;
+                case "bomb": bombAmmo++; break;
+                case "heal": healAmmo++; break;
+                case "slow": slowAmmo++; break;
+              }
+              if (!hadAny) selectedWeapon = WEAPON_TYPES.indexOf(pu.type);
             }
-            if (!hadAny) selectedWeapon = WEAPON_TYPES.indexOf(pu.type);
             explosions.push(new Explosion(pu.x + pu.w / 2, pu.y + pu.h / 2));
             pu.alive = false;
             playSound("powerup");
@@ -2622,11 +2650,14 @@ function updateGame() {
       if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
         if (debugInvincible) {
           hit = true;
+        } else if (invulnTimer > 0) {
+          hit = true;
         } else {
+          lives--;
+          invulnTimer = 60;
           explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
           playSound("playerDeath");
-          gameState = "lost";
-  
+          if (lives <= 0) { gameState = "lost"; }
           hit = true;
         }
       }
@@ -2693,6 +2724,7 @@ function updateGame() {
   // decrement timers
   if (slowTimer > 0) slowTimer--;
   if (bunkerHealFlash > 0) bunkerHealFlash--;
+  if (invulnTimer > 0) invulnTimer--;
 }
 
 function drawWeaponIcon(type, cx, cy, color, scale) {
@@ -2910,6 +2942,26 @@ function drawGame() {
   const aliveCount = aliens.filter(a => a.alive).length;
   const diffLabel = DIFFICULTIES[difficulty].label;
   drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
+  // Draw lives as mini ship icons
+  for (let i = 0; i < lives; i++) {
+    const lx = FIELD_X + 230 + i * 14;
+    const ly = FIELD_Y - 14;
+    ctx.save();
+    ctx.fillStyle = "#00ff66";
+    ctx.beginPath();
+    ctx.moveTo(lx, ly);           // nose
+    ctx.lineTo(lx + 3, ly + 4);
+    ctx.lineTo(lx + 6, ly + 9);  // right wing
+    ctx.lineTo(lx + 2, ly + 7);
+    ctx.lineTo(lx + 2, ly + 10); // bottom right
+    ctx.lineTo(lx - 2, ly + 10); // bottom left
+    ctx.lineTo(lx - 2, ly + 7);
+    ctx.lineTo(lx - 6, ly + 9);  // left wing
+    ctx.lineTo(lx - 3, ly + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
   drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
   if (bossPhase && mothership) {
     drawText(`BOSS: ${mothership.hp}/${mothership.maxHp}`, FIELD_X + 450, FIELD_Y - 10, "#ff0044", 14, "left");
