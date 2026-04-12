@@ -649,11 +649,13 @@ function updateGame() {
   const alive = aliens.filter(a => a.alive);
   const ratio = alive.length / totalAliens;
   const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio));
+  // Scale movement speed: 2px at full count, up to 12px for the last alien
+  const speed = Math.max(2, Math.round(2 / (ratio * ratio + 0.04)));
   if (alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
     let reverse = false;
     for (const a of alive) {
-      const nx = a.x + alienDir * 2;
+      const nx = a.x + alienDir * speed;
       if (nx <= FIELD_X || nx >= FIELD_X + FIELD_W - a.w) {
         reverse = true;
         break;
@@ -663,7 +665,7 @@ function updateGame() {
       alienDir *= -1;
       for (const a of alive) a.y += 4;
     } else {
-      for (const a of alive) a.x += alienDir * 2;
+      for (const a of alive) a.x += alienDir * speed;
     }
   }
 
