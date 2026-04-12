@@ -504,7 +504,7 @@ const STAR_COLORS_RGB = {
 const keys = {};
 window.addEventListener("keydown", e => {
   keys[e.code] = true;
-  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","Tab","ShiftLeft","ShiftRight"].includes(e.code)) {
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","Tab","ShiftLeft","ShiftRight","Backquote"].includes(e.code)) {
     e.preventDefault();
   }
 });
@@ -1155,6 +1155,14 @@ function startGame(diffKey) {
 }
 
 // ── Title screen ─────────────────────────────────────────────────────
+let debugMode = false;
+let debugInvincible = false;
+let debugKeyDebounce = {};
+
+const CHEAT_SEQ = ["U","U","D","D","L","R","L","R"];
+let cheatProgress = 0;
+let cheatDirDebounce = { up: false, down: false, left: false, right: false };
+
 let titleKeyDebounce = {};
 
 function updateTitle() {
@@ -1172,7 +1180,34 @@ function updateTitle() {
   }
   if (enterPressed && !titleKeyDebounce.enter) {
     playSound("menuConfirm");
+    cheatProgress = 0;
     startGame(DIFF_ORDER[selectedDiff]);
+  }
+
+  // Debug mode toggle (backtick on desktop)
+  const backquotePressed = keys["Backquote"];
+  if (backquotePressed && !titleKeyDebounce.backquote) {
+    debugMode = !debugMode;
+    if (!debugMode) debugInvincible = false;
+    cheatProgress = 0;
+    playSound("menuSelect");
+  }
+  titleKeyDebounce.backquote = backquotePressed;
+
+  // Cheat code: Up Up Down Down Left Right Left Right (Konami code)
+  const dirs = { up: !!keys["ArrowUp"], down: !!keys["ArrowDown"], left: !!keys["ArrowLeft"], right: !!keys["ArrowRight"] };
+  const dirMap = { up: "U", down: "D", left: "L", right: "R" };
+  for (const d of ["up","down","left","right"]) {
+    if (dirs[d] && !cheatDirDebounce[d]) {
+      if (CHEAT_SEQ[cheatProgress] === dirMap[d]) cheatProgress++; else cheatProgress = CHEAT_SEQ[0] === dirMap[d] ? 1 : 0;
+    }
+    cheatDirDebounce[d] = dirs[d];
+  }
+  if (cheatProgress >= CHEAT_SEQ.length) {
+    debugMode = !debugMode;
+    if (!debugMode) debugInvincible = false;
+    cheatProgress = 0;
+    playSound("menuConfirm");
   }
 
   titleKeyDebounce.up = upPressed;
@@ -1207,6 +1242,11 @@ function drawTitle() {
     const size = selected ? 18 : 16;
     drawText(`${prefix}${d.label}`, W / 2 - 140, y, color, size, "left");
     drawText(d.desc, W / 2 + 20, y, selected ? COL.menuSel : "#777777", 14, "left");
+  }
+
+  if (debugMode) {
+    drawText("[DEBUG MODE]", W / 2, 180, "#cc8800", 16, "center");
+    drawText("1-5=Ammo  0=Spawn  I=Invincible  K=Kill all  N=Kill 50%", W / 2, 460, "#886600", 12, "center");
   }
 
   drawText("UP/DOWN = Select    ENTER/SPACE = Start", W / 2, 480, COL.status, 14, "center");
@@ -1279,6 +1319,47 @@ function updateGame() {
   }
   shiftDebounce = shiftPressed;
 
+  // ── Debug controls ──
+  if (debugMode) {
+    const dk = debugKeyDebounce;
+    if (keys["Digit1"] && !dk.d1) { railAmmo += 3; selectedWeapon = 0; playSound("powerup"); }
+    dk.d1 = !!keys["Digit1"];
+    if (keys["Digit2"] && !dk.d2) { bombAmmo += 3; selectedWeapon = 1; playSound("powerup"); }
+    dk.d2 = !!keys["Digit2"];
+    if (keys["Digit3"] && !dk.d3) { healAmmo += 3; selectedWeapon = 2; playSound("powerup"); }
+    dk.d3 = !!keys["Digit3"];
+    if (keys["Digit4"] && !dk.d4) { slowAmmo += 3; selectedWeapon = 3; playSound("powerup"); }
+    dk.d4 = !!keys["Digit4"];
+    if (keys["Digit5"] && !dk.d5) { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; playSound("powerup"); }
+    dk.d5 = !!keys["Digit5"];
+    if (keys["Digit0"] && !dk.d0) {
+      const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+      powerUp = new PowerUp(randomType);
+      playSound("powerup");
+    }
+    dk.d0 = !!keys["Digit0"];
+    if (keys["KeyI"] && !dk.i) { debugInvincible = !debugInvincible; playSound("menuSelect"); }
+    dk.i = !!keys["KeyI"];
+    if (keys["KeyK"] && !dk.k) {
+      for (const a of aliens) {
+        if (a.alive) { a.alive = false; score += a.points; explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2)); }
+      }
+      playSound("explode");
+    }
+    dk.k = !!keys["KeyK"];
+    if (keys["KeyN"] && !dk.n) {
+      const alive = aliens.filter(a => a.alive);
+      const killCount = Math.floor(alive.length / 2);
+      for (let i = 0; i < killCount; i++) {
+        alive[i].alive = false;
+        score += alive[i].points;
+        explosions.push(new Explosion(alive[i].x + alive[i].w / 2, alive[i].y + alive[i].h / 2));
+      }
+      playSound("explode");
+    }
+    dk.n = !!keys["KeyN"];
+  }
+
   // ── Normal fire (Space) ──
   if (keys["Space"]) {
     const p = player.shoot();
@@ -1327,9 +1408,11 @@ function updateGame() {
   // aliens reached bottom?
   for (const a of alive) {
     if (a.y + a.h >= FIELD_Y + FIELD_H) {
-      playSound("playerDeath");
-      gameState = "lost";
-      return;
+      if (!debugInvincible) {
+        playSound("playerDeath");
+        gameState = "lost";
+        return;
+      }
     }
   }
 
@@ -1409,10 +1492,14 @@ function updateGame() {
     } else {
       // alien projectile -> player
       if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
-        explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
-        playSound("playerDeath");
-        gameState = "lost";
-        hit = true;
+        if (debugInvincible) {
+          hit = true;
+        } else {
+          explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
+          playSound("playerDeath");
+          gameState = "lost";
+          hit = true;
+        }
       }
       // alien projectile -> bunkers
       if (!hit) {
@@ -1439,7 +1526,7 @@ function updateGame() {
     gameState = "won";
   }
 
-  if (bunkers.every(b => b.isDestroyed)) {
+  if (bunkers.every(b => b.isDestroyed) && !debugInvincible) {
     playSound("playerDeath");
     gameState = "lost";
   }
@@ -1561,7 +1648,13 @@ function drawGame() {
   drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
-  drawText("Shift=Special  Tab=Cycle", FIELD_X + 590, FIELD_Y - 10, "#666666", 11, "left");
+  if (debugMode) {
+    let debugLabel = "[DEBUG]";
+    if (debugInvincible) debugLabel += " [INV]";
+    drawText(debugLabel, FIELD_X + FIELD_W - 5, FIELD_Y - 10, "#cc8800", 11, "right");
+  } else {
+    drawText("Shift=Special  Tab=Cycle", FIELD_X + 590, FIELD_Y - 10, "#666666", 11, "left");
+  }
 
   // Update mobile special button display
   if (touchActive) {

@@ -68,8 +68,9 @@ LOGO = [
     r" / ___||  _ \ / \  / ___| ____|    / \|_   _|_   _|/ \  / ___| |/ /",
     r" \___ \| |_) / _ \| |   |  _|     / _ \ | |   | | / _ \| |   | ' / ",
     r"  ___) |  __/ ___ \ |___| |___   / ___ \| |   | |/ ___ \ |___| . \ ",
-    r" |____/|_| /_/   \_\____|_____| /_/   \_\_|   |_/_/   \_\____|_|\_\\",
+    r" |____/|_| /_/   \_\____|_____| /_/   \_\_|   |_/_/   \_\____|_|\_" + "\\",
 ]
+LOGO_W = max(len(line) for line in LOGO)
 
 # ── Colors ──────────────────────────────────────────────────────────────
 C_PLAYER       = 1
@@ -382,38 +383,50 @@ def show_title(stdscr):
     selected = 1  # default to medium
 
     while True:
+        term_h, term_w = stdscr.getmaxyx()
         stdscr.erase()
 
-        # draw logo centered
+        # draw logo centered (all lines use same x based on max width)
         logo_start_y = max(1, (term_h - 20) // 2)
+        logo_x = max(0, (term_w - LOGO_W) // 2)
         for i, line in enumerate(LOGO):
-            x = max(0, (term_w - len(line)) // 2)
+            if logo_start_y + i >= term_h:
+                break
+            max_chars = term_w - logo_x
+            if max_chars <= 0:
+                continue
             try:
-                stdscr.addstr(logo_start_y + i, x, line,
+                stdscr.addstr(logo_start_y + i, logo_x, line[:max_chars],
                               curses.color_pair(C_LOGO) | curses.A_BOLD)
             except curses.error:
                 pass
 
         # subtitle
         sub = "~ Defend Earth from the alien invasion ~"
-        sx = max(0, (term_w - len(sub)) // 2)
-        try:
-            stdscr.addstr(logo_start_y + len(LOGO) + 1, sx, sub,
-                          curses.color_pair(C_MENU))
-        except curses.error:
-            pass
+        sub_y = logo_start_y + len(LOGO) + 1
+        if sub_y < term_h:
+            sx = max(0, (term_w - len(sub)) // 2)
+            try:
+                stdscr.addstr(sub_y, sx, sub[:term_w - sx],
+                              curses.color_pair(C_MENU))
+            except curses.error:
+                pass
 
         # difficulty menu
         menu_y = logo_start_y + len(LOGO) + 4
         header = "SELECT DIFFICULTY"
-        hx = max(0, (term_w - len(header)) // 2)
-        try:
-            stdscr.addstr(menu_y, hx, header,
-                          curses.color_pair(C_MSG) | curses.A_BOLD)
-        except curses.error:
-            pass
+        if menu_y < term_h:
+            hx = max(0, (term_w - len(header)) // 2)
+            try:
+                stdscr.addstr(menu_y, hx, header[:term_w - hx],
+                              curses.color_pair(C_MSG) | curses.A_BOLD)
+            except curses.error:
+                pass
 
         for i, key in enumerate(DIFF_ORDER):
+            row_y = menu_y + 2 + i
+            if row_y >= term_h:
+                break
             label, _, _, desc = DIFFICULTIES[key]
             line = f"  {label:<12} {desc}"
             lx = max(0, (term_w - 40) // 2)
@@ -423,21 +436,27 @@ def show_title(stdscr):
             else:
                 attr = curses.color_pair(C_MENU)
             try:
-                stdscr.addstr(menu_y + 2 + i, lx, line, attr)
+                stdscr.addstr(row_y, lx, line[:term_w - lx], attr)
             except curses.error:
                 pass
 
         # controls hint
         hint = "UP/DOWN = Select   ENTER = Start   Q = Quit"
-        hintx = max(0, (term_w - len(hint)) // 2)
-        try:
-            stdscr.addstr(menu_y + 8, hintx, hint, curses.color_pair(C_STATUS))
-        except curses.error:
-            pass
+        hint_y = menu_y + 8
+        if hint_y < term_h:
+            hintx = max(0, (term_w - len(hint)) // 2)
+            try:
+                stdscr.addstr(hint_y, hintx, hint[:term_w - hintx],
+                              curses.color_pair(C_STATUS))
+            except curses.error:
+                pass
 
         stdscr.refresh()
 
         key = stdscr.getch()
+        if key == curses.KEY_RESIZE:
+            stdscr.clear()
+            continue
         if key == ord("q") or key == ord("Q"):
             return None
         elif key == curses.KEY_UP:
