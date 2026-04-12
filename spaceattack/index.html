@@ -197,10 +197,50 @@
     color: #fff;
     box-shadow: 0 0 12px rgba(255,255,255,0.3);
   }
+  /* Debug bar */
+  #debug-bar {
+    display: none;
+    width: 100%;
+    justify-content: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #1a1200;
+    border-top: 2px solid #cc8800;
+    touch-action: none;
+  }
+  body.mobile.debug-on #debug-bar {
+    display: flex;
+  }
+  .dbg-btn {
+    flex: 1;
+    max-width: 72px;
+    height: 36px;
+    border: 2px solid #cc8800;
+    border-radius: 6px;
+    background: #2a1a00;
+    color: #cc8800;
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: bold;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+  .dbg-btn.active {
+    background: #cc8800;
+    color: #000;
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="debug-bar">
+  <button class="dbg-btn" data-dbg="ammo">+ALL</button>
+  <button class="dbg-btn" data-dbg="spawn">SPAWN</button>
+  <button class="dbg-btn" data-dbg="inv" id="dbg-inv">INV</button>
+  <button class="dbg-btn" data-dbg="kill50">K50%</button>
+  <button class="dbg-btn" data-dbg="killall">KILL</button>
+</div>
 <div id="controls">
   <div id="action-btns">
     <button class="action-btn" id="btn-fire" data-key="Space">FIRE</button>
@@ -234,8 +274,10 @@ function fitCanvas() {
   const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   if (touchActive) {
     const ctrl = document.getElementById('controls');
+    const dbgBar = document.getElementById('debug-bar');
     const ctrlH = ctrl && ctrl.offsetHeight > 0 ? ctrl.offsetHeight : vh * 0.4;
-    const availH = vh - ctrlH;
+    const dbgH = dbgBar && dbgBar.offsetHeight > 0 ? dbgBar.offsetHeight : 0;
+    const availH = vh - ctrlH - dbgH;
     const scaleX = vw / W;
     const scaleY = availH / H;
     const scale = Math.min(scaleX, scaleY);
@@ -551,6 +593,32 @@ function setupMobileControls() {
     e.preventDefault();
     if (audioCtx.state === 'suspended') audioCtx.resume();
   }, { passive: false });
+
+  // Debug bar buttons (one-shot tap actions)
+  document.querySelectorAll('.dbg-btn').forEach(btn => {
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const action = btn.dataset.dbg;
+      if (action === "ammo") { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; playSound("powerup"); }
+      else if (action === "spawn") {
+        const rt = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+        powerUp = new PowerUp(rt);
+        playSound("powerup");
+      }
+      else if (action === "inv") { debugInvincible = !debugInvincible; playSound("menuSelect"); }
+      else if (action === "kill50" && aliens) {
+        const al = aliens.filter(a => a.alive);
+        const n = Math.floor(al.length / 2);
+        for (let i = 0; i < n; i++) { al[i].alive = false; score += al[i].points; explosions.push(new Explosion(al[i].x + al[i].w / 2, al[i].y + al[i].h / 2)); }
+        playSound("explode");
+      }
+      else if (action === "killall" && aliens) {
+        for (const a of aliens) { if (a.alive) { a.alive = false; score += a.points; explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2)); } }
+        playSound("explode");
+      }
+    }, { passive: false });
+  });
 }
 
 // ── Utility ──────────────────────────────────────────────────────────
@@ -1718,6 +1786,13 @@ let escDebounce = false;
 // ── Main loop ────────────────────────────────────────────────────────
 function gameLoop() {
   gameFrame++;
+
+  // Sync mobile debug bar visibility
+  if (touchActive) {
+    document.body.classList.toggle('debug-on', debugMode);
+    const invBtn = document.getElementById('dbg-inv');
+    if (invBtn) invBtn.classList.toggle('active', debugInvincible);
+  }
 
   ctx.fillStyle = COL.bg;
   ctx.fillRect(0, 0, W, H);
