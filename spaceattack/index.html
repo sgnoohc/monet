@@ -429,46 +429,147 @@ function playSound(type) {
     }
 
     case "railgun": {
+      // High-pitch electric zap splash
       osc.type = "sawtooth";
-      osc.frequency.setValueAtTime(80, t);
-      osc.frequency.exponentialRampToValueAtTime(30, t + 0.5);
-      gain.gain.setValueAtTime(0.25, t);
-      gain.gain.linearRampToValueAtTime(0.15, t + 0.2);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      osc.frequency.setValueAtTime(1200, t);
+      osc.frequency.exponentialRampToValueAtTime(4800, t + 0.05);
+      osc.frequency.exponentialRampToValueAtTime(800, t + 0.35);
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.linearRampToValueAtTime(0.12, t + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
       osc.start(t);
-      osc.stop(t + 0.5);
+      osc.stop(t + 0.35);
+      // Bright crackle layer
       const osc2 = audioCtx.createOscillator();
       const gain2 = audioCtx.createGain();
       osc2.connect(gain2);
       gain2.connect(audioCtx.destination);
       osc2.type = "square";
-      osc2.frequency.setValueAtTime(200, t);
-      osc2.frequency.exponentialRampToValueAtTime(40, t + 0.15);
-      gain2.gain.setValueAtTime(0.2, t);
-      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc2.frequency.setValueAtTime(3000, t);
+      osc2.frequency.exponentialRampToValueAtTime(6000, t + 0.03);
+      osc2.frequency.exponentialRampToValueAtTime(1500, t + 0.2);
+      gain2.gain.setValueAtTime(0.1, t);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
       osc2.start(t);
-      osc2.stop(t + 0.15);
+      osc2.stop(t + 0.2);
+      // Shimmer tail
+      const osc3 = audioCtx.createOscillator();
+      const gain3 = audioCtx.createGain();
+      osc3.connect(gain3);
+      gain3.connect(audioCtx.destination);
+      osc3.type = "sine";
+      osc3.frequency.setValueAtTime(2400, t + 0.05);
+      osc3.frequency.exponentialRampToValueAtTime(5000, t + 0.15);
+      osc3.frequency.exponentialRampToValueAtTime(1800, t + 0.4);
+      gain3.gain.setValueAtTime(0.001, t);
+      gain3.gain.linearRampToValueAtTime(0.08, t + 0.06);
+      gain3.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc3.start(t);
+      osc3.stop(t + 0.4);
+      break;
+    }
+
+    case "torpedoBlast": {
+      // Deep booming blast with rumble
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(200, t);
+      osc.frequency.exponentialRampToValueAtTime(25, t + 0.6);
+      gain.gain.setValueAtTime(0.3, t);
+      gain.gain.linearRampToValueAtTime(0.2, t + 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+      osc.start(t);
+      osc.stop(t + 0.6);
+      // Crackle layer
+      const tbOsc2 = audioCtx.createOscillator();
+      const tbGain2 = audioCtx.createGain();
+      tbOsc2.connect(tbGain2);
+      tbGain2.connect(audioCtx.destination);
+      tbOsc2.type = "square";
+      tbOsc2.frequency.setValueAtTime(400, t);
+      tbOsc2.frequency.exponentialRampToValueAtTime(30, t + 0.4);
+      tbGain2.gain.setValueAtTime(0.15, t);
+      tbGain2.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      tbOsc2.start(t);
+      tbOsc2.stop(t + 0.4);
+      // Sub-bass thump
+      const tbOsc3 = audioCtx.createOscillator();
+      const tbGain3 = audioCtx.createGain();
+      tbOsc3.connect(tbGain3);
+      tbGain3.connect(audioCtx.destination);
+      tbOsc3.type = "sine";
+      tbOsc3.frequency.setValueAtTime(60, t);
+      tbOsc3.frequency.exponentialRampToValueAtTime(20, t + 0.5);
+      tbGain3.gain.setValueAtTime(0.25, t);
+      tbGain3.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      tbOsc3.start(t);
+      tbOsc3.stop(t + 0.5);
+      break;
+    }
+
+    case "heal": {
+      // Starry sparkle chime cascade
+      const notes = [1200, 1600, 2000, 2400, 2800];
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(notes[0], t);
+      gain.gain.setValueAtTime(0.1, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      osc.start(t);
+      osc.stop(t + 0.12);
+      for (let i = 1; i < notes.length; i++) {
+        const hOsc = audioCtx.createOscillator();
+        const hGain = audioCtx.createGain();
+        hOsc.connect(hGain);
+        hGain.connect(audioCtx.destination);
+        hOsc.type = i % 2 === 0 ? "sine" : "triangle";
+        const offset = i * 0.07;
+        hOsc.frequency.setValueAtTime(notes[i], t + offset);
+        hOsc.frequency.exponentialRampToValueAtTime(notes[i] * 1.5, t + offset + 0.15);
+        hGain.gain.setValueAtTime(0.001, t + offset);
+        hGain.gain.linearRampToValueAtTime(0.08, t + offset + 0.02);
+        hGain.gain.exponentialRampToValueAtTime(0.001, t + offset + 0.18);
+        hOsc.start(t + offset);
+        hOsc.stop(t + offset + 0.18);
+      }
       break;
     }
 
     case "slowmo": {
+      // Mysterious ethereal wash
       osc.type = "sine";
-      osc.frequency.setValueAtTime(60, t);
-      gain.gain.setValueAtTime(0.2, t);
-      gain.gain.linearRampToValueAtTime(0.15, t + 0.2);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.frequency.setValueAtTime(220, t);
+      osc.frequency.exponentialRampToValueAtTime(110, t + 0.8);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.15, t + 0.1);
+      gain.gain.linearRampToValueAtTime(0.12, t + 0.4);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
       osc.start(t);
-      osc.stop(t + 0.4);
-      const osc2 = audioCtx.createOscillator();
-      const gain2 = audioCtx.createGain();
-      osc2.connect(gain2);
-      gain2.connect(audioCtx.destination);
-      osc2.type = "triangle";
-      osc2.frequency.setValueAtTime(90, t);
-      gain2.gain.setValueAtTime(0.12, t);
-      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-      osc2.start(t);
-      osc2.stop(t + 0.4);
+      osc.stop(t + 0.8);
+      // Detuned ghost tone
+      const smOsc2 = audioCtx.createOscillator();
+      const smGain2 = audioCtx.createGain();
+      smOsc2.connect(smGain2);
+      smGain2.connect(audioCtx.destination);
+      smOsc2.type = "triangle";
+      smOsc2.frequency.setValueAtTime(227, t);
+      smOsc2.frequency.exponentialRampToValueAtTime(113, t + 0.8);
+      smGain2.gain.setValueAtTime(0.001, t);
+      smGain2.gain.linearRampToValueAtTime(0.1, t + 0.15);
+      smGain2.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      smOsc2.start(t);
+      smOsc2.stop(t + 0.8);
+      // High shimmer
+      const smOsc3 = audioCtx.createOscillator();
+      const smGain3 = audioCtx.createGain();
+      smOsc3.connect(smGain3);
+      smGain3.connect(audioCtx.destination);
+      smOsc3.type = "sine";
+      smOsc3.frequency.setValueAtTime(880, t + 0.1);
+      smOsc3.frequency.exponentialRampToValueAtTime(440, t + 0.7);
+      smGain3.gain.setValueAtTime(0.001, t);
+      smGain3.gain.linearRampToValueAtTime(0.06, t + 0.2);
+      smGain3.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      smOsc3.start(t);
+      smOsc3.stop(t + 0.7);
       break;
     }
   }
@@ -1152,7 +1253,7 @@ function drawStars() {
 // ── Bomb explosion helper ────────────────────────────────────────────
 function triggerBombExplosion(cx, cy) {
   explosions.push(new BombExplosion(cx, cy));
-  playSound("explode");
+  playSound("torpedoBlast");
   const blastRadius = 120;
   for (const a of aliens) {
     if (!a.alive) continue;
@@ -1379,7 +1480,7 @@ function updateGame() {
         b.heal(0.4);
       }
       bunkerHealFlash = 15;
-      playSound("powerup");
+      playSound("heal");
     } else if (wType === "slow" && slowAmmo > 0 && slowTimer <= 0) {
       slowAmmo--;
       slowTimer = 150;
