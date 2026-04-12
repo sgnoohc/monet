@@ -525,8 +525,7 @@ function updateGame() {
   // alien movement — speed up as aliens are destroyed
   alienMoveTimer++;
   const alive = aliens.filter(a => a.alive);
-  const ratio = alive.length / totalAliens;
-  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio));
+  const moveInterval = Math.max(1, Math.round(baseMoveInterval * alive.length / totalAliens));
   if (alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
     let reverse = false;
