@@ -1660,6 +1660,19 @@ function startGame(diffKey) {
   powerUpTimer = 0;
   powerUpInterval = 500 + Math.floor(Math.random() * 200);
   generateStars(diffKey);
+  // Reset mobile SPEC button from RETRY state
+  if (touchActive) {
+    const btn = document.getElementById('btn-special');
+    const nameEl = document.getElementById('special-name');
+    const countEl = document.getElementById('special-count');
+    if (btn && nameEl) {
+      nameEl.textContent = 'SPEC';
+      if (countEl) countEl.textContent = '';
+      btn.style.borderColor = '#333';
+      btn.style.color = '#444';
+      btn.style.opacity = '0.4';
+    }
+  }
   gameState = "playing";
 }
 
