@@ -133,19 +133,43 @@
     color: #fff;
     box-shadow: 0 0 20px rgba(255,68,68,0.6);
   }
-  #btn-rail {
+  #btn-special {
     background: radial-gradient(circle at 35% 35%, #1a3344, #0d1a22);
     border-color: #00ccff;
     color: #00ccff;
   }
-  #btn-rail.pressed {
+  #btn-special.pressed {
     background: radial-gradient(circle at 35% 35%, #00ccff, #006688);
     color: #fff;
     box-shadow: 0 0 20px rgba(0,204,255,0.6);
   }
-  #btn-rail .ammo {
+  #btn-special .ammo {
     display: block;
     font-size: 20px;
+  }
+  #btn-select {
+    width: 50px;
+    height: 40px;
+    border-radius: 8px;
+    border: 2px solid #888;
+    background: #333;
+    color: #ccc;
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    position: absolute;
+    top: 42px;
+    right: -56px;
+  }
+  #btn-select.pressed {
+    background: #666;
+    color: #fff;
   }
   #btn-esc {
     width: 44px;
@@ -178,7 +202,8 @@
 <div id="controls">
   <div id="action-btns">
     <button class="action-btn" id="btn-fire" data-key="Space">FIRE</button>
-    <button class="action-btn" id="btn-rail" data-key="RailFire">RAIL<span class="ammo" id="rail-count"></span></button>
+    <button class="action-btn" id="btn-special" data-key="ShiftLeft"><span id="special-name">RAIL</span><span class="ammo" id="special-count"></span></button>
+    <button id="btn-select" data-key="Tab">SEL</button>
     <button id="btn-esc" data-key="Escape">ESC</button>
   </div>
   <div id="dpad">
@@ -204,10 +229,8 @@ let touchActive = false;
 
 function fitCanvas() {
   const vw = window.innerWidth;
-  // Use visualViewport if available (accounts for browser chrome)
   const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
   if (touchActive) {
-    // Reserve space for controls; read actual controls height if available
     const ctrl = document.getElementById('controls');
     const ctrlH = ctrl && ctrl.offsetHeight > 0 ? ctrl.offsetHeight : vh * 0.4;
     const availH = vh - ctrlH;
@@ -232,7 +255,6 @@ if (window.visualViewport) window.visualViewport.addEventListener("resize", fitC
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
 function playSound(type) {
-  // Resume context on first user interaction
   if (audioCtx.state === "suspended") audioCtx.resume();
 
   const t = audioCtx.currentTime;
@@ -263,7 +285,6 @@ function playSound(type) {
       break;
 
     case "explode": {
-      // Noise burst for explosion
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(150, t);
       osc.frequency.exponentialRampToValueAtTime(30, t + 0.3);
@@ -271,7 +292,6 @@ function playSound(type) {
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
       osc.start(t);
       osc.stop(t + 0.3);
-      // Second voice for crunch
       const osc2 = audioCtx.createOscillator();
       const gain2 = audioCtx.createGain();
       osc2.connect(gain2);
@@ -287,7 +307,6 @@ function playSound(type) {
     }
 
     case "playerDeath": {
-      // Descending sweep
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(600, t);
       osc.frequency.exponentialRampToValueAtTime(40, t + 0.8);
@@ -296,7 +315,6 @@ function playSound(type) {
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
       osc.start(t);
       osc.stop(t + 0.8);
-      // Second voice
       const osc2 = audioCtx.createOscillator();
       const gain2 = audioCtx.createGain();
       osc2.connect(gain2);
@@ -312,15 +330,14 @@ function playSound(type) {
     }
 
     case "win": {
-      // Rising arpeggio
       osc.type = "square";
       gain.gain.setValueAtTime(0.12, t);
       gain.gain.setValueAtTime(0.12, t + 0.5);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-      osc.frequency.setValueAtTime(523, t);        // C5
-      osc.frequency.setValueAtTime(659, t + 0.12);  // E5
-      osc.frequency.setValueAtTime(784, t + 0.24);  // G5
-      osc.frequency.setValueAtTime(1047, t + 0.36); // C6
+      osc.frequency.setValueAtTime(523, t);
+      osc.frequency.setValueAtTime(659, t + 0.12);
+      osc.frequency.setValueAtTime(784, t + 0.24);
+      osc.frequency.setValueAtTime(1047, t + 0.36);
       osc.start(t);
       osc.stop(t + 0.7);
       break;
@@ -346,7 +363,6 @@ function playSound(type) {
       break;
 
     case "powerup": {
-      // Rising sparkly tone
       osc.type = "sine";
       osc.frequency.setValueAtTime(600, t);
       osc.frequency.exponentialRampToValueAtTime(2400, t + 0.3);
@@ -369,7 +385,6 @@ function playSound(type) {
     }
 
     case "railgun": {
-      // Heavy bass zap with sustained rumble
       osc.type = "sawtooth";
       osc.frequency.setValueAtTime(80, t);
       osc.frequency.exponentialRampToValueAtTime(30, t + 0.5);
@@ -389,6 +404,27 @@ function playSound(type) {
       gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
       osc2.start(t);
       osc2.stop(t + 0.15);
+      break;
+    }
+
+    case "slowmo": {
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(60, t);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.linearRampToValueAtTime(0.15, t + 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc.start(t);
+      osc.stop(t + 0.4);
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      osc2.type = "triangle";
+      osc2.frequency.setValueAtTime(90, t);
+      gain2.gain.setValueAtTime(0.12, t);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+      osc2.start(t);
+      osc2.stop(t + 0.4);
       break;
     }
   }
@@ -426,8 +462,9 @@ const DIFFICULTIES = {
   medium:    { label: "MEDIUM",    shootChance: 0.08,  moveInterval: 4,  desc: "Balanced challenge" },
   difficult: { label: "DIFFICULT", shootChance: 0.14,  moveInterval: 2,  desc: "Fast and aggressive" },
   insane:    { label: "INSANE",    shootChance: 0.26,  moveInterval: 1,  desc: "Pure chaos" },
+  doomsday:  { label: "DOOMSDAY",  shootChance: 0.50,  moveInterval: 1,  desc: "You will not survive" },
 };
-const DIFF_ORDER = ["easy", "medium", "difficult", "insane"];
+const DIFF_ORDER = ["easy", "medium", "difficult", "insane", "doomsday"];
 
 const PROJ_SPEED = 4;
 const BOMB_SPEED = 2.5;
@@ -438,13 +475,34 @@ const BOMBER_HP = 3;
 const BOMB_BLAST_RADIUS = 30;
 const LASER_BLAST_RADIUS = 6;
 
-// ── Sprite definitions (drawn procedurally) ──────────────────────────
+const WEAPON_TYPES = ["rail", "bomb", "heal", "slow"];
+const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff" };
+const WEAPON_NAMES = { rail: "RAIL", bomb: "BOMB", heal: "HEAL", slow: "SLOW" };
+const WEAPON_KEYS = { rail: "R", bomb: "B", heal: "+", slow: "S" };
+const WEAPON_HUES = { rail: 180, bomb: 30, heal: 120, slow: 270 };
+
+// ── Star field config ────────────────────────────────────────────────
+const STAR_CONFIG = {
+  easy:      { count: 80,  speedMin: 0.1, speedMax: 0.3, brightMin: 0.2, brightMax: 0.5, colors: ["white"] },
+  medium:    { count: 120, speedMin: 0.1, speedMax: 0.5, brightMin: 0.3, brightMax: 0.6, colors: ["white"] },
+  difficult: { count: 160, speedMin: 0.2, speedMax: 0.7, brightMin: 0.3, brightMax: 0.8, colors: ["white","white","white","cyan","yellow"] },
+  insane:    { count: 220, speedMin: 0.3, speedMax: 1.0, brightMin: 0.4, brightMax: 0.9, colors: ["white","cyan","magenta","yellow"] },
+  doomsday:  { count: 300, speedMin: 0.5, speedMax: 1.5, brightMin: 0.5, brightMax: 1.0, colors: ["red","orange","magenta"] },
+};
+const STAR_COLORS_RGB = {
+  white: "255,255,255",
+  cyan: "0,255,255",
+  yellow: "255,255,0",
+  magenta: "255,0,255",
+  red: "255,80,80",
+  orange: "255,160,60",
+};
 
 // ── Input ────────────────────────────────────────────────────────────
 const keys = {};
 window.addEventListener("keydown", e => {
   keys[e.code] = true;
-  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space"].includes(e.code)) {
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","Tab","ShiftLeft","ShiftRight"].includes(e.code)) {
     e.preventDefault();
   }
 });
@@ -460,7 +518,7 @@ function setupMobileControls() {
 
   document.addEventListener('contextmenu', e => e.preventDefault());
 
-  const allBtns = document.querySelectorAll('.dpad-btn, .action-btn, #btn-esc');
+  const allBtns = document.querySelectorAll('.dpad-btn, .action-btn, #btn-esc, #btn-select');
   allBtns.forEach(btn => {
     const key = btn.dataset.key;
     if (!key) return;
@@ -484,11 +542,9 @@ function setupMobileControls() {
     });
   });
 
-  // Prevent scroll/zoom on the controls area
   const ctrl = document.getElementById('controls');
   ctrl.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
-  // Prevent accidental canvas touches from scrolling
   canvas.addEventListener('touchstart', e => {
     e.preventDefault();
     if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -535,14 +591,12 @@ class Player {
 
   draw() {
     ctx.fillStyle = COL.player;
-    // ship body
     ctx.beginPath();
     ctx.moveTo(this.x + this.w / 2, this.y);
     ctx.lineTo(this.x + this.w, this.y + this.h);
     ctx.lineTo(this.x, this.y + this.h);
     ctx.closePath();
     ctx.fill();
-    // cockpit
     ctx.fillStyle = "#003300";
     ctx.fillRect(this.x + this.w / 2 - 3, this.y + 8, 6, 6);
   }
@@ -593,7 +647,6 @@ class Alien {
     const c = this.color;
     ctx.fillStyle = c;
     if (this.isBomber) {
-      // bomber: wider square with details
       ctx.fillRect(this.x + 2, this.y + 2, this.w - 4, this.h - 4);
       ctx.fillStyle = "#000";
       ctx.fillRect(this.x + 7, this.y + 6, 5, 5);
@@ -601,7 +654,6 @@ class Alien {
       ctx.fillStyle = c;
       ctx.fillRect(this.x, this.y + this.h - 6, this.w, 3);
     } else if (this.variant === 0) {
-      // fighter A: triangle-ish
       ctx.beginPath();
       ctx.moveTo(this.x + this.w / 2, this.y);
       ctx.lineTo(this.x + this.w, this.y + this.h);
@@ -612,7 +664,6 @@ class Alien {
       ctx.fillRect(this.x + 9, this.y + 10, 4, 4);
       ctx.fillRect(this.x + 15, this.y + 10, 4, 4);
     } else {
-      // fighter B: diamond-ish
       ctx.beginPath();
       ctx.moveTo(this.x + this.w / 2, this.y);
       ctx.lineTo(this.x + this.w, this.y + this.h / 2);
@@ -636,10 +687,12 @@ class Projectile {
     this.dir = dir;
     this.alive = true;
     this.isBomb = false;
+    this.isBomberShot = false;
   }
 
   update() {
-    this.y += this.dir * PROJ_SPEED;
+    const speedMult = (this.dir === 1 && slowTimer > 0) ? 0.3 : 1;
+    this.y += this.dir * PROJ_SPEED * speedMult;
     if (this.y < FIELD_Y || this.y > FIELD_Y + FIELD_H) this.alive = false;
   }
 
@@ -658,7 +711,8 @@ class Bomb extends Projectile {
   }
 
   update() {
-    this.y += BOMB_SPEED;
+    const speedMult = slowTimer > 0 ? 0.3 : 1;
+    this.y += BOMB_SPEED * speedMult;
     if (this.y > FIELD_Y + FIELD_H) this.alive = false;
   }
 
@@ -670,13 +724,41 @@ class Bomb extends Projectile {
   }
 }
 
+class BomberShot {
+  constructor(x, y) {
+    this.x = x - 4;
+    this.y = y;
+    this.w = 8;
+    this.h = 10;
+    this.dir = -1;
+    this.alive = true;
+    this.isBomb = false;
+    this.isBomberShot = true;
+    this.startY = y;
+  }
+
+  update() {
+    this.y -= PROJ_SPEED * 0.7;
+  }
+
+  draw() {
+    ctx.fillStyle = "#ff6600";
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = "#ff4400";
+    ctx.beginPath();
+    ctx.arc(this.x + this.w / 2, this.y + this.h / 2, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
 class Bunker {
   constructor(x, y) {
     this.x = x;
     this.y = y;
     this.w = 48;
     this.h = 30;
-    // pixel grid (6x5 blocks of 8x6 each)
     this.cols = 8;
     this.rows = 5;
     this.blockW = this.w / this.cols;
@@ -685,7 +767,6 @@ class Bunker {
     for (let r = 0; r < this.rows; r++) {
       this.grid[r] = [];
       for (let c = 0; c < this.cols; c++) {
-        // archway in bottom center
         if (r >= 3 && (c === 3 || c === 4)) {
           this.grid[r][c] = false;
         } else {
@@ -717,6 +798,24 @@ class Bunker {
       }
     }
     return hit;
+  }
+
+  heal(percent) {
+    const destroyed = [];
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (r >= 3 && (c === 3 || c === 4)) continue;
+        if (!this.grid[r][c]) destroyed.push({ r, c });
+      }
+    }
+    const toRestore = Math.ceil(destroyed.length * percent);
+    for (let i = destroyed.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [destroyed[i], destroyed[j]] = [destroyed[j], destroyed[i]];
+    }
+    for (let i = 0; i < Math.min(toRestore, destroyed.length); i++) {
+      this.grid[destroyed[i].r][destroyed[i].c] = true;
+    }
   }
 
   draw() {
@@ -767,12 +866,43 @@ class Explosion {
   }
 }
 
+class BombExplosion {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.frame = 0;
+    this.maxFrames = 18;
+    this.alive = true;
+  }
+
+  update() {
+    this.frame++;
+    if (this.frame >= this.maxFrames) this.alive = false;
+  }
+
+  draw() {
+    const progress = this.frame / this.maxFrames;
+    const radius = 15 + progress * 25;
+    const alpha = 1 - progress;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#ff6600";
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, radius * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
 class PowerUp {
-  constructor() {
+  constructor(type) {
+    this.type = type || "rail";
     this.w = 20;
     this.h = 20;
     this.x = FIELD_X + 50 + Math.random() * (FIELD_W - 100);
-    // Middle third of field vertically
     const thirdH = FIELD_H / 3;
     this.y = FIELD_Y + thirdH + Math.random() * thirdH;
     this.alive = true;
@@ -787,10 +917,12 @@ class PowerUp {
 
   draw() {
     const pulse = 0.7 + 0.3 * Math.sin(this.frame * 0.15);
-    const hue = (this.frame * 4) % 360;
+    const baseHue = WEAPON_HUES[this.type];
+    const hue = (baseHue + this.frame * 2) % 360;
     const size = this.w * pulse;
     const cx = this.x + this.w / 2;
     const cy = this.y + this.h / 2;
+    const icon = WEAPON_KEYS[this.type];
 
     // Outer glow
     ctx.globalAlpha = 0.3 * pulse;
@@ -799,26 +931,36 @@ class PowerUp {
     ctx.arc(cx, cy, size * 0.8, 0, Math.PI * 2);
     ctx.fill();
 
-    // Diamond shape
+    // Shape
     ctx.globalAlpha = 1;
     ctx.fillStyle = `hsl(${hue}, 100%, 60%)`;
     const hs = size * 0.5;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - hs);
-    ctx.lineTo(cx + hs, cy);
-    ctx.moveTo(cx, cy - hs);
-    ctx.lineTo(cx - hs, cy);
-    ctx.lineTo(cx, cy + hs);
-    ctx.lineTo(cx + hs, cy);
-    ctx.closePath();
-    ctx.fill();
+    if (this.type === "bomb") {
+      // circle shape
+      ctx.beginPath();
+      ctx.arc(cx, cy, hs, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (this.type === "heal") {
+      // cross shape
+      ctx.fillRect(cx - hs * 0.3, cy - hs, hs * 0.6, hs * 2);
+      ctx.fillRect(cx - hs, cy - hs * 0.3, hs * 2, hs * 0.6);
+    } else {
+      // diamond shape (rail, slow)
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - hs);
+      ctx.lineTo(cx + hs, cy);
+      ctx.lineTo(cx, cy + hs);
+      ctx.lineTo(cx - hs, cy);
+      ctx.closePath();
+      ctx.fill();
+    }
 
-    // "R" label
+    // Icon label
     ctx.fillStyle = "#fff";
     ctx.font = "bold 11px monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("R", cx, cy);
+    ctx.fillText(icon, cx, cy);
     ctx.globalAlpha = 1;
   }
 }
@@ -844,16 +986,13 @@ class RailBeam {
 
     let width, alpha;
     if (f <= 5) {
-      // Thin line appears
       width = 2;
       alpha = 0.7 + 0.3 * (f / 5);
     } else if (f <= 12) {
-      // Expand to thick beam
       const t = (f - 5) / 7;
       width = 2 + 18 * t;
       alpha = 1;
     } else {
-      // Shrink and fade
       const t = (f - 12) / 8;
       width = 20 * (1 - t);
       alpha = 1 - t;
@@ -861,18 +1000,15 @@ class RailBeam {
 
     if (width < 0.5 || alpha < 0.01) return;
 
-    // Outer layer (blue)
     ctx.globalAlpha = alpha * 0.3;
     ctx.fillStyle = "#0044ff";
     ctx.fillRect(cx - width / 2, top, width, bot - top);
 
-    // Middle layer (cyan)
     ctx.globalAlpha = alpha * 0.6;
     ctx.fillStyle = "#00ccff";
     const midW = width * 0.6;
     ctx.fillRect(cx - midW / 2, top, midW, bot - top);
 
-    // Core (white)
     ctx.globalAlpha = alpha;
     ctx.fillStyle = "#ffffff";
     const coreW = Math.max(1, width * 0.25);
@@ -905,23 +1041,66 @@ function makeAlienGrid(shootChance) {
 }
 
 // ── Star field background ────────────────────────────────────────────
-const stars = [];
-for (let i = 0; i < 100; i++) {
-  stars.push({
-    x: Math.random() * W,
-    y: Math.random() * H,
-    size: Math.random() * 1.5 + 0.5,
-    speed: Math.random() * 0.3 + 0.1,
-    brightness: Math.random() * 0.5 + 0.3,
-  });
+let stars = [];
+let gameFrame = 0;
+
+function generateStars(diffKey) {
+  const cfg = STAR_CONFIG[diffKey] || STAR_CONFIG.medium;
+  stars = [];
+  for (let i = 0; i < cfg.count; i++) {
+    const colorName = cfg.colors[Math.floor(Math.random() * cfg.colors.length)];
+    stars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      size: Math.random() * 1.5 + 0.5,
+      speed: cfg.speedMin + Math.random() * (cfg.speedMax - cfg.speedMin),
+      brightness: cfg.brightMin + Math.random() * (cfg.brightMax - cfg.brightMin),
+      color: STAR_COLORS_RGB[colorName],
+    });
+  }
 }
 
+// Initialize stars with medium defaults for the title screen
+generateStars("medium");
+
 function drawStars() {
+  // Doomsday pulsing background tint
+  if (difficulty === "doomsday" && gameState === "playing") {
+    const pulse = 0.03 + 0.02 * Math.sin(gameFrame * 0.05);
+    ctx.fillStyle = `rgba(80, 0, 0, ${pulse})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
   for (const s of stars) {
     s.y += s.speed;
     if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
-    ctx.fillStyle = `rgba(255,255,255,${s.brightness})`;
+    ctx.fillStyle = `rgba(${s.color},${s.brightness})`;
     ctx.fillRect(s.x, s.y, s.size, s.size);
+  }
+}
+
+// ── Bomb explosion helper ────────────────────────────────────────────
+function triggerBombExplosion(cx, cy) {
+  explosions.push(new BombExplosion(cx, cy));
+  playSound("explode");
+  const blastRadius = 80;
+  for (const a of aliens) {
+    if (!a.alive) continue;
+    const ax = a.x + a.w / 2;
+    const ay = a.y + a.h / 2;
+    const dx = cx - ax, dy = cy - ay;
+    if (Math.sqrt(dx * dx + dy * dy) < blastRadius) {
+      const dead = a.takeHit();
+      if (dead) {
+        score += a.points;
+        explosions.push(new Explosion(ax, ay));
+      }
+    }
+  }
+  for (const b of bunkers) {
+    if (!b.isDestroyed) {
+      b.damageAt(cx, cy, blastRadius);
+    }
   }
 }
 
@@ -935,7 +1114,9 @@ let difficulty = "medium";
 
 let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
-let railAmmo, powerUp, powerUpTimer, powerUpInterval;
+let railAmmo, bombAmmo, healAmmo, slowAmmo, selectedWeapon, slowTimer;
+let bunkerHealFlash;
+let powerUp, powerUpTimer, powerUpInterval;
 
 function startGame(diffKey) {
   difficulty = diffKey;
@@ -958,9 +1139,16 @@ function startGame(diffKey) {
   totalAliens = aliens.length;
   score = 0;
   railAmmo = 0;
+  bombAmmo = 0;
+  healAmmo = 0;
+  slowAmmo = 0;
+  selectedWeapon = 0;
+  slowTimer = 0;
+  bunkerHealFlash = 0;
   powerUp = null;
   powerUpTimer = 0;
   powerUpInterval = 500 + Math.floor(Math.random() * 200);
+  generateStars(diffKey);
   gameState = "playing";
 }
 
@@ -991,14 +1179,11 @@ function updateTitle() {
 }
 
 function drawTitle() {
-  // Logo
   const logoText = "SPACE ATTACK";
   drawText(logoText, W / 2, 100, COL.logo, 48, "center");
 
-  // Subtitle
   drawText("~ Defend Earth from the alien invasion ~", W / 2, 155, COL.menu, 16, "center");
 
-  // Decorative ships
   ctx.fillStyle = COL.player;
   for (const ox of [-120, 120]) {
     ctx.beginPath();
@@ -1009,12 +1194,11 @@ function drawTitle() {
     ctx.fill();
   }
 
-  // Difficulty menu
   drawText("SELECT DIFFICULTY", W / 2, 220, COL.msg, 20, "center");
 
   for (let i = 0; i < DIFF_ORDER.length; i++) {
     const d = DIFFICULTIES[DIFF_ORDER[i]];
-    const y = 270 + i * 45;
+    const y = 265 + i * 40;
     const selected = i === selectedDiff;
     const color = selected ? COL.menuSel : COL.menu;
     const prefix = selected ? "> " : "  ";
@@ -1023,36 +1207,71 @@ function drawTitle() {
     drawText(d.desc, W / 2 + 20, y, selected ? COL.menuSel : "#777777", 14, "left");
   }
 
-  // Controls
   drawText("UP/DOWN = Select    ENTER/SPACE = Start", W / 2, 480, COL.status, 14, "center");
-  drawText("ARROWS/WASD = Move    SPACE = Shoot    ESC = Menu", W / 2, 505, "#666666", 12, "center");
+  drawText("ARROWS = Move  SPACE = Shoot  SHIFT = Special  TAB = Cycle", W / 2, 505, "#666666", 12, "center");
 }
 
 // ── Gameplay ─────────────────────────────────────────────────────────
+let tabDebounce = false;
+let shiftDebounce = false;
+
 function updateGame() {
   if (gameState !== "playing") return;
 
   player.update();
 
-  // shooting — RailFire is the mobile RAIL button; on desktop Space auto-fires rail
-  const wantsRail = keys["RailFire"] || (!touchActive && keys["Space"] && railAmmo > 0);
-  if (wantsRail && railAmmo > 0 && player.cooldown <= 0) {
-    railAmmo--;
-    player.cooldown = PLAYER_SHOOT_COOLDOWN;
-    const beamX = player.x + player.w / 2;
-    explosions.push(new RailBeam(beamX));
-    playSound("railgun");
-    const beamHalf = 10;
-    const beamAlive = aliens.filter(a => a.alive);
-    for (const a of beamAlive) {
-      const aCx = a.x + a.w / 2;
-      if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
-        a.alive = false;
-        score += a.points;
-        explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+  // ── Weapon cycling (Tab) ──
+  const tabPressed = keys["Tab"];
+  if (tabPressed && !tabDebounce) {
+    selectedWeapon = (selectedWeapon + 1) % 4;
+    playSound("menuSelect");
+  }
+  tabDebounce = tabPressed;
+
+  // ── Special weapon fire (Shift) ──
+  const shiftPressed = keys["ShiftLeft"] || keys["ShiftRight"];
+  if (shiftPressed && !shiftDebounce) {
+    const wType = WEAPON_TYPES[selectedWeapon];
+    if (wType === "rail" && railAmmo > 0 && player.cooldown <= 0) {
+      railAmmo--;
+      player.cooldown = PLAYER_SHOOT_COOLDOWN;
+      const beamX = player.x + player.w / 2;
+      explosions.push(new RailBeam(beamX));
+      playSound("railgun");
+      const beamHalf = 10;
+      for (const a of aliens) {
+        if (!a.alive) continue;
+        const aCx = a.x + a.w / 2;
+        if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
+          a.alive = false;
+          score += a.points;
+          explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+        }
       }
+    } else if (wType === "bomb" && bombAmmo > 0 && player.cooldown <= 0) {
+      bombAmmo--;
+      player.cooldown = PLAYER_SHOOT_COOLDOWN;
+      const bx = player.x + player.w / 2;
+      const by = player.y - 4;
+      projectiles.push(new BomberShot(bx, by));
+      playSound("shoot");
+    } else if (wType === "heal" && healAmmo > 0) {
+      healAmmo--;
+      for (const b of bunkers) {
+        b.heal(0.4);
+      }
+      bunkerHealFlash = 15;
+      playSound("powerup");
+    } else if (wType === "slow" && slowAmmo > 0 && slowTimer <= 0) {
+      slowAmmo--;
+      slowTimer = 150;
+      playSound("slowmo");
     }
-  } else if (keys["Space"]) {
+  }
+  shiftDebounce = shiftPressed;
+
+  // ── Normal fire (Space) ──
+  if (keys["Space"]) {
     const p = player.shoot();
     if (p) { projectiles.push(p); playSound("shoot"); }
   }
@@ -1061,7 +1280,8 @@ function updateGame() {
   if (powerUp === null) {
     powerUpTimer++;
     if (powerUpTimer >= powerUpInterval) {
-      powerUp = new PowerUp();
+      const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+      powerUp = new PowerUp(randomType);
       powerUpTimer = 0;
       powerUpInterval = 500 + Math.floor(Math.random() * 200);
     }
@@ -1071,11 +1291,11 @@ function updateGame() {
   }
 
   // alien movement — speed up as aliens are destroyed
+  const slowMult = slowTimer > 0 ? 3.33 : 1;
   alienMoveTimer++;
   const alive = aliens.filter(a => a.alive);
   const ratio = alive.length / totalAliens;
-  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio));
-  // Scale movement speed: 2px at full count, up to 12px for the last alien
+  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio * slowMult));
   const speed = Math.min(6, Math.max(2, Math.round(2 / (ratio * ratio + 0.04))));
   if (alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
@@ -1113,6 +1333,15 @@ function updateGame() {
 
   // update projectiles
   for (const p of projectiles) p.update();
+
+  // BomberShot auto-explode after 200px travel or reaching top of field
+  for (const p of projectiles) {
+    if (p.isBomberShot && p.alive && (p.startY - p.y > 200 || p.y <= FIELD_Y)) {
+      triggerBombExplosion(p.x + p.w / 2, Math.max(p.y + p.h / 2, FIELD_Y + 5));
+      p.alive = false;
+    }
+  }
+
   projectiles = projectiles.filter(p => p.alive);
 
   // update explosions
@@ -1124,32 +1353,51 @@ function updateGame() {
   for (const p of projectiles) {
     let hit = false;
     if (p.dir === -1) {
-      // Check power-up first
-      if (powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
-        railAmmo++;
+      // Check power-up (not for BomberShots)
+      if (!p.isBomberShot && powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
+        switch (powerUp.type) {
+          case "rail": railAmmo++; break;
+          case "bomb": bombAmmo++; break;
+          case "heal": healAmmo++; break;
+          case "slow": slowAmmo++; break;
+        }
         explosions.push(new Explosion(powerUp.x + powerUp.w / 2, powerUp.y + powerUp.h / 2));
         powerUp = null;
         playSound("powerup");
         hit = true;
       }
+      // Check aliens
       if (!hit) for (const a of alive) {
         if (a.alive && rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
-          const dead = a.takeHit();
-          explosions.push(new Explosion(p.x, p.y));
-          playSound(dead ? "explode" : "hit");
-          if (dead) score += a.points;
-          hit = true;
-          break;
+          if (p.isBomberShot) {
+            triggerBombExplosion(a.x + a.w / 2, a.y + a.h / 2);
+            hit = true;
+            break;
+          } else {
+            const dead = a.takeHit();
+            explosions.push(new Explosion(p.x, p.y));
+            playSound(dead ? "explode" : "hit");
+            if (dead) score += a.points;
+            hit = true;
+            break;
+          }
         }
       }
+      // Check bunkers
       if (!hit) {
         for (const b of bunkers) {
           if (!b.isDestroyed && rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
-            if (b.damageAt(p.x, p.y, LASER_BLAST_RADIUS)) {
-              explosions.push(new Explosion(p.x, p.y));
-              playSound("hit");
+            if (p.isBomberShot) {
+              triggerBombExplosion(p.x + p.w / 2, p.y + p.h / 2);
               hit = true;
               break;
+            } else {
+              if (b.damageAt(p.x, p.y, LASER_BLAST_RADIUS)) {
+                explosions.push(new Explosion(p.x, p.y));
+                playSound("hit");
+                hit = true;
+                break;
+              }
             }
           }
         }
@@ -1191,6 +1439,57 @@ function updateGame() {
     playSound("playerDeath");
     gameState = "lost";
   }
+
+  // decrement timers
+  if (slowTimer > 0) slowTimer--;
+  if (bunkerHealFlash > 0) bunkerHealFlash--;
+}
+
+function drawWeaponBar() {
+  const weapons = [
+    { key: "R", color: "#00ccff", ammo: railAmmo },
+    { key: "B", color: "#ff6600", ammo: bombAmmo },
+    { key: "+", color: "#00ff66", ammo: healAmmo },
+    { key: "S", color: "#9944ff", ammo: slowAmmo },
+  ];
+
+  const slotW = 45, slotH = 16, gap = 4;
+  const totalW = weapons.length * slotW + (weapons.length - 1) * gap;
+  const startX = W / 2 - totalW / 2;
+  const y = FIELD_Y + FIELD_H - 14;
+
+  for (let i = 0; i < weapons.length; i++) {
+    const w = weapons[i];
+    const x = startX + i * (slotW + gap);
+    const isSelected = i === selectedWeapon;
+
+    // Background
+    ctx.fillStyle = isSelected ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.6)";
+    ctx.fillRect(x, y, slotW, slotH);
+
+    // Border
+    if (isSelected) {
+      ctx.save();
+      ctx.shadowColor = w.color;
+      ctx.shadowBlur = 8;
+      ctx.strokeStyle = w.color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, slotW, slotH);
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = w.ammo > 0 ? "#555" : "#333";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, slotW, slotH);
+    }
+
+    // Text
+    const textColor = w.ammo > 0 ? (isSelected ? w.color : "#aaa") : "#555";
+    ctx.fillStyle = textColor;
+    ctx.font = "bold 10px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${w.key}:${w.ammo}`, x + slotW / 2, y + slotH / 2);
+  }
 }
 
 function drawGame() {
@@ -1202,6 +1501,19 @@ function drawGame() {
   // bunkers
   for (const b of bunkers) {
     if (!b.isDestroyed) b.draw();
+  }
+
+  // bunker heal flash
+  if (bunkerHealFlash > 0) {
+    const flashAlpha = 0.3 * (bunkerHealFlash / 15);
+    ctx.globalAlpha = flashAlpha;
+    ctx.fillStyle = "#00ff66";
+    for (const b of bunkers) {
+      if (!b.isDestroyed) {
+        ctx.fillRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4);
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   // aliens
@@ -1223,19 +1535,43 @@ function drawGame() {
   // explosions
   for (const e of explosions) e.draw();
 
+  // slow-mo visual indicator
+  if (slowTimer > 0 && gameState === "playing") {
+    // Subtle blue tint overlay
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = "#0044ff";
+    ctx.fillRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+    ctx.globalAlpha = 1;
+
+    // Countdown timer text
+    const secs = (slowTimer / FPS).toFixed(1);
+    drawText(`SLOW: ${secs}s`, W / 2, FIELD_Y + 20, "#9944ff", 16, "center");
+  }
+
+  // weapon bar
+  drawWeaponBar();
+
   // status bar
   const aliveCount = aliens.filter(a => a.alive).length;
   const diffLabel = DIFFICULTIES[difficulty].label;
   drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
-  if (railAmmo > 0) drawText(`RAIL: ${railAmmo}`, FIELD_X + 560, FIELD_Y - 10, "#00ccff", 14, "left");
-  drawText("Arrows=Move  Space=Shoot  Esc=Menu", FIELD_X + 640, FIELD_Y - 10, "#666666", 11, "left");
+  drawText("Shift=Special  Tab=Cycle", FIELD_X + 590, FIELD_Y - 10, "#666666", 11, "left");
 
-  // Update mobile RAIL button ammo display
+  // Update mobile special button display
   if (touchActive) {
-    const rc = document.getElementById('rail-count');
-    if (rc) rc.textContent = railAmmo > 0 ? railAmmo : '';
+    const nameEl = document.getElementById('special-name');
+    const countEl = document.getElementById('special-count');
+    const btn = document.getElementById('btn-special');
+    if (nameEl && btn) {
+      const wType = WEAPON_TYPES[selectedWeapon];
+      const ammos = { rail: railAmmo, bomb: bombAmmo, heal: healAmmo, slow: slowAmmo };
+      nameEl.textContent = WEAPON_NAMES[wType];
+      if (countEl) countEl.textContent = ammos[wType] > 0 ? ammos[wType] : '';
+      btn.style.borderColor = WEAPON_COLORS[wType];
+      btn.style.color = WEAPON_COLORS[wType];
+    }
   }
 
   // end-state overlay
@@ -1273,6 +1609,8 @@ let escDebounce = false;
 
 // ── Main loop ────────────────────────────────────────────────────────
 function gameLoop() {
+  gameFrame++;
+
   ctx.fillStyle = COL.bg;
   ctx.fillRect(0, 0, W, H);
   drawStars();
@@ -1282,7 +1620,6 @@ function gameLoop() {
     drawTitle();
     escDebounce = false;
   } else if (gameState === "playing") {
-    // escape to menu
     if (keys["Escape"] && !escDebounce) {
       gameState = "title";
     }
@@ -1292,7 +1629,7 @@ function gameLoop() {
     drawGame();
   } else {
     // won or lost
-    updateGame(); // still animate explosions
+    updateGame();
     drawGame();
     updateEndState();
   }
@@ -1312,7 +1649,6 @@ function throttledLoop(timestamp) {
   }
 }
 
-// Actually just use requestAnimationFrame directly for smoother feel
 setupMobileControls();
 gameLoop();
 </script>
