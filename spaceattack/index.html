@@ -479,8 +479,8 @@ const LASER_BLAST_RADIUS = 6;
 
 const WEAPON_TYPES = ["rail", "bomb", "heal", "slow"];
 const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff" };
-const WEAPON_NAMES = { rail: "RAIL", bomb: "BOMB", heal: "HEAL", slow: "SLOW" };
-const WEAPON_KEYS = { rail: "R", bomb: "B", heal: "+", slow: "S" };
+const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW" };
+const WEAPON_KEYS = { rail: "R", bomb: "T", heal: "+", slow: "S" };
 const WEAPON_HUES = { rail: 180, bomb: 30, heal: 120, slow: 270 };
 
 // ── Star field config ────────────────────────────────────────────────
@@ -689,7 +689,7 @@ class Projectile {
     this.dir = dir;
     this.alive = true;
     this.isBomb = false;
-    this.isBomberShot = false;
+    this.isTorpedo = false;
   }
 
   update() {
@@ -726,7 +726,7 @@ class Bomb extends Projectile {
   }
 }
 
-class BomberShot {
+class Torpedo {
   constructor(x, y) {
     this.x = x - 4;
     this.y = y;
@@ -735,7 +735,7 @@ class BomberShot {
     this.dir = -1;
     this.alive = true;
     this.isBomb = false;
-    this.isBomberShot = true;
+    this.isTorpedo = true;
     this.startY = y;
   }
 
@@ -1262,7 +1262,7 @@ function updateGame() {
       player.cooldown = PLAYER_SHOOT_COOLDOWN;
       const bx = player.x + player.w / 2;
       const by = player.y - 4;
-      projectiles.push(new BomberShot(bx, by));
+      projectiles.push(new Torpedo(bx, by));
       playSound("shoot");
     } else if (wType === "heal" && healAmmo > 0) {
       healAmmo--;
@@ -1343,10 +1343,9 @@ function updateGame() {
   // update projectiles
   for (const p of projectiles) p.update();
 
-  // BomberShot auto-explode when reaching top of field
+  // Torpedo dies silently if it reaches top of field without hitting anything
   for (const p of projectiles) {
-    if (p.isBomberShot && p.alive && p.y <= FIELD_Y) {
-      triggerBombExplosion(p.x + p.w / 2, Math.max(p.y + p.h / 2, FIELD_Y + 5));
+    if (p.isTorpedo && p.alive && p.y <= FIELD_Y) {
       p.alive = false;
     }
   }
@@ -1362,8 +1361,8 @@ function updateGame() {
   for (const p of projectiles) {
     let hit = false;
     if (p.dir === -1) {
-      // Check power-up (not for BomberShots)
-      if (!p.isBomberShot && powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
+      // Check power-up (not for torpedoes)
+      if (!p.isTorpedo && powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
         switch (powerUp.type) {
           case "rail": railAmmo++; break;
           case "bomb": bombAmmo++; break;
@@ -1378,7 +1377,7 @@ function updateGame() {
       // Check aliens
       if (!hit) for (const a of alive) {
         if (a.alive && rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
-          if (p.isBomberShot) {
+          if (p.isTorpedo) {
             triggerBombExplosion(a.x + a.w / 2, a.y + a.h / 2);
             hit = true;
             break;
@@ -1392,21 +1391,15 @@ function updateGame() {
           }
         }
       }
-      // Check bunkers
-      if (!hit) {
+      // Check bunkers (torpedoes pass through)
+      if (!hit && !p.isTorpedo) {
         for (const b of bunkers) {
           if (!b.isDestroyed && rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
-            if (p.isBomberShot) {
-              triggerBombExplosion(p.x + p.w / 2, p.y + p.h / 2);
+            if (b.damageAt(p.x, p.y, LASER_BLAST_RADIUS)) {
+              explosions.push(new Explosion(p.x, p.y));
+              playSound("hit");
               hit = true;
               break;
-            } else {
-              if (b.damageAt(p.x, p.y, LASER_BLAST_RADIUS)) {
-                explosions.push(new Explosion(p.x, p.y));
-                playSound("hit");
-                hit = true;
-                break;
-              }
             }
           }
         }
