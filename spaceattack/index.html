@@ -752,6 +752,11 @@ function updateGame() {
     playSound("win");
     gameState = "won";
   }
+
+  if (bunkers.every(b => b.isDestroyed)) {
+    playSound("playerDeath");
+    gameState = "lost";
+  }
 }
 
 function drawGame() {
