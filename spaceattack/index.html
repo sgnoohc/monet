@@ -44,6 +44,125 @@ function fitCanvas() {
 fitCanvas();
 window.addEventListener("resize", fitCanvas);
 
+// ── Sound (Web Audio API) ────────────────────────────────────────────
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSound(type) {
+  // Resume context on first user interaction
+  if (audioCtx.state === "suspended") audioCtx.resume();
+
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  switch (type) {
+    case "shoot":
+      osc.type = "square";
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.exponentialRampToValueAtTime(440, t + 0.1);
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      osc.start(t);
+      osc.stop(t + 0.1);
+      break;
+
+    case "hit":
+      osc.type = "square";
+      osc.frequency.setValueAtTime(300, t);
+      osc.frequency.exponentialRampToValueAtTime(100, t + 0.15);
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.start(t);
+      osc.stop(t + 0.15);
+      break;
+
+    case "explode": {
+      // Noise burst for explosion
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(150, t);
+      osc.frequency.exponentialRampToValueAtTime(30, t + 0.3);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.start(t);
+      osc.stop(t + 0.3);
+      // Second voice for crunch
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(200, t);
+      osc2.frequency.exponentialRampToValueAtTime(20, t + 0.25);
+      gain2.gain.setValueAtTime(0.1, t);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+      osc2.start(t);
+      osc2.stop(t + 0.25);
+      break;
+    }
+
+    case "playerDeath": {
+      // Descending sweep
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(600, t);
+      osc.frequency.exponentialRampToValueAtTime(40, t + 0.8);
+      gain.gain.setValueAtTime(0.2, t);
+      gain.gain.linearRampToValueAtTime(0.15, t + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+      osc.start(t);
+      osc.stop(t + 0.8);
+      // Second voice
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(400, t);
+      osc2.frequency.exponentialRampToValueAtTime(20, t + 0.7);
+      gain2.gain.setValueAtTime(0.12, t);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      osc2.start(t);
+      osc2.stop(t + 0.7);
+      break;
+    }
+
+    case "win": {
+      // Rising arpeggio
+      osc.type = "square";
+      gain.gain.setValueAtTime(0.12, t);
+      gain.gain.setValueAtTime(0.12, t + 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      osc.frequency.setValueAtTime(523, t);        // C5
+      osc.frequency.setValueAtTime(659, t + 0.12);  // E5
+      osc.frequency.setValueAtTime(784, t + 0.24);  // G5
+      osc.frequency.setValueAtTime(1047, t + 0.36); // C6
+      osc.start(t);
+      osc.stop(t + 0.7);
+      break;
+    }
+
+    case "menuSelect":
+      osc.type = "square";
+      osc.frequency.setValueAtTime(660, t);
+      gain.gain.setValueAtTime(0.08, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      osc.start(t);
+      osc.stop(t + 0.05);
+      break;
+
+    case "menuConfirm":
+      osc.type = "square";
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.setValueAtTime(1100, t + 0.08);
+      gain.gain.setValueAtTime(0.1, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.start(t);
+      osc.stop(t + 0.15);
+      break;
+  }
+}
+
 // ── Colors ───────────────────────────────────────────────────────────
 const COL = {
   player:     "#00ff00",
@@ -459,11 +578,14 @@ function updateTitle() {
 
   if (upPressed && !titleKeyDebounce.up) {
     selectedDiff = (selectedDiff - 1 + DIFF_ORDER.length) % DIFF_ORDER.length;
+    playSound("menuSelect");
   }
   if (downPressed && !titleKeyDebounce.down) {
     selectedDiff = (selectedDiff + 1) % DIFF_ORDER.length;
+    playSound("menuSelect");
   }
   if (enterPressed && !titleKeyDebounce.enter) {
+    playSound("menuConfirm");
     startGame(DIFF_ORDER[selectedDiff]);
   }
 
@@ -519,7 +641,7 @@ function updateGame() {
   // shooting
   if (keys["Space"]) {
     const p = player.shoot();
-    if (p) projectiles.push(p);
+    if (p) { projectiles.push(p); playSound("shoot"); }
   }
 
   // alien movement — speed up as aliens are destroyed
@@ -547,6 +669,7 @@ function updateGame() {
   // aliens reached bottom?
   for (const a of alive) {
     if (a.y + a.h >= FIELD_Y + FIELD_H) {
+      playSound("playerDeath");
       gameState = "lost";
       return;
     }
@@ -576,6 +699,7 @@ function updateGame() {
         if (a.alive && rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
           const dead = a.takeHit();
           explosions.push(new Explosion(p.x, p.y));
+          playSound(dead ? "explode" : "hit");
           if (dead) score += a.points;
           hit = true;
           break;
@@ -596,6 +720,7 @@ function updateGame() {
       // alien projectile -> player
       if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
         explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
+        playSound("playerDeath");
         gameState = "lost";
         hit = true;
       }
@@ -619,6 +744,7 @@ function updateGame() {
 
   // win condition
   if (aliens.filter(a => a.alive).length === 0) {
+    playSound("win");
     gameState = "won";
   }
 }
