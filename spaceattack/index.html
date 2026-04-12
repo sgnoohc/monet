@@ -650,7 +650,7 @@ function updateGame() {
   const ratio = alive.length / totalAliens;
   const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio));
   // Scale movement speed: 2px at full count, up to 12px for the last alien
-  const speed = Math.max(2, Math.round(2 / (ratio * ratio + 0.04)));
+  const speed = Math.min(6, Math.max(2, Math.round(2 / (ratio * ratio + 0.04))));
   if (alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
     let reverse = false;
