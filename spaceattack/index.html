@@ -975,6 +975,161 @@ function playSound(type) {
   }
 }
 
+// ── Background Music (Synthwave) ─────────────────────────────────────
+let bgMusicPlaying = false;
+let bgMusicNodes = null;
+
+function startBGMusic() {
+  if (bgMusicPlaying) return;
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  bgMusicPlaying = true;
+
+  const t = audioCtx.currentTime;
+  const masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.12;
+  masterGain.connect(audioCtx.destination);
+
+  // Bass line — deep sawtooth with lowpass
+  const bassOsc = audioCtx.createOscillator();
+  bassOsc.type = "sawtooth";
+  const bassFilter = audioCtx.createBiquadFilter();
+  bassFilter.type = "lowpass";
+  bassFilter.frequency.value = 200;
+  bassFilter.Q.value = 2;
+  const bassGain = audioCtx.createGain();
+  bassGain.gain.value = 0.5;
+  bassOsc.connect(bassFilter).connect(bassGain).connect(masterGain);
+
+  // Bass note sequence (minor key: C2, Eb2, F2, G2)
+  const bassNotes = [65.41, 77.78, 87.31, 98.00, 87.31, 77.78];
+  const bassLen = bassNotes.length;
+  const beatDur = 0.5; // seconds per beat
+  const loopLen = bassLen * beatDur;
+
+  // Schedule bass notes in a loop via ScriptProcessor alternative: use a repeating pattern
+  // We'll use a long automation sequence and re-schedule periodically
+  function scheduleBass(startTime, loops) {
+    for (let l = 0; l < loops; l++) {
+      for (let i = 0; i < bassLen; i++) {
+        const noteTime = startTime + l * loopLen + i * beatDur;
+        bassOsc.frequency.setValueAtTime(bassNotes[i], noteTime);
+      }
+    }
+  }
+  const totalLoops = 200; // ~100s of music
+  scheduleBass(t, totalLoops);
+  bassOsc.start(t);
+
+  // Pad — warm detuned saw chord
+  const padNotes = [130.81, 155.56, 196.00]; // C3, Eb3, G3 minor chord
+  const padOscs = [];
+  const padGain = audioCtx.createGain();
+  padGain.gain.value = 0.15;
+  const padFilter = audioCtx.createBiquadFilter();
+  padFilter.type = "lowpass";
+  padFilter.frequency.value = 800;
+  padFilter.Q.value = 0.5;
+  padGain.connect(padFilter).connect(masterGain);
+
+  for (const freq of padNotes) {
+    const osc1 = audioCtx.createOscillator();
+    osc1.type = "sawtooth";
+    osc1.frequency.value = freq;
+    osc1.detune.value = -8;
+    osc1.connect(padGain);
+    osc1.start(t);
+    padOscs.push(osc1);
+    const osc2 = audioCtx.createOscillator();
+    osc2.type = "sawtooth";
+    osc2.frequency.value = freq;
+    osc2.detune.value = 8;
+    osc2.connect(padGain);
+    osc2.start(t);
+    padOscs.push(osc2);
+  }
+
+  // Arpeggio — higher pitch pulsing notes
+  const arpOsc = audioCtx.createOscillator();
+  arpOsc.type = "square";
+  const arpGain = audioCtx.createGain();
+  arpGain.gain.value = 0;
+  const arpFilter = audioCtx.createBiquadFilter();
+  arpFilter.type = "lowpass";
+  arpFilter.frequency.value = 2000;
+  arpOsc.connect(arpFilter).connect(arpGain).connect(masterGain);
+
+  const arpNotes = [261.63, 311.13, 392.00, 523.25, 392.00, 311.13]; // C4,Eb4,G4,C5,G4,Eb4
+  const arpBeat = beatDur / 2; // eighth notes
+  function scheduleArp(startTime, loops) {
+    for (let l = 0; l < loops; l++) {
+      for (let i = 0; i < arpNotes.length; i++) {
+        const noteTime = startTime + l * (arpNotes.length * arpBeat) + i * arpBeat;
+        arpOsc.frequency.setValueAtTime(arpNotes[i], noteTime);
+        arpGain.gain.setValueAtTime(0.2, noteTime);
+        arpGain.gain.setValueAtTime(0.02, noteTime + arpBeat * 0.6);
+      }
+    }
+  }
+  scheduleArp(t, totalLoops);
+  arpOsc.start(t);
+
+  // Hi-hat rhythm — filtered noise pulses
+  const hatBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.05, audioCtx.sampleRate);
+  const hatData = hatBuf.getChannelData(0);
+  for (let i = 0; i < hatData.length; i++) hatData[i] = Math.random() * 2 - 1;
+
+  const hatGain = audioCtx.createGain();
+  hatGain.gain.value = 0;
+  const hatFilter = audioCtx.createBiquadFilter();
+  hatFilter.type = "highpass";
+  hatFilter.frequency.value = 8000;
+  hatGain.connect(hatFilter).connect(masterGain);
+
+  // Schedule hat hits
+  const hatSources = [];
+  for (let l = 0; l < totalLoops * 3; l++) {
+    const hitTime = t + l * (beatDur / 2);
+    const src = audioCtx.createBufferSource();
+    src.buffer = hatBuf;
+    src.connect(hatGain);
+    src.start(hitTime);
+    hatGain.gain.setValueAtTime(0.25, hitTime);
+    hatGain.gain.exponentialRampToValueAtTime(0.001, hitTime + 0.04);
+    hatSources.push(src);
+  }
+
+  // Slow LFO on pad filter for movement
+  const lfo = audioCtx.createOscillator();
+  lfo.type = "sine";
+  lfo.frequency.value = 0.15;
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.value = 400;
+  lfo.connect(lfoGain).connect(padFilter.frequency);
+  lfo.start(t);
+
+  bgMusicNodes = { masterGain, bassOsc, padOscs, arpOsc, lfo, hatSources };
+}
+
+function stopBGMusic() {
+  if (!bgMusicPlaying || !bgMusicNodes) return;
+  bgMusicPlaying = false;
+  const t = audioCtx.currentTime;
+  // Fade out
+  bgMusicNodes.masterGain.gain.setValueAtTime(bgMusicNodes.masterGain.gain.value, t);
+  bgMusicNodes.masterGain.gain.linearRampToValueAtTime(0, t + 0.5);
+  // Stop all oscillators after fade
+  setTimeout(() => {
+    try {
+      bgMusicNodes.bassOsc.stop();
+      bgMusicNodes.arpOsc.stop();
+      bgMusicNodes.lfo.stop();
+      for (const o of bgMusicNodes.padOscs) o.stop();
+      for (const s of bgMusicNodes.hatSources) try { s.stop(); } catch(e) {}
+    } catch(e) {}
+    bgMusicNodes = null;
+  }, 600);
+}
+
 // ── Colors ───────────────────────────────────────────────────────────
 const COL = {
   player:     "#00ff00",
@@ -2620,6 +2775,7 @@ function startGame(diffKey) {
     }
   }
   gameState = "playing";
+  startBGMusic();
 }
 
 // ── Title screen ─────────────────────────────────────────────────────
@@ -3700,6 +3856,7 @@ function gameLoop() {
   drawStars();
 
   if (gameState === "title") {
+    if (bgMusicPlaying) stopBGMusic();
     updateTitle();
     drawTitle();
     escDebounce = false;
@@ -3713,6 +3870,7 @@ function gameLoop() {
     drawGame();
   } else {
     // won or lost
+    if (bgMusicPlaying) stopBGMusic();
     updateGame();
     drawGame();
     updateEndState();
