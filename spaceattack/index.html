@@ -1002,7 +1002,7 @@ const COL = {
 };
 
 // ── Game constants ───────────────────────────────────────────────────
-const FPS = 38;
+const FPS = 46;
 const FIELD_X = 15, FIELD_Y = 30;
 const FIELD_W = W - 30, FIELD_H = H - 60;
 
@@ -1021,16 +1021,16 @@ const PLAYER_SPEED = 5;
 const PLAYER_SHOOT_COOLDOWN = 10;
 const FIGHTER_HP = 2;
 const BOMBER_HP = 3;
-const BOMB_BLAST_RADIUS = 30;
+const BOMB_BLAST_RADIUS = 15;
 const LASER_BLAST_RADIUS = 6;
 
 const WEAPON_TYPES = ["rail", "bomb", "heal", "slow", "clone"];
 const POWERUP_INTERVAL = {
   easy:     null,
-  medium:   { base: 264, rand: 96 },
-  difficult:{ base: 180, rand: 84 },
-  insane:   { base: 120, rand: 60 },
-  doomsday: { base: 72, rand: 48 },
+  medium:   { base: 317, rand: 115 },
+  difficult:{ base: 216, rand: 101 },
+  insane:   { base: 144, rand: 72 },
+  doomsday: { base: 86, rand: 58 },
 };
 const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff", life: "#00ff00", clone: "#ffcc00" };
 const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW", clone: "CLONE" };
@@ -2324,7 +2324,7 @@ function startGame(diffKey) {
   selectedWeapon = 0;
   slowTimer = 0;
   bunkerHealFlash = 0;
-  lives = 3;
+  lives = 1;
   invulnTimer = 0;
   cloneTimer = 0;
   powerUps = [];
