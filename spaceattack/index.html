@@ -2650,8 +2650,12 @@ function updateGame() {
   if (bunkerHealFlash > 0) bunkerHealFlash--;
 }
 
-function drawWeaponIcon(type, cx, cy, color) {
+function drawWeaponIcon(type, cx, cy, color, scale) {
+  const s = scale || 1;
   ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(s, s);
+  ctx.translate(-cx, -cy);
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.lineWidth = 1.5;
@@ -2725,7 +2729,11 @@ function drawWeaponBar() {
     { type: "slow", color: "#9944ff", ammo: slowAmmo },
   ];
 
-  const slotW = 45, slotH = 22, gap = 4;
+  const iconSpacing = 10;
+  const maxRepeat = 5;
+  const padL = 4, padR = 4;
+  const slotW = padL + maxRepeat * iconSpacing + padR;
+  const slotH = 16, gap = 4;
   const totalW = weapons.length * slotW + (weapons.length - 1) * gap;
   const startX = W / 2 - totalW / 2;
   const y = FIELD_Y + FIELD_H + 4;
@@ -2754,17 +2762,22 @@ function drawWeaponBar() {
       ctx.strokeRect(x, y, slotW, slotH);
     }
 
-    // Icon + ammo count
+    // Ammo display: repeat icons up to 5, then show icon ×N
     const iconColor = w.ammo > 0 ? (isSelected ? w.color : "#aaa") : "#555";
-    const iconCx = x + 14;
     const iconCy = y + slotH / 2;
-    drawWeaponIcon(w.type, iconCx, iconCy, iconColor);
-
-    ctx.fillStyle = iconColor;
-    ctx.font = "bold 10px monospace";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillText(`×${w.ammo}`, x + 24, y + slotH / 2);
+    if (w.ammo <= maxRepeat) {
+      for (let n = 0; n < w.ammo; n++) {
+        const iconCx = x + padL + 5 + n * iconSpacing;
+        drawWeaponIcon(w.type, iconCx, iconCy, iconColor, 0.6);
+      }
+    } else {
+      drawWeaponIcon(w.type, x + padL + 5, iconCy, iconColor, 0.6);
+      ctx.fillStyle = iconColor;
+      ctx.font = "bold 10px monospace";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`×${w.ammo}`, x + padL + 14, iconCy);
+    }
   }
 }
 
