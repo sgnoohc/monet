@@ -1223,7 +1223,14 @@ function updateGame() {
   // ── Weapon cycling (Tab) ──
   const tabPressed = keys["Tab"];
   if (tabPressed && !tabDebounce) {
-    selectedWeapon = (selectedWeapon + 1) % 4;
+    const ammos = [railAmmo, bombAmmo, healAmmo, slowAmmo];
+    // Try to find next weapon with ammo
+    let found = false;
+    for (let i = 1; i <= 4; i++) {
+      const idx = (selectedWeapon + i) % 4;
+      if (ammos[idx] > 0) { selectedWeapon = idx; found = true; break; }
+    }
+    if (!found) selectedWeapon = (selectedWeapon + 1) % 4;
     playSound("menuSelect");
   }
   tabDebounce = tabPressed;
@@ -1565,12 +1572,23 @@ function drawGame() {
     const countEl = document.getElementById('special-count');
     const btn = document.getElementById('btn-special');
     if (nameEl && btn) {
-      const wType = WEAPON_TYPES[selectedWeapon];
       const ammos = { rail: railAmmo, bomb: bombAmmo, heal: healAmmo, slow: slowAmmo };
-      nameEl.textContent = WEAPON_NAMES[wType];
-      if (countEl) countEl.textContent = ammos[wType] > 0 ? ammos[wType] : '';
-      btn.style.borderColor = WEAPON_COLORS[wType];
-      btn.style.color = WEAPON_COLORS[wType];
+      const anyAmmo = railAmmo + bombAmmo + healAmmo + slowAmmo > 0;
+      if (anyAmmo) {
+        const wType = WEAPON_TYPES[selectedWeapon];
+        const curAmmo = ammos[wType];
+        nameEl.textContent = WEAPON_NAMES[wType];
+        if (countEl) countEl.textContent = curAmmo > 0 ? curAmmo : '0';
+        btn.style.borderColor = curAmmo > 0 ? WEAPON_COLORS[wType] : '#555';
+        btn.style.color = curAmmo > 0 ? WEAPON_COLORS[wType] : '#555';
+        btn.style.opacity = curAmmo > 0 ? '1' : '0.5';
+      } else {
+        nameEl.textContent = 'SPEC';
+        if (countEl) countEl.textContent = '';
+        btn.style.borderColor = '#333';
+        btn.style.color = '#444';
+        btn.style.opacity = '0.4';
+      }
     }
   }
 
