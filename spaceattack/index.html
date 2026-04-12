@@ -1004,7 +1004,7 @@ const COL = {
 // ── Game constants ───────────────────────────────────────────────────
 const FPS = 30;
 const FIELD_X = 15, FIELD_Y = 30;
-const FIELD_W = W - 30, FIELD_H = H - 45;
+const FIELD_W = W - 30, FIELD_H = H - 60;
 
 const DIFFICULTIES = {
   easy:      { label: "EASY",      shootChance: 0.04,  moveInterval: 6,  desc: "Relaxed pace, slow aliens" },
@@ -2356,9 +2356,9 @@ function updateGame() {
       }
       bunkerHealFlash = 15;
       playSound("heal");
-    } else if (wType === "slow" && slowAmmo > 0 && slowTimer <= 0) {
+    } else if (wType === "slow" && slowAmmo > 0) {
       slowAmmo--;
-      slowTimer = 150;
+      slowTimer += 210;
       playSound("slowmo");
     }
   }
@@ -2729,11 +2729,11 @@ function drawWeaponBar() {
     { type: "slow", color: "#9944ff", ammo: slowAmmo },
   ];
 
-  const iconSpacing = 10;
+  const iconSpacing = 12;
   const maxRepeat = 5;
   const padL = 4, padR = 4;
   const slotW = padL + maxRepeat * iconSpacing + padR;
-  const slotH = 16, gap = 4;
+  const slotH = 20, gap = 4;
   const totalW = weapons.length * slotW + (weapons.length - 1) * gap;
   const startX = W / 2 - totalW / 2;
   const y = FIELD_Y + FIELD_H + 4;
@@ -2768,10 +2768,10 @@ function drawWeaponBar() {
     if (w.ammo <= maxRepeat) {
       for (let n = 0; n < w.ammo; n++) {
         const iconCx = x + padL + 5 + n * iconSpacing;
-        drawWeaponIcon(w.type, iconCx, iconCy, iconColor, 0.6);
+        drawWeaponIcon(w.type, iconCx, iconCy, iconColor, 0.8);
       }
     } else {
-      drawWeaponIcon(w.type, x + padL + 5, iconCy, iconColor, 0.6);
+      drawWeaponIcon(w.type, x + padL + 5, iconCy, iconColor, 0.8);
       ctx.fillStyle = iconColor;
       ctx.font = "bold 10px monospace";
       ctx.textAlign = "left";
