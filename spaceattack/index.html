@@ -2149,6 +2149,138 @@ class BossMinion {
   }
 }
 
+class Asteroid {
+  constructor() {
+    this.radius = 10 + Math.random() * 18;
+    // Start from top, random x, angled trajectory
+    this.x = FIELD_X + Math.random() * FIELD_W;
+    this.y = FIELD_Y - this.radius;
+    const angle = (0.3 + Math.random() * 0.4) * (Math.random() < 0.5 ? 1 : -1); // angled
+    const speed = 1.5 + Math.random() * 1.5;
+    this.vx = Math.sin(angle) * speed;
+    this.vy = Math.cos(angle) * speed;
+    this.rot = 0;
+    this.rotSpeed = (Math.random() - 0.5) * 0.08;
+    this.alive = true;
+    this.hp = Math.ceil(this.radius / 6);
+    this.frame = 0;
+    // Generate rocky shape (jagged circle)
+    this.verts = [];
+    const n = 8 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const r = 0.7 + Math.random() * 0.3;
+      this.verts.push({ a, r });
+    }
+    // Fire trail particles
+    this.particles = [];
+  }
+
+  update() {
+    this.frame++;
+    this.x += this.vx;
+    this.y += this.vy;
+    this.rot += this.rotSpeed;
+    // Spawn fire trail particles
+    if (this.frame % 2 === 0) {
+      this.particles.push({
+        x: this.x + (Math.random() - 0.5) * this.radius * 0.6,
+        y: this.y + (Math.random() - 0.5) * this.radius * 0.6,
+        vx: -this.vx * 0.3 + (Math.random() - 0.5) * 0.8,
+        vy: -this.vy * 0.3 + (Math.random() - 0.5) * 0.8,
+        life: 12 + Math.random() * 10,
+        maxLife: 22,
+        size: 2 + Math.random() * 3,
+      });
+    }
+    // Update particles
+    for (const pt of this.particles) {
+      pt.x += pt.vx;
+      pt.y += pt.vy;
+      pt.life--;
+    }
+    this.particles = this.particles.filter(pt => pt.life > 0);
+    // Off screen
+    if (this.y - this.radius > FIELD_Y + FIELD_H + 20 ||
+        this.x + this.radius < FIELD_X - 20 ||
+        this.x - this.radius > FIELD_X + FIELD_W + 20) {
+      this.alive = false;
+    }
+  }
+
+  takeHit() {
+    this.hp--;
+    if (this.hp <= 0) { this.alive = false; return true; }
+    return false;
+  }
+
+  draw() {
+    // Draw fire trail particles first (behind asteroid)
+    for (const pt of this.particles) {
+      const t = pt.life / pt.maxLife;
+      const r = Math.floor(255);
+      const g = Math.floor(80 + 170 * t);
+      const b = Math.floor(30 * t);
+      ctx.globalAlpha = t * 0.8;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.size * t, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    const cx = this.x;
+    const cy = this.y;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(this.rot);
+
+    // Outer glow (fire)
+    const glowSize = this.radius * 1.6;
+    const glow = ctx.createRadialGradient(0, 0, this.radius * 0.5, 0, 0, glowSize);
+    glow.addColorStop(0, "rgba(255,160,30,0.4)");
+    glow.addColorStop(0.5, "rgba(255,80,0,0.15)");
+    glow.addColorStop(1, "rgba(255,30,0,0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, glowSize, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Rocky body
+    ctx.fillStyle = "#665544";
+    ctx.beginPath();
+    const v0 = this.verts[0];
+    ctx.moveTo(Math.cos(v0.a) * this.radius * v0.r, Math.sin(v0.a) * this.radius * v0.r);
+    for (let i = 1; i < this.verts.length; i++) {
+      const v = this.verts[i];
+      ctx.lineTo(Math.cos(v.a) * this.radius * v.r, Math.sin(v.a) * this.radius * v.r);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // Surface cracks/detail
+    ctx.strokeStyle = "rgba(100,80,60,0.6)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-this.radius * 0.2, -this.radius * 0.3);
+    ctx.lineTo(this.radius * 0.1, this.radius * 0.2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(this.radius * 0.15, -this.radius * 0.15);
+    ctx.lineTo(-this.radius * 0.05, this.radius * 0.3);
+    ctx.stroke();
+
+    // Hot edge glow
+    ctx.strokeStyle = "rgba(255,120,20,0.3)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius * 0.85, -0.5, 0.8);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
 // ── Alien grid builder ───────────────────────────────────────────────
 function makeAlienGrid(shootChance) {
   const cols = 8, rows = 5;
@@ -2295,6 +2427,7 @@ let bunkerHealFlash;
 let powerUps, powerUpTimer, powerUpInterval;
 let lives, invulnTimer, cloneTimer;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer, bossMinions;
+let asteroids, asteroidTimer;
 
 function startGame(diffKey) {
   difficulty = diffKey;
@@ -2324,7 +2457,7 @@ function startGame(diffKey) {
   selectedWeapon = 0;
   slowTimer = 0;
   bunkerHealFlash = 0;
-  lives = 1;
+  lives = 2;
   invulnTimer = 0;
   cloneTimer = 0;
   powerUps = [];
@@ -2336,6 +2469,8 @@ function startGame(diffKey) {
   bossTransitionTimer = -1;
   bossDeathTimer = -1;
   bossMinions = [];
+  asteroids = [];
+  asteroidTimer = 0;
   generateStars(diffKey);
   // Reset mobile SPEC button from RETRY state
   if (touchActive) {
@@ -2786,6 +2921,22 @@ function updateGame() {
           }
         }
       }
+      // Check asteroids
+      if (!hit) {
+        for (const ast of asteroids) {
+          if (!ast.alive) continue;
+          const dx = (p.x + p.w / 2) - ast.x;
+          const dy = (p.y + p.h / 2) - ast.y;
+          if (Math.sqrt(dx * dx + dy * dy) < ast.radius) {
+            const dead = ast.takeHit();
+            explosions.push(new Explosion(p.x, p.y));
+            playSound(dead ? "explode" : "hit");
+            if (dead) score += 75;
+            hit = true;
+            break;
+          }
+        }
+      }
     } else {
       // alien projectile -> player
       if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
@@ -2876,6 +3027,43 @@ function updateGame() {
     playSound("win");
     gameState = "won";
   }
+
+  // Asteroid spawning & update
+  asteroidTimer++;
+  if (asteroidTimer >= 180 + Math.floor(Math.random() * 200)) {
+    asteroidTimer = 0;
+    asteroids.push(new Asteroid());
+  }
+  for (const ast of asteroids) ast.update();
+  // Asteroid collision with player
+  for (const ast of asteroids) {
+    if (!ast.alive) continue;
+    const dx = (ast.x) - (player.x + player.w / 2);
+    const dy = (ast.y) - (player.y + player.h / 2);
+    if (Math.sqrt(dx * dx + dy * dy) < ast.radius + 10) {
+      if (!debugInvincible && invulnTimer <= 0) {
+        lives--;
+        invulnTimer = 60;
+        explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
+        playSound("playerDeath");
+        if (lives <= 0) { gameState = "lost"; return; }
+      }
+    }
+    // Asteroid collision with bunkers
+    for (const b of bunkers) {
+      if (!b.isDestroyed) {
+        const bCx = b.x + b.w / 2, bCy = b.y + b.h / 2;
+        const bdx = ast.x - bCx, bdy = ast.y - bCy;
+        if (Math.sqrt(bdx * bdx + bdy * bdy) < ast.radius + 20) {
+          b.damageAt(ast.x, ast.y, ast.radius);
+          ast.alive = false;
+          explosions.push(new Explosion(ast.x, ast.y));
+          playSound("explode");
+        }
+      }
+    }
+  }
+  asteroids = asteroids.filter(a => a.alive);
 
   // decrement timers
   if (slowTimer > 0) slowTimer--;
@@ -3129,6 +3317,9 @@ function drawGame() {
 
   // power-ups
   for (const pu of powerUps) if (pu.alive) pu.draw();
+
+  // asteroids
+  for (const ast of asteroids) if (ast.alive) ast.draw();
 
   // projectiles
   for (const p of projectiles) p.draw();
