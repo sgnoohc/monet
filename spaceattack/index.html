@@ -1940,6 +1940,9 @@ class Mothership {
       return newProjectiles;
     }
 
+    // Frozen — no movement or shooting
+    if (slowTimer > 0) return newProjectiles;
+
     // Horizontal drift
     this.x += this.driftSpeed * this.driftDir;
     if (this.x <= FIELD_X + 10) this.driftDir = 1;
@@ -2828,13 +2831,13 @@ function updateGame() {
   }
 
   // alien movement — speed up as aliens are destroyed
-  const slowMult = slowTimer > 0 ? 20 : 1;
+  const frozen = slowTimer > 0;
   alienMoveTimer++;
   const alive = aliens.filter(a => a.alive);
   const ratio = alive.length / totalAliens;
-  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio * slowMult));
+  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio));
   const speed = Math.min(5, Math.max(2, Math.round(2 / (ratio * ratio + 0.04))));
-  if (alienMoveTimer >= moveInterval && alive.length > 0) {
+  if (!frozen && alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
     let reverse = false;
     for (const a of alive) {
@@ -2867,8 +2870,8 @@ function updateGame() {
     }
   }
 
-  // random alien shoot
-  if (alive.length > 0) {
+  // random alien shoot (suppressed while frozen)
+  if (!frozen && alive.length > 0) {
     const shooter = alive[Math.floor(Math.random() * alive.length)];
     const ap = shooter.tryShoot();
     if (ap) projectiles.push(ap);
@@ -3044,20 +3047,24 @@ function updateGame() {
   if (bossPhase && mothership && mothership.alive) {
     const bossProjs = mothership.update();
     for (const p of bossProjs) projectiles.push(p);
-    // Spawn minions
-    mothership.spawnTimer++;
-    if (mothership.spawnTimer >= mothership.spawnInterval) {
-      mothership.spawnTimer = 0;
-      const mx = mothership.x + mothership.w / 2 + (Math.random() - 0.5) * mothership.w * 0.6;
-      const my = mothership.y + mothership.h;
-      bossMinions.push(new BossMinion(mx, my, mothership.shootChance));
+    // Spawn minions (suppressed while frozen)
+    if (!frozen) {
+      mothership.spawnTimer++;
+      if (mothership.spawnTimer >= mothership.spawnInterval) {
+        mothership.spawnTimer = 0;
+        const mx = mothership.x + mothership.w / 2 + (Math.random() - 0.5) * mothership.w * 0.6;
+        const my = mothership.y + mothership.h;
+        bossMinions.push(new BossMinion(mx, my, mothership.shootChance));
+      }
     }
   }
-  // Update boss minions
-  for (const m of bossMinions) {
-    m.update();
-    const mp = m.tryShoot();
-    if (mp) projectiles.push(mp);
+  // Update boss minions (frozen = no move/shoot)
+  if (!frozen) {
+    for (const m of bossMinions) {
+      m.update();
+      const mp = m.tryShoot();
+      if (mp) projectiles.push(mp);
+    }
   }
   bossMinions = bossMinions.filter(m => m.alive);
 
