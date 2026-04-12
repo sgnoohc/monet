@@ -1500,11 +1500,11 @@ class RailBeam {
       alpha = 0.7 + 0.3 * (f / 5);
     } else if (f <= 12) {
       const t = (f - 5) / 7;
-      width = 2 + 34 * t;
+      width = 2 + 46 * t;
       alpha = 1;
     } else {
       const t = (f - 12) / 8;
-      width = 36 * (1 - t);
+      width = 48 * (1 - t);
       alpha = 1 - t;
     }
 
@@ -1809,7 +1809,7 @@ function updateGame() {
       const beamX = player.x + player.w / 2;
       explosions.push(new RailBeam(beamX));
       playSound("railgun");
-      const beamHalf = 18;
+      const beamHalf = 24;
       for (const a of aliens) {
         if (!a.alive) continue;
         const aCx = a.x + a.w / 2;
