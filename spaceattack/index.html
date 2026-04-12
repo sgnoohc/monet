@@ -504,7 +504,7 @@ function makeAlienGrid(shootChance) {
       const ax = startX + c * (alienW + hGap);
       const ay = startY + r * (22 + vGap);
       if (r < 2) {
-        aliens.push(new Alien(ax, ay, BOMBER_HP, shootChance, true, 0));
+        aliens.push(new Alien(ax, ay, BOMBER_HP, shootChance * 0.5, true, 0));
       } else {
         aliens.push(new Alien(ax, ay, FIGHTER_HP, shootChance, false, c % 2));
       }
