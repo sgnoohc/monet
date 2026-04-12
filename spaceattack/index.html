@@ -424,12 +424,12 @@ let selectedDiff = 1;
 let difficulty = "medium";
 
 let player, aliens, bunkers, projectiles, explosions;
-let alienDir, alienMoveTimer, moveInterval, score;
+let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
 
 function startGame(diffKey) {
   difficulty = diffKey;
   const diff = DIFFICULTIES[diffKey];
-  moveInterval = diff.moveInterval;
+  baseMoveInterval = diff.moveInterval;
   player = new Player();
   aliens = makeAlienGrid(diff.shootChance);
   const bunkY = FIELD_Y + FIELD_H - 60;
@@ -444,6 +444,7 @@ function startGame(diffKey) {
   explosions = [];
   alienDir = 1;
   alienMoveTimer = 0;
+  totalAliens = aliens.length;
   score = 0;
   gameState = "playing";
 }
@@ -521,9 +522,11 @@ function updateGame() {
     if (p) projectiles.push(p);
   }
 
-  // alien movement
+  // alien movement — speed up as aliens are destroyed
   alienMoveTimer++;
   const alive = aliens.filter(a => a.alive);
+  const ratio = alive.length / totalAliens;
+  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio));
   if (alienMoveTimer >= moveInterval && alive.length > 0) {
     alienMoveTimer = 0;
     let reverse = false;
