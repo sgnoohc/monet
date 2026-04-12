@@ -2550,7 +2550,7 @@ function updateGame() {
       playSound("slowmo");
     } else if (wType === "clone" && cloneAmmo > 0) {
       cloneAmmo--;
-      cloneTimer = Math.round(FPS * 10); // 10 seconds
+      cloneTimer += Math.round(FPS * 10); // +10 seconds, stacks
       playSound("powerup");
     }
     // Auto-switch to a weapon that has ammo if current is empty
