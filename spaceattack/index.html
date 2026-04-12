@@ -1027,10 +1027,10 @@ const LASER_BLAST_RADIUS = 6;
 const WEAPON_TYPES = ["rail", "bomb", "heal", "slow"];
 const POWERUP_INTERVAL = {
   easy:     null,
-  medium:   { base: 450, rand: 150 },
-  difficult:{ base: 300, rand: 150 },
-  insane:   { base: 200, rand: 100 },
-  doomsday: { base: 120, rand: 80 },
+  medium:   { base: 225, rand: 75 },
+  difficult:{ base: 150, rand: 75 },
+  insane:   { base: 100, rand: 50 },
+  doomsday: { base: 60, rand: 40 },
 };
 const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff" };
 const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW" };
@@ -1549,14 +1549,55 @@ class Torpedo {
   }
 
   draw() {
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    ctx.save();
+
+    // Engine exhaust glow
+    const flicker = 2 + Math.random() * 4;
+    ctx.fillStyle = "rgba(255,100,0,0.5)";
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, this.y + this.h);
+    ctx.lineTo(cx, this.y + this.h + flicker);
+    ctx.lineTo(cx + 3, this.y + this.h);
+    ctx.closePath();
+    ctx.fill();
+
+    // Nosecone
     ctx.fillStyle = "#ff6600";
-    ctx.fillRect(this.x, this.y, this.w, this.h);
-    ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    ctx.moveTo(cx, this.y);
+    ctx.lineTo(cx - 3.5, this.y + 4);
+    ctx.lineTo(cx + 3.5, this.y + 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Body
+    ctx.fillRect(cx - 3, this.y + 4, 6, 5);
+
+    // Fins
+    ctx.beginPath();
+    ctx.moveTo(cx - 3, this.y + 9);
+    ctx.lineTo(cx - 5.5, this.y + this.h);
+    ctx.lineTo(cx - 3, this.y + 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx + 3, this.y + 9);
+    ctx.lineTo(cx + 5.5, this.y + this.h);
+    ctx.lineTo(cx + 3, this.y + 7);
+    ctx.closePath();
+    ctx.fill();
+
+    // Aura glow
+    ctx.globalAlpha = 0.25;
     ctx.fillStyle = "#ff4400";
     ctx.beginPath();
-    ctx.arc(this.x + this.w / 2, this.y + this.h / 2, 8, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
+
+    ctx.restore();
   }
 }
 
@@ -2337,7 +2378,7 @@ function updateGame() {
       if (bossPhase && mothership && mothership.alive) {
         const mCx = mothership.x + mothership.w / 2;
         if (Math.abs(mCx - beamX) < beamHalf + mothership.w / 2) {
-          const dead = mothership.takeHit(8);
+          const dead = mothership.takeHit(24);
           explosions.push(new Explosion(mCx, mothership.y + mothership.h / 2));
           if (dead) handleBossDeath();
         }
@@ -2360,6 +2401,13 @@ function updateGame() {
       slowAmmo--;
       slowTimer += 210;
       playSound("slowmo");
+    }
+    // Auto-switch to a weapon that has ammo if current is empty
+    const curAmmos = [railAmmo, bombAmmo, healAmmo, slowAmmo];
+    if (curAmmos[selectedWeapon] <= 0) {
+      for (let i = 0; i < 4; i++) {
+        if (curAmmos[i] > 0) { selectedWeapon = i; break; }
+      }
     }
   }
   shiftDebounce = shiftPressed;
@@ -2737,6 +2785,7 @@ function drawWeaponBar() {
   const totalW = weapons.length * slotW + (weapons.length - 1) * gap;
   const startX = W / 2 - totalW / 2;
   const y = FIELD_Y + FIELD_H + 4;
+  const allEmpty = railAmmo + bombAmmo + healAmmo + slowAmmo <= 0;
 
   for (let i = 0; i < weapons.length; i++) {
     const w = weapons[i];
@@ -2744,11 +2793,15 @@ function drawWeaponBar() {
     const isSelected = i === selectedWeapon;
 
     // Background
-    ctx.fillStyle = isSelected ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.6)";
+    ctx.fillStyle = allEmpty ? "rgba(0,0,0,0.6)" : (isSelected ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.6)");
     ctx.fillRect(x, y, slotW, slotH);
 
     // Border
-    if (isSelected) {
+    if (allEmpty) {
+      ctx.strokeStyle = "#333";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, slotW, slotH);
+    } else if (isSelected) {
       ctx.save();
       ctx.shadowColor = w.color;
       ctx.shadowBlur = 8;
@@ -2763,7 +2816,7 @@ function drawWeaponBar() {
     }
 
     // Ammo display: repeat icons up to 5, then show icon ×N
-    const iconColor = w.ammo > 0 ? (isSelected ? w.color : "#aaa") : "#555";
+    const iconColor = allEmpty ? "#333" : (w.ammo > 0 ? (isSelected ? w.color : "#aaa") : "#555");
     const iconCy = y + slotH / 2;
     if (w.ammo <= maxRepeat) {
       for (let n = 0; n < w.ammo; n++) {
