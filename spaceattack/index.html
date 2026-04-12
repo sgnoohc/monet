@@ -148,14 +148,14 @@
     font-size: 20px;
   }
   #btn-select {
-    width: 50px;
-    height: 40px;
-    border-radius: 8px;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
     border: 2px solid #888;
-    background: #333;
+    background: radial-gradient(circle at 35% 35%, #444, #222);
     color: #ccc;
     font-family: monospace;
-    font-size: 12px;
+    font-size: 14px;
     font-weight: bold;
     display: flex;
     align-items: center;
@@ -164,22 +164,23 @@
     -webkit-tap-highlight-color: transparent;
     cursor: pointer;
     position: absolute;
-    top: 42px;
-    right: -56px;
+    top: 12px;
+    right: -72px;
   }
   #btn-select.pressed {
-    background: #666;
+    background: radial-gradient(circle at 35% 35%, #888, #444);
     color: #fff;
+    box-shadow: 0 0 12px rgba(255,255,255,0.3);
   }
   #btn-esc {
-    width: 44px;
-    height: 44px;
-    border-radius: 8px;
-    border: 1px solid #555;
-    background: #222;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 2px solid #777;
+    background: radial-gradient(circle at 35% 35%, #444, #222);
     color: #888;
     font-family: monospace;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: bold;
     display: flex;
     align-items: center;
@@ -188,12 +189,13 @@
     -webkit-tap-highlight-color: transparent;
     cursor: pointer;
     position: absolute;
-    top: -8px;
-    right: -52px;
+    bottom: 12px;
+    right: -72px;
   }
   #btn-esc.pressed {
-    background: #555;
+    background: radial-gradient(circle at 35% 35%, #888, #444);
     color: #fff;
+    box-shadow: 0 0 12px rgba(255,255,255,0.3);
   }
 </style>
 </head>
