@@ -2168,7 +2168,7 @@ function drawGame() {
   }
 
   // Update mobile special button display
-  if (touchActive) {
+  if (touchActive && gameState !== "won" && gameState !== "lost") {
     const nameEl = document.getElementById('special-name');
     const countEl = document.getElementById('special-count');
     const btn = document.getElementById('btn-special');
@@ -2200,7 +2200,7 @@ function drawGame() {
     const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
     drawText(msg1, W / 2, H / 2 - 30, COL.msg, 36, "center");
     drawText(`Score: ${score}`, W / 2, H / 2 + 10, COL.msg, 20, "center");
-    const restartHint = touchActive ? "SPEC = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
+    const restartHint = touchActive ? "RETRY = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
     drawText(restartHint, W / 2, H / 2 + 50, COL.status, 16, "center");
     // Light up SPEC button as RETRY on mobile
     if (touchActive) {
