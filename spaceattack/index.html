@@ -1622,7 +1622,6 @@ function triggerBombExplosion(cx, cy) {
 let gameState = "title"; // title | playing | won | lost
 let selectedDiff = 1;
 let difficulty = "medium";
-let endCooldown = 0; // frames to ignore input after game ends
 
 let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
@@ -1921,7 +1920,7 @@ function updateGame() {
       if (!debugInvincible) {
         playSound("playerDeath");
         gameState = "lost";
-        endCooldown = 30;
+
         return;
       }
     }
@@ -2009,7 +2008,7 @@ function updateGame() {
           explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
           playSound("playerDeath");
           gameState = "lost";
-          endCooldown = 30;
+  
           hit = true;
         }
       }
@@ -2036,13 +2035,11 @@ function updateGame() {
   if (aliens.filter(a => a.alive).length === 0) {
     playSound("win");
     gameState = "won";
-    endCooldown = 30;
   }
 
   if (bunkers.every(b => b.isDestroyed) && !debugInvincible) {
     playSound("playerDeath");
     gameState = "lost";
-    endCooldown = 30;
   }
 
   // decrement timers
@@ -2203,8 +2200,21 @@ function drawGame() {
     const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
     drawText(msg1, W / 2, H / 2 - 30, COL.msg, 36, "center");
     drawText(`Score: ${score}`, W / 2, H / 2 + 10, COL.msg, 20, "center");
-    const restartHint = touchActive ? "FIRE = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
+    const restartHint = touchActive ? "SPEC = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
     drawText(restartHint, W / 2, H / 2 + 50, COL.status, 16, "center");
+    // Light up SPEC button as RETRY on mobile
+    if (touchActive) {
+      const btn = document.getElementById('btn-special');
+      const nameEl = document.getElementById('special-name');
+      const countEl = document.getElementById('special-count');
+      if (btn && nameEl) {
+        nameEl.textContent = 'RETRY';
+        if (countEl) countEl.textContent = '';
+        btn.style.borderColor = '#00ff88';
+        btn.style.color = '#00ff88';
+        btn.style.opacity = '1';
+      }
+    }
   }
 }
 
@@ -2212,9 +2222,7 @@ function drawGame() {
 let endKeyDebounce = {};
 
 function updateEndState() {
-  if (endCooldown > 0) { endCooldown--; return; }
-
-  const rPressed = keys["KeyR"] || (touchActive && keys["Space"]);
+  const rPressed = keys["KeyR"] || (touchActive && keys["ShiftLeft"]);
   const mPressed = keys["KeyM"] || keys["Escape"];
 
   if (rPressed && !endKeyDebounce.r) {
