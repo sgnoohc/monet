@@ -19,10 +19,167 @@
     display: block;
     image-rendering: pixelated;
   }
+  #controls { display: none; }
+  body.mobile {
+    flex-direction: column;
+    justify-content: flex-start;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  body.mobile canvas {
+    touch-action: none;
+  }
+  body.mobile #controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    flex: 1;
+    padding: 12px 24px;
+    background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1a 100%);
+    border-top: 2px solid #333;
+    touch-action: none;
+    max-height: 45vh;
+    min-height: 180px;
+  }
+  /* D-Pad */
+  #dpad {
+    display: grid;
+    grid-template-areas:
+      ".    up    ."
+      "left center right"
+      ".    down  .";
+    grid-template-columns: repeat(3, 64px);
+    grid-template-rows: repeat(3, 64px);
+    gap: 4px;
+  }
+  .dpad-up    { grid-area: up; }
+  .dpad-left  { grid-area: left; }
+  .dpad-center{ grid-area: center; }
+  .dpad-right { grid-area: right; }
+  .dpad-down  { grid-area: down; }
+  .dpad-btn {
+    width: 64px;
+    height: 64px;
+    border: 2px solid #555;
+    background: #222;
+    color: #999;
+    font-size: 26px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+  .dpad-btn.pressed {
+    background: #555;
+    color: #fff;
+    border-color: #999;
+    box-shadow: 0 0 12px rgba(255,255,255,0.2);
+  }
+  .dpad-center-dot {
+    width: 64px;
+    height: 64px;
+    background: #1a1a1a;
+    border-radius: 10px;
+    border: 2px solid #333;
+  }
+  /* Action buttons */
+  #action-btns {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    position: relative;
+  }
+  .action-btn {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    border: 3px solid;
+    font-family: monospace;
+    font-weight: bold;
+    font-size: 15px;
+    line-height: 1.2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    transition: box-shadow 0.1s;
+  }
+  #btn-fire {
+    background: radial-gradient(circle at 35% 35%, #662222, #331111);
+    border-color: #ff4444;
+    color: #ff6666;
+  }
+  #btn-fire.pressed {
+    background: radial-gradient(circle at 35% 35%, #ff4444, #aa2222);
+    color: #fff;
+    box-shadow: 0 0 20px rgba(255,68,68,0.6);
+  }
+  #btn-rail {
+    background: radial-gradient(circle at 35% 35%, #1a3344, #0d1a22);
+    border-color: #00ccff;
+    color: #00ccff;
+  }
+  #btn-rail.pressed {
+    background: radial-gradient(circle at 35% 35%, #00ccff, #006688);
+    color: #fff;
+    box-shadow: 0 0 20px rgba(0,204,255,0.6);
+  }
+  #btn-rail .ammo {
+    display: block;
+    font-size: 20px;
+  }
+  #btn-esc {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    border: 1px solid #555;
+    background: #222;
+    color: #888;
+    font-family: monospace;
+    font-size: 11px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+    position: absolute;
+    top: -8px;
+    right: -52px;
+  }
+  #btn-esc.pressed {
+    background: #555;
+    color: #fff;
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="controls">
+  <div id="action-btns">
+    <button class="action-btn" id="btn-fire" data-key="Space">FIRE</button>
+    <button class="action-btn" id="btn-rail" data-key="RailFire">RAIL<span class="ammo" id="rail-count"></span></button>
+    <button id="btn-esc" data-key="Escape">ESC</button>
+  </div>
+  <div id="dpad">
+    <button class="dpad-btn dpad-up" data-key="ArrowUp">&#9650;</button>
+    <button class="dpad-btn dpad-left" data-key="ArrowLeft">&#9664;</button>
+    <div class="dpad-center-dot"></div>
+    <button class="dpad-btn dpad-right" data-key="ArrowRight">&#9654;</button>
+    <button class="dpad-btn dpad-down" data-key="ArrowDown">&#9660;</button>
+  </div>
+</div>
 <script>
 "use strict";
 
@@ -34,12 +191,25 @@ const W = 780, H = 580;
 canvas.width = W;
 canvas.height = H;
 
+let touchActive = false;
+
 function fitCanvas() {
-  const scaleX = window.innerWidth / W;
-  const scaleY = window.innerHeight / H;
-  const scale = Math.min(scaleX, scaleY);
-  canvas.style.width = (W * scale) + "px";
-  canvas.style.height = (H * scale) + "px";
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  if (touchActive) {
+    const availH = vh * 0.55;
+    const scaleX = vw / W;
+    const scaleY = availH / H;
+    const scale = Math.min(scaleX, scaleY);
+    canvas.style.width = (W * scale) + "px";
+    canvas.style.height = (H * scale) + "px";
+  } else {
+    const scaleX = vw / W;
+    const scaleY = vh / H;
+    const scale = Math.min(scaleX, scaleY);
+    canvas.style.width = (W * scale) + "px";
+    canvas.style.height = (H * scale) + "px";
+  }
 }
 fitCanvas();
 window.addEventListener("resize", fitCanvas);
@@ -160,6 +330,53 @@ function playSound(type) {
       osc.start(t);
       osc.stop(t + 0.15);
       break;
+
+    case "powerup": {
+      // Rising sparkly tone
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(600, t);
+      osc.frequency.exponentialRampToValueAtTime(2400, t + 0.3);
+      gain.gain.setValueAtTime(0.15, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc.start(t);
+      osc.stop(t + 0.35);
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      osc2.type = "triangle";
+      osc2.frequency.setValueAtTime(900, t + 0.05);
+      osc2.frequency.exponentialRampToValueAtTime(3200, t + 0.3);
+      gain2.gain.setValueAtTime(0.08, t + 0.05);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      osc2.start(t + 0.05);
+      osc2.stop(t + 0.35);
+      break;
+    }
+
+    case "railgun": {
+      // Heavy bass zap with sustained rumble
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(80, t);
+      osc.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+      gain.gain.setValueAtTime(0.25, t);
+      gain.gain.linearRampToValueAtTime(0.15, t + 0.2);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+      osc.start(t);
+      osc.stop(t + 0.5);
+      const osc2 = audioCtx.createOscillator();
+      const gain2 = audioCtx.createGain();
+      osc2.connect(gain2);
+      gain2.connect(audioCtx.destination);
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(200, t);
+      osc2.frequency.exponentialRampToValueAtTime(40, t + 0.15);
+      gain2.gain.setValueAtTime(0.2, t);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc2.start(t);
+      osc2.stop(t + 0.15);
+      break;
+    }
   }
 }
 
@@ -218,6 +435,51 @@ window.addEventListener("keydown", e => {
   }
 });
 window.addEventListener("keyup", e => { keys[e.code] = false; });
+
+// ── Mobile touch controls ───────────────────────────────────────────
+function setupMobileControls() {
+  if (!('ontouchstart' in window || navigator.maxTouchPoints > 0)) return;
+
+  touchActive = true;
+  document.body.classList.add('mobile');
+  fitCanvas();
+
+  document.addEventListener('contextmenu', e => e.preventDefault());
+
+  const allBtns = document.querySelectorAll('.dpad-btn, .action-btn, #btn-esc');
+  allBtns.forEach(btn => {
+    const key = btn.dataset.key;
+    if (!key) return;
+
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      keys[key] = true;
+      btn.classList.add('pressed');
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }, { passive: false });
+
+    btn.addEventListener('touchend', e => {
+      e.preventDefault();
+      keys[key] = false;
+      btn.classList.remove('pressed');
+    }, { passive: false });
+
+    btn.addEventListener('touchcancel', e => {
+      keys[key] = false;
+      btn.classList.remove('pressed');
+    });
+  });
+
+  // Prevent scroll/zoom on the controls area
+  const ctrl = document.getElementById('controls');
+  ctrl.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+  // Prevent accidental canvas touches from scrolling
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  }, { passive: false });
+}
 
 // ── Utility ──────────────────────────────────────────────────────────
 function drawText(text, x, y, color, size, align) {
@@ -491,6 +753,121 @@ class Explosion {
   }
 }
 
+class PowerUp {
+  constructor() {
+    this.w = 20;
+    this.h = 20;
+    this.x = FIELD_X + 50 + Math.random() * (FIELD_W - 100);
+    // Middle third of field vertically
+    const thirdH = FIELD_H / 3;
+    this.y = FIELD_Y + thirdH + Math.random() * thirdH;
+    this.alive = true;
+    this.frame = 0;
+    this.maxLife = 300;
+  }
+
+  update() {
+    this.frame++;
+    if (this.frame >= this.maxLife) this.alive = false;
+  }
+
+  draw() {
+    const pulse = 0.7 + 0.3 * Math.sin(this.frame * 0.15);
+    const hue = (this.frame * 4) % 360;
+    const size = this.w * pulse;
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+
+    // Outer glow
+    ctx.globalAlpha = 0.3 * pulse;
+    ctx.fillStyle = `hsl(${hue}, 100%, 70%)`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Diamond shape
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = `hsl(${hue}, 100%, 60%)`;
+    const hs = size * 0.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - hs);
+    ctx.lineTo(cx + hs, cy);
+    ctx.moveTo(cx, cy - hs);
+    ctx.lineTo(cx - hs, cy);
+    ctx.lineTo(cx, cy + hs);
+    ctx.lineTo(cx + hs, cy);
+    ctx.closePath();
+    ctx.fill();
+
+    // "R" label
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 11px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("R", cx, cy);
+    ctx.globalAlpha = 1;
+  }
+}
+
+class RailBeam {
+  constructor(x) {
+    this.x = x;
+    this.frame = 0;
+    this.maxFrames = 21;
+    this.alive = true;
+  }
+
+  update() {
+    this.frame++;
+    if (this.frame >= this.maxFrames) this.alive = false;
+  }
+
+  draw() {
+    const cx = this.x;
+    const top = FIELD_Y;
+    const bot = FIELD_Y + FIELD_H;
+    const f = this.frame;
+
+    let width, alpha;
+    if (f <= 5) {
+      // Thin line appears
+      width = 2;
+      alpha = 0.7 + 0.3 * (f / 5);
+    } else if (f <= 12) {
+      // Expand to thick beam
+      const t = (f - 5) / 7;
+      width = 2 + 18 * t;
+      alpha = 1;
+    } else {
+      // Shrink and fade
+      const t = (f - 12) / 8;
+      width = 20 * (1 - t);
+      alpha = 1 - t;
+    }
+
+    if (width < 0.5 || alpha < 0.01) return;
+
+    // Outer layer (blue)
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.fillStyle = "#0044ff";
+    ctx.fillRect(cx - width / 2, top, width, bot - top);
+
+    // Middle layer (cyan)
+    ctx.globalAlpha = alpha * 0.6;
+    ctx.fillStyle = "#00ccff";
+    const midW = width * 0.6;
+    ctx.fillRect(cx - midW / 2, top, midW, bot - top);
+
+    // Core (white)
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = "#ffffff";
+    const coreW = Math.max(1, width * 0.25);
+    ctx.fillRect(cx - coreW / 2, top, coreW, bot - top);
+
+    ctx.globalAlpha = 1;
+  }
+}
+
 // ── Alien grid builder ───────────────────────────────────────────────
 function makeAlienGrid(shootChance) {
   const cols = 8, rows = 5;
@@ -544,6 +921,7 @@ let difficulty = "medium";
 
 let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
+let railAmmo, powerUp, powerUpTimer, powerUpInterval;
 
 function startGame(diffKey) {
   difficulty = diffKey;
@@ -565,6 +943,10 @@ function startGame(diffKey) {
   alienMoveTimer = 0;
   totalAliens = aliens.length;
   score = 0;
+  railAmmo = 0;
+  powerUp = null;
+  powerUpTimer = 0;
+  powerUpInterval = 500 + Math.floor(Math.random() * 200);
   gameState = "playing";
 }
 
@@ -638,10 +1020,40 @@ function updateGame() {
 
   player.update();
 
-  // shooting
-  if (keys["Space"]) {
+  // shooting — RailFire is the mobile RAIL button; on desktop Space auto-fires rail
+  const wantsRail = keys["RailFire"] || (!touchActive && keys["Space"] && railAmmo > 0);
+  if (wantsRail && railAmmo > 0 && player.cooldown <= 0) {
+    railAmmo--;
+    player.cooldown = PLAYER_SHOOT_COOLDOWN;
+    const beamX = player.x + player.w / 2;
+    explosions.push(new RailBeam(beamX));
+    playSound("railgun");
+    const beamHalf = 10;
+    const beamAlive = aliens.filter(a => a.alive);
+    for (const a of beamAlive) {
+      const aCx = a.x + a.w / 2;
+      if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
+        a.alive = false;
+        score += a.points;
+        explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+      }
+    }
+  } else if (keys["Space"]) {
     const p = player.shoot();
     if (p) { projectiles.push(p); playSound("shoot"); }
+  }
+
+  // power-up spawning
+  if (powerUp === null) {
+    powerUpTimer++;
+    if (powerUpTimer >= powerUpInterval) {
+      powerUp = new PowerUp();
+      powerUpTimer = 0;
+      powerUpInterval = 500 + Math.floor(Math.random() * 200);
+    }
+  } else {
+    powerUp.update();
+    if (!powerUp.alive) powerUp = null;
   }
 
   // alien movement — speed up as aliens are destroyed
@@ -698,7 +1110,15 @@ function updateGame() {
   for (const p of projectiles) {
     let hit = false;
     if (p.dir === -1) {
-      for (const a of alive) {
+      // Check power-up first
+      if (powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
+        railAmmo++;
+        explosions.push(new Explosion(powerUp.x + powerUp.w / 2, powerUp.y + powerUp.h / 2));
+        powerUp = null;
+        playSound("powerup");
+        hit = true;
+      }
+      if (!hit) for (const a of alive) {
         if (a.alive && rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
           const dead = a.takeHit();
           explosions.push(new Explosion(p.x, p.y));
@@ -780,6 +1200,9 @@ function drawGame() {
     player.draw();
   }
 
+  // power-up
+  if (powerUp && powerUp.alive) powerUp.draw();
+
   // projectiles
   for (const p of projectiles) p.draw();
 
@@ -792,7 +1215,14 @@ function drawGame() {
   drawText(`SPACE ATTACK  [${diffLabel}]`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
-  drawText("Arrows=Move  Space=Shoot  Esc=Menu", FIELD_X + 560, FIELD_Y - 10, "#666666", 11, "left");
+  if (railAmmo > 0) drawText(`RAIL: ${railAmmo}`, FIELD_X + 560, FIELD_Y - 10, "#00ccff", 14, "left");
+  drawText("Arrows=Move  Space=Shoot  Esc=Menu", FIELD_X + 640, FIELD_Y - 10, "#666666", 11, "left");
+
+  // Update mobile RAIL button ammo display
+  if (touchActive) {
+    const rc = document.getElementById('rail-count');
+    if (rc) rc.textContent = railAmmo > 0 ? railAmmo : '';
+  }
 
   // end-state overlay
   if (gameState === "won" || gameState === "lost") {
@@ -801,7 +1231,8 @@ function drawGame() {
     const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
     drawText(msg1, W / 2, H / 2 - 30, COL.msg, 36, "center");
     drawText(`Score: ${score}`, W / 2, H / 2 + 10, COL.msg, 20, "center");
-    drawText("R = Restart    M / ESC = Menu", W / 2, H / 2 + 50, COL.status, 16, "center");
+    const restartHint = touchActive ? "FIRE = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
+    drawText(restartHint, W / 2, H / 2 + 50, COL.status, 16, "center");
   }
 }
 
@@ -809,7 +1240,7 @@ function drawGame() {
 let endKeyDebounce = {};
 
 function updateEndState() {
-  const rPressed = keys["KeyR"];
+  const rPressed = keys["KeyR"] || (touchActive && keys["Space"]);
   const mPressed = keys["KeyM"] || keys["Escape"];
 
   if (rPressed && !endKeyDebounce.r) {
@@ -868,6 +1299,7 @@ function throttledLoop(timestamp) {
 }
 
 // Actually just use requestAnimationFrame directly for smoother feel
+setupMobileControls();
 gameLoop();
 </script>
 </body>
