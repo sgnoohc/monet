@@ -663,7 +663,7 @@ function updateGame() {
     }
     if (reverse) {
       alienDir *= -1;
-      for (const a of alive) a.y += 4;
+      for (const a of alive) a.y += 10;
     } else {
       for (const a of alive) a.x += alienDir * speed;
     }
