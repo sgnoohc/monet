@@ -1501,7 +1501,7 @@ class Projectile {
   }
 
   update() {
-    const speedMult = (this.dir === 1 && slowTimer > 0) ? 0.3 : 1;
+    const speedMult = (this.dir === 1 && slowTimer > 0) ? 0.1 : 1;
     this.y += this.dir * PROJ_SPEED * speedMult;
     if (this.y < FIELD_Y || this.y > FIELD_Y + FIELD_H) this.alive = false;
   }
@@ -1521,7 +1521,7 @@ class Bomb extends Projectile {
   }
 
   update() {
-    const speedMult = slowTimer > 0 ? 0.3 : 1;
+    const speedMult = slowTimer > 0 ? 0.1 : 1;
     this.y += BOMB_SPEED * speedMult;
     if (this.y > FIELD_Y + FIELD_H) this.alive = false;
   }
@@ -1974,7 +1974,7 @@ class Mothership {
             const vx = p.vx;
             p.update = function() {
               origUpdate();
-              this.x += vx * (slowTimer > 0 ? 0.3 : 1);
+              this.x += vx * (slowTimer > 0 ? 0.1 : 1);
             };
             newProjectiles.push(p);
           }
@@ -1992,7 +1992,7 @@ class Mothership {
             const origUpdate = p.update.bind(p);
             p.update = function() {
               origUpdate();
-              this.x += vx * (slowTimer > 0 ? 0.3 : 1);
+              this.x += vx * (slowTimer > 0 ? 0.1 : 1);
             };
             newProjectiles.push(p);
           }
@@ -2826,7 +2826,7 @@ function updateGame() {
   }
 
   // alien movement — speed up as aliens are destroyed
-  const slowMult = slowTimer > 0 ? 3.33 : 1;
+  const slowMult = slowTimer > 0 ? 20 : 1;
   alienMoveTimer++;
   const alive = aliens.filter(a => a.alive);
   const ratio = alive.length / totalAliens;
