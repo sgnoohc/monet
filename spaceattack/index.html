@@ -1458,7 +1458,7 @@ function drawWeaponBar() {
   const slotW = 45, slotH = 16, gap = 4;
   const totalW = weapons.length * slotW + (weapons.length - 1) * gap;
   const startX = W / 2 - totalW / 2;
-  const y = FIELD_Y + FIELD_H - 14;
+  const y = FIELD_Y + FIELD_H + 4;
 
   for (let i = 0; i < weapons.length; i++) {
     const w = weapons[i];
