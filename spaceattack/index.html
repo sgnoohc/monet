@@ -1919,6 +1919,7 @@ function updateGame() {
       if (!debugInvincible) {
         playSound("playerDeath");
         gameState = "lost";
+        endCooldown = 30;
         return;
       }
     }
@@ -2006,6 +2007,7 @@ function updateGame() {
           explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
           playSound("playerDeath");
           gameState = "lost";
+          endCooldown = 30;
           hit = true;
         }
       }
@@ -2032,11 +2034,13 @@ function updateGame() {
   if (aliens.filter(a => a.alive).length === 0) {
     playSound("win");
     gameState = "won";
+    endCooldown = 30;
   }
 
   if (bunkers.every(b => b.isDestroyed) && !debugInvincible) {
     playSound("playerDeath");
     gameState = "lost";
+    endCooldown = 30;
   }
 
   // decrement timers
@@ -2204,8 +2208,11 @@ function drawGame() {
 
 // ── End-state input ──────────────────────────────────────────────────
 let endKeyDebounce = {};
+let endCooldown = 0; // frames to ignore input after game ends
 
 function updateEndState() {
+  if (endCooldown > 0) { endCooldown--; return; }
+
   const rPressed = keys["KeyR"] || (touchActive && keys["Space"]);
   const mPressed = keys["KeyM"] || keys["Escape"];
 
