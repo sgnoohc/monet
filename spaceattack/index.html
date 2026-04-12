@@ -1024,7 +1024,7 @@ const BOMBER_HP = 3;
 const BOMB_BLAST_RADIUS = 15;
 const LASER_BLAST_RADIUS = 6;
 
-const WEAPON_TYPES = ["rail", "bomb", "heal", "slow", "clone"];
+const WEAPON_TYPES = ["rail", "bomb", "heal", "slow", "clone", "homing"];
 const POWERUP_INTERVAL = {
   easy:     null,
   medium:   { base: 317, rand: 115 },
@@ -1032,10 +1032,10 @@ const POWERUP_INTERVAL = {
   insane:   { base: 144, rand: 72 },
   doomsday: { base: 86, rand: 58 },
 };
-const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff", life: "#00ff00", clone: "#ffcc00" };
-const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW", clone: "CLONE" };
-const WEAPON_KEYS = { rail: "R", bomb: "T", heal: "+", slow: "S", life: "♥", clone: "C" };
-const WEAPON_HUES = { rail: 180, bomb: 30, heal: 120, slow: 270, life: 120, clone: 45 };
+const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff", life: "#00ff00", clone: "#ffcc00", homing: "#ff44aa" };
+const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW", clone: "CLONE", homing: "HOME" };
+const WEAPON_KEYS = { rail: "R", bomb: "T", heal: "+", slow: "S", life: "♥", clone: "C", homing: "H" };
+const WEAPON_HUES = { rail: 180, bomb: 30, heal: 120, slow: 270, life: 120, clone: 45, homing: 330 };
 
 // ── Star field config ────────────────────────────────────────────────
 const STAR_CONFIG = {
@@ -1112,7 +1112,7 @@ function setupMobileControls() {
       e.preventDefault();
       if (audioCtx.state === 'suspended') audioCtx.resume();
       const action = btn.dataset.dbg;
-      if (action === "ammo") { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; cloneAmmo += 3; playSound("powerup"); }
+      if (action === "ammo") { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; cloneAmmo += 3; homingAmmo += 3; playSound("powerup"); }
       else if (action === "spawn") {
         const rt = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
         powerUps.push(new PowerUp(rt));
@@ -1600,6 +1600,115 @@ class Torpedo {
     ctx.fill();
     ctx.globalAlpha = 1;
 
+    ctx.restore();
+  }
+}
+
+class HomingMissile {
+  constructor(x, y) {
+    this.x = x - 3;
+    this.y = y;
+    this.w = 6;
+    this.h = 8;
+    this.dir = -1;
+    this.alive = true;
+    this.isBomb = false;
+    this.isTorpedo = false;
+    this.isHoming = true;
+    this.vx = 0;
+    this.vy = -PROJ_SPEED * 0.6;
+    this.speed = PROJ_SPEED * 0.6;
+    this.turnRate = 0.08;
+    this.trail = [];
+  }
+
+  findTarget() {
+    // Priority 1: boss
+    if (bossPhase && mothership && mothership.alive) {
+      return { x: mothership.x + mothership.w / 2, y: mothership.y + mothership.h / 2 };
+    }
+    // Priority 2: densest cluster of aliens
+    const aliveAliens = aliens.filter(a => a.alive);
+    if (aliveAliens.length === 0) return null;
+    let best = null, bestCount = 0;
+    for (const a of aliveAliens) {
+      const cx = a.x + a.w / 2, cy = a.y + a.h / 2;
+      let count = 0;
+      for (const b of aliveAliens) {
+        const dx = (b.x + b.w / 2) - cx, dy = (b.y + b.h / 2) - cy;
+        if (dx * dx + dy * dy < 3600) count++; // 60px radius
+      }
+      if (count > bestCount) { bestCount = count; best = { x: cx, y: cy }; }
+    }
+    return best;
+  }
+
+  update() {
+    const target = this.findTarget();
+    if (target) {
+      const dx = target.x - (this.x + this.w / 2);
+      const dy = target.y - (this.y + this.h / 2);
+      const desired = Math.atan2(dy, dx);
+      const current = Math.atan2(this.vy, this.vx);
+      let diff = desired - current;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const turn = Math.max(-this.turnRate, Math.min(this.turnRate, diff));
+      const newAngle = current + turn;
+      this.vx = Math.cos(newAngle) * this.speed;
+      this.vy = Math.sin(newAngle) * this.speed;
+    }
+    this.trail.push({ x: this.x + this.w / 2, y: this.y + this.h / 2 });
+    if (this.trail.length > 8) this.trail.shift();
+    this.x += this.vx;
+    this.y += this.vy;
+    if (this.x < FIELD_X - 20 || this.x > FIELD_X + FIELD_W + 20 ||
+        this.y < FIELD_Y - 20 || this.y > FIELD_Y + FIELD_H + 20) this.alive = false;
+  }
+
+  draw() {
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    ctx.save();
+    // Trail
+    for (let i = 0; i < this.trail.length; i++) {
+      const t = this.trail[i];
+      ctx.globalAlpha = (i / this.trail.length) * 0.4;
+      ctx.fillStyle = "#ff44aa";
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // Missile body
+    const angle = Math.atan2(this.vy, this.vx);
+    ctx.translate(cx, cy);
+    ctx.rotate(angle - Math.PI / 2);
+    // Nosecone
+    ctx.fillStyle = "#ff44aa";
+    ctx.beginPath();
+    ctx.moveTo(0, -5);
+    ctx.lineTo(-2.5, 0);
+    ctx.lineTo(2.5, 0);
+    ctx.closePath();
+    ctx.fill();
+    // Body
+    ctx.fillRect(-2, 0, 4, 4);
+    // Exhaust
+    const flicker = 1 + Math.random() * 3;
+    ctx.fillStyle = "rgba(255,150,200,0.6)";
+    ctx.beginPath();
+    ctx.moveTo(-2, 4);
+    ctx.lineTo(0, 4 + flicker);
+    ctx.lineTo(2, 4);
+    ctx.closePath();
+    ctx.fill();
+    // Glow
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = "#ff44aa";
+    ctx.beginPath();
+    ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 }
@@ -2433,7 +2542,7 @@ let difficulty = "medium";
 
 let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
-let railAmmo, bombAmmo, healAmmo, slowAmmo, cloneAmmo, selectedWeapon, slowTimer;
+let railAmmo, bombAmmo, healAmmo, slowAmmo, cloneAmmo, homingAmmo, selectedWeapon, slowTimer;
 let bunkerHealFlash;
 let powerUps, powerUpTimer, powerUpInterval;
 let lives, invulnTimer, cloneTimer;
@@ -2478,6 +2587,7 @@ function startGame(diffKey) {
   healAmmo = 0;
   slowAmmo = 0;
   cloneAmmo = 0;
+  homingAmmo = 0;
   selectedWeapon = 0;
   slowTimer = 0;
   bunkerHealFlash = 0;
@@ -2651,14 +2761,14 @@ function updateGame() {
   // ── Weapon cycling (Tab) ──
   const tabPressed = keys["Tab"];
   if (tabPressed && !tabDebounce) {
-    const ammos = [railAmmo, bombAmmo, healAmmo, slowAmmo, cloneAmmo];
+    const ammos = [railAmmo, bombAmmo, healAmmo, slowAmmo, cloneAmmo, homingAmmo];
     // Try to find next weapon with ammo
     let found = false;
-    for (let i = 1; i <= 5; i++) {
-      const idx = (selectedWeapon + i) % 5;
+    for (let i = 1; i <= ammos.length; i++) {
+      const idx = (selectedWeapon + i) % ammos.length;
       if (ammos[idx] > 0) { selectedWeapon = idx; found = true; break; }
     }
-    if (!found) selectedWeapon = (selectedWeapon + 1) % 5;
+    if (!found) selectedWeapon = (selectedWeapon + 1) % ammos.length;
     playSound("menuSelect");
   }
   tabDebounce = tabPressed;
@@ -2739,11 +2849,22 @@ function updateGame() {
       cloneAmmo--;
       cloneTimer += Math.round(FPS * 10); // +10 seconds, stacks
       playSound("powerup");
+    } else if (wType === "homing" && homingAmmo > 0 && player.cooldown <= 0) {
+      homingAmmo--;
+      player.cooldown = PLAYER_SHOOT_COOLDOWN;
+      projectiles.push(new HomingMissile(player.x + player.w / 2, player.y - 4));
+      if (cloneTimer > 0) {
+        for (const ox of [-36, 36]) {
+          const cx = Math.max(FIELD_X, Math.min(FIELD_X + FIELD_W - player.w, player.x + ox)) + player.w / 2;
+          projectiles.push(new HomingMissile(cx, player.y));
+        }
+      }
+      playSound("shoot");
     }
     // Auto-switch to a weapon that has ammo if current is empty
-    const curAmmos = [railAmmo, bombAmmo, healAmmo, slowAmmo, cloneAmmo];
+    const curAmmos = [railAmmo, bombAmmo, healAmmo, slowAmmo, cloneAmmo, homingAmmo];
     if (curAmmos[selectedWeapon] <= 0) {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < curAmmos.length; i++) {
         if (curAmmos[i] > 0) { selectedWeapon = i; break; }
       }
     }
@@ -2761,7 +2882,7 @@ function updateGame() {
     dk.d3 = !!keys["Digit3"];
     if (keys["Digit4"] && !dk.d4) { slowAmmo += 3; selectedWeapon = 3; playSound("powerup"); }
     dk.d4 = !!keys["Digit4"];
-    if (keys["Digit5"] && !dk.d5) { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; cloneAmmo += 3; playSound("powerup"); }
+    if (keys["Digit5"] && !dk.d5) { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; cloneAmmo += 3; homingAmmo += 3; playSound("powerup"); }
     dk.d5 = !!keys["Digit5"];
     if (keys["Digit0"] && !dk.d0 && difficulty !== "easy") {
       const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
@@ -2898,20 +3019,21 @@ function updateGame() {
   for (const p of projectiles) {
     let hit = false;
     if (p.dir === -1) {
-      // Check power-ups (not for torpedoes)
-      if (!p.isTorpedo) {
+      // Check power-ups (not for torpedoes/homing)
+      if (!p.isTorpedo && !p.isHoming) {
         for (const pu of powerUps) {
           if (pu.alive && rectCollide(p.x, p.y, p.w, p.h, pu.x, pu.y, pu.w, pu.h)) {
             if (pu.type === "life") {
               lives = Math.min(5, lives + 1);
             } else {
-              const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo > 0;
+              const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo + homingAmmo > 0;
               switch (pu.type) {
                 case "rail": railAmmo++; break;
                 case "bomb": bombAmmo++; break;
                 case "heal": healAmmo++; break;
                 case "slow": slowAmmo++; break;
                 case "clone": cloneAmmo++; break;
+                case "homing": homingAmmo++; break;
               }
               if (!hadAny) selectedWeapon = WEAPON_TYPES.indexOf(pu.type);
             }
@@ -2928,6 +3050,13 @@ function updateGame() {
         if (a.alive && rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
           if (p.isTorpedo) {
             triggerBombExplosion(a.x + a.w / 2, a.y + a.h / 2);
+            hit = true;
+            break;
+          } else if (p.isHoming) {
+            a.alive = false;
+            score += a.points;
+            explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+            playSound("explode");
             hit = true;
             break;
           } else {
@@ -2949,6 +3078,12 @@ function updateGame() {
             explosions.push(new BombExplosion(bcx, bcy));
             playSound("torpedoBlast");
             const dead = mothership.takeHit(15);
+            if (dead) handleBossDeath();
+            hit = true;
+          } else if (p.isHoming) {
+            explosions.push(new Explosion(p.x, p.y));
+            playSound("hit");
+            const dead = mothership.takeHit(5);
             if (dead) handleBossDeath();
             hit = true;
           } else {
@@ -3211,6 +3346,17 @@ function drawWeaponIcon(type, cx, cy, color, scale) {
       ctx.closePath();
       ctx.fill();
     }
+  } else if (type === "homing") {
+    // Crosshair/target reticle
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 5); ctx.lineTo(cx, cy - 2);
+    ctx.moveTo(cx, cy + 2); ctx.lineTo(cx, cy + 5);
+    ctx.moveTo(cx - 5, cy); ctx.lineTo(cx - 2, cy);
+    ctx.moveTo(cx + 2, cy); ctx.lineTo(cx + 5, cy);
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -3222,6 +3368,7 @@ function drawWeaponBar() {
     { type: "heal", color: "#00ff66", ammo: healAmmo },
     { type: "slow", color: "#9944ff", ammo: slowAmmo },
     { type: "clone", color: "#ffcc00", ammo: cloneAmmo },
+    { type: "homing", color: "#ff44aa", ammo: homingAmmo },
   ];
 
   const iconSpacing = 12;
@@ -3232,7 +3379,7 @@ function drawWeaponBar() {
   const totalW = weapons.length * slotW + (weapons.length - 1) * gap;
   const startX = W / 2 - totalW / 2;
   const y = FIELD_Y + FIELD_H + 4;
-  const allEmpty = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo <= 0;
+  const allEmpty = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo + homingAmmo <= 0;
 
   for (let i = 0; i < weapons.length; i++) {
     const w = weapons[i];
@@ -3471,8 +3618,8 @@ function drawGame() {
     const countEl = document.getElementById('special-count');
     const btn = document.getElementById('btn-special');
     if (nameEl && btn) {
-      const ammos = { rail: railAmmo, bomb: bombAmmo, heal: healAmmo, slow: slowAmmo, clone: cloneAmmo };
-      const anyAmmo = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo > 0;
+      const ammos = { rail: railAmmo, bomb: bombAmmo, heal: healAmmo, slow: slowAmmo, clone: cloneAmmo, homing: homingAmmo };
+      const anyAmmo = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo + homingAmmo > 0;
       if (anyAmmo) {
         const wType = WEAPON_TYPES[selectedWeapon];
         const curAmmo = ammos[wType];
