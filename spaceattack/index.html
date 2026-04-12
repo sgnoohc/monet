@@ -1027,10 +1027,10 @@ const LASER_BLAST_RADIUS = 6;
 const WEAPON_TYPES = ["rail", "bomb", "heal", "slow"];
 const POWERUP_INTERVAL = {
   easy:     null,
-  medium:   { base: 225, rand: 75 },
-  difficult:{ base: 150, rand: 75 },
-  insane:   { base: 100, rand: 50 },
-  doomsday: { base: 60, rand: 40 },
+  medium:   { base: 110, rand: 40 },
+  difficult:{ base: 75, rand: 35 },
+  insane:   { base: 50, rand: 25 },
+  doomsday: { base: 30, rand: 20 },
 };
 const WEAPON_COLORS = { rail: "#00ccff", bomb: "#ff6600", heal: "#00ff66", slow: "#9944ff" };
 const WEAPON_NAMES = { rail: "RAIL", bomb: "TORP", heal: "HEAL", slow: "SLOW" };
@@ -1115,7 +1115,7 @@ function setupMobileControls() {
       if (action === "ammo") { railAmmo += 3; bombAmmo += 3; healAmmo += 3; slowAmmo += 3; playSound("powerup"); }
       else if (action === "spawn") {
         const rt = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
-        powerUp = new PowerUp(rt);
+        powerUps.push(new PowerUp(rt));
         playSound("powerup");
       }
       else if (action === "inv") { debugInvincible = !debugInvincible; playSound("menuSelect"); }
@@ -2176,7 +2176,7 @@ let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
 let railAmmo, bombAmmo, healAmmo, slowAmmo, selectedWeapon, slowTimer;
 let bunkerHealFlash;
-let powerUp, powerUpTimer, powerUpInterval;
+let powerUps, powerUpTimer, powerUpInterval;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer;
 
 function startGame(diffKey) {
@@ -2206,7 +2206,7 @@ function startGame(diffKey) {
   selectedWeapon = 0;
   slowTimer = 0;
   bunkerHealFlash = 0;
-  powerUp = null;
+  powerUps = [];
   powerUpTimer = 0;
   const pui = POWERUP_INTERVAL[diffKey];
   powerUpInterval = pui ? pui.base + Math.floor(Math.random() * pui.rand) : Infinity;
@@ -2427,7 +2427,7 @@ function updateGame() {
     dk.d5 = !!keys["Digit5"];
     if (keys["Digit0"] && !dk.d0 && difficulty !== "easy") {
       const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
-      powerUp = new PowerUp(randomType);
+      powerUps.push(new PowerUp(randomType));
       playSound("powerup");
     }
     dk.d0 = !!keys["Digit0"];
@@ -2470,19 +2470,16 @@ function updateGame() {
 
   // power-up spawning (disabled on easy)
   if (difficulty !== "easy") {
-    if (powerUp === null) {
-      powerUpTimer++;
-      if (powerUpTimer >= powerUpInterval) {
-        const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
-        powerUp = new PowerUp(randomType);
-        powerUpTimer = 0;
-        const pui2 = POWERUP_INTERVAL[difficulty];
-        powerUpInterval = pui2 ? pui2.base + Math.floor(Math.random() * pui2.rand) : Infinity;
-      }
-    } else {
-      powerUp.update();
-      if (!powerUp.alive) powerUp = null;
+    powerUpTimer++;
+    if (powerUpTimer >= powerUpInterval) {
+      const randomType = WEAPON_TYPES[Math.floor(Math.random() * WEAPON_TYPES.length)];
+      powerUps.push(new PowerUp(randomType));
+      powerUpTimer = 0;
+      const pui2 = POWERUP_INTERVAL[difficulty];
+      powerUpInterval = pui2 ? pui2.base + Math.floor(Math.random() * pui2.rand) : Infinity;
     }
+    for (const pu of powerUps) pu.update();
+    powerUps = powerUps.filter(pu => pu.alive);
   }
 
   // alien movement — speed up as aliens are destroyed
@@ -2550,20 +2547,25 @@ function updateGame() {
   for (const p of projectiles) {
     let hit = false;
     if (p.dir === -1) {
-      // Check power-up (not for torpedoes)
-      if (!p.isTorpedo && powerUp && powerUp.alive && rectCollide(p.x, p.y, p.w, p.h, powerUp.x, powerUp.y, powerUp.w, powerUp.h)) {
-        const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo > 0;
-        switch (powerUp.type) {
-          case "rail": railAmmo++; break;
-          case "bomb": bombAmmo++; break;
-          case "heal": healAmmo++; break;
-          case "slow": slowAmmo++; break;
+      // Check power-ups (not for torpedoes)
+      if (!p.isTorpedo) {
+        for (const pu of powerUps) {
+          if (pu.alive && rectCollide(p.x, p.y, p.w, p.h, pu.x, pu.y, pu.w, pu.h)) {
+            const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo > 0;
+            switch (pu.type) {
+              case "rail": railAmmo++; break;
+              case "bomb": bombAmmo++; break;
+              case "heal": healAmmo++; break;
+              case "slow": slowAmmo++; break;
+            }
+            if (!hadAny) selectedWeapon = WEAPON_TYPES.indexOf(pu.type);
+            explosions.push(new Explosion(pu.x + pu.w / 2, pu.y + pu.h / 2));
+            pu.alive = false;
+            playSound("powerup");
+            hit = true;
+            break;
+          }
         }
-        if (!hadAny) selectedWeapon = WEAPON_TYPES.indexOf(powerUp.type);
-        explosions.push(new Explosion(powerUp.x + powerUp.w / 2, powerUp.y + powerUp.h / 2));
-        powerUp = null;
-        playSound("powerup");
-        hit = true;
       }
       // Check aliens
       if (!hit) for (const a of alive) {
@@ -2590,7 +2592,7 @@ function updateGame() {
             const bcy = mothership.y + mothership.h / 2;
             explosions.push(new BombExplosion(bcx, bcy));
             playSound("torpedoBlast");
-            const dead = mothership.takeHit(5);
+            const dead = mothership.takeHit(15);
             if (dead) handleBossDeath();
             hit = true;
           } else {
@@ -2655,7 +2657,7 @@ function updateGame() {
     playSound("alarm");
     bossTransitionTimer = 60; // 2s at 30fps
     projectiles = [];
-    powerUp = null;
+    powerUps = [];
   }
 
   if (bossTransitionTimer > 0) {
@@ -2686,11 +2688,6 @@ function updateGame() {
   if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0 && !mothership) {
     playSound("win");
     gameState = "won";
-  }
-
-  if (bunkers.every(b => b.isDestroyed) && !debugInvincible && bossDeathTimer < 0) {
-    playSound("playerDeath");
-    gameState = "lost";
   }
 
   // decrement timers
@@ -2873,8 +2870,8 @@ function drawGame() {
     player.draw();
   }
 
-  // power-up
-  if (powerUp && powerUp.alive) powerUp.draw();
+  // power-ups
+  for (const pu of powerUps) if (pu.alive) pu.draw();
 
   // projectiles
   for (const p of projectiles) p.draw();
