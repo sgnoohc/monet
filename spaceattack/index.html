@@ -372,7 +372,7 @@ try {
   var _lastSubmitTime = 0;
 
   var submitScore = function(name, sc, diff, lvl, sess) {
-    if (!firebaseReady) { console.warn("[submitScore] firebaseReady=false"); return Promise.resolve(); }
+    if (!firebaseReady) return Promise.resolve();
 
     // Sanitize name: only A-Z 0-9 space dash underscore
     name = String(name).toUpperCase().replace(/[^A-Z0-9 \-_]/g, "").slice(0, 12);
@@ -380,23 +380,23 @@ try {
 
     // Validate score bounds
     if (typeof sc !== "number" || !Number.isInteger(sc) || sc <= 0 || sc > 999999) {
-      return Promise.reject("Invalid score: " + sc);
+      return Promise.reject("Invalid score");
     }
 
     // Validate level
     if (typeof lvl !== "number" || !Number.isInteger(lvl) || lvl < 1 || lvl > 99) {
-      return Promise.reject("Invalid level: " + lvl);
+      return Promise.reject("Invalid level");
     }
 
     // Validate difficulty
     var _validDiffs = ["easy", "medium", "difficult", "insane", "doomsday"];
     if (_validDiffs.indexOf(diff) === -1) {
-      return Promise.reject("Invalid difficulty: " + diff);
+      return Promise.reject("Invalid difficulty");
     }
 
     // Require session data
     if (!sess || typeof sess !== "object" || typeof sess.f !== "number") {
-      return Promise.reject("Invalid session: " + JSON.stringify(sess));
+      return Promise.reject("Invalid session");
     }
 
     // Rate limit: 10 seconds between submissions
@@ -406,14 +406,13 @@ try {
     }
     _lastSubmitTime = now;
 
-    console.log("[submitScore] pushing to Firebase:", {name: name, score: sc, level: lvl, diff: diff});
     return db.ref("leaderboard/" + diff).push({
       name: name,
       score: sc,
       level: lvl,
       timestamp: firebase.database.ServerValue.TIMESTAMP,
       v: _scoreToken(name, sc, diff, lvl)
-    }).then(() => { console.log("[submitScore] Firebase push OK"); });
+    }).then(() => {});
   };
 
   // Session plausibility checker for leaderboard filtering
@@ -5056,17 +5055,14 @@ function doSubmitScore(skipSubmit) {
   if (!skipSubmit && name) {
     playerName = name;
     localStorage.setItem("spaceattack_name", playerName);
-    console.log("[SUBMIT] name:", name, "score:", score, "diff:", difficulty, "level:", level, "session:", JSON.stringify(_session));
     submitScore(name, score, difficulty, level, _session).then(() => {
-      console.log("[SUBMIT] success");
       scoreSubmitted = true;
       // Fetch updated leaderboard for current difficulty
       fetchLeaderboard(difficulty, 10, (data) => {
         leaderboardData = data;
         leaderboardLoaded = true;
       });
-    }).catch((err) => {
-      console.error("[SUBMIT] rejected:", err);
+    }).catch(() => {
       // Validation or rate-limit rejection — still show leaderboard
       scoreSubmitted = true;
       fetchLeaderboard(difficulty, 10, (data) => {
