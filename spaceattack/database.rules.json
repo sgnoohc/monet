@@ -6,7 +6,7 @@
         ".indexOn": ["score"],
         "$entryId": {
           ".write": "!data.exists()",
-          ".validate": "newData.hasChildren(['name', 'score', 'level', 'timestamp'])
+          ".validate": "newData.hasChildren(['name', 'score', 'level', 'timestamp', 'v'])
                         && newData.child('name').isString()
                         && newData.child('name').val().length >= 1
                         && newData.child('name').val().length <= 12
@@ -16,7 +16,9 @@
                         && newData.child('level').isNumber()
                         && newData.child('level').val() >= 1
                         && newData.child('level').val() <= 99
-                        && newData.child('timestamp').val() === now",
+                        && newData.child('timestamp').val() === now
+                        && newData.child('v').isString()
+                        && newData.child('v').val().length >= 1",
           "$other": {
             ".validate": false
           }

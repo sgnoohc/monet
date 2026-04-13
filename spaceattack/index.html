@@ -356,6 +356,18 @@ try {
   const db = firebase.database();
   firebaseReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
 
+  // ── Anti-abuse: integrity token ──────────────────────────────────────
+  var _ss = [83,112,52,99,101,65,116,116,52,99,107]; // obfuscated salt
+  function _scoreToken(name, sc, diff, lvl) {
+    var s = _ss.map(function(c){return String.fromCharCode(c)}).join("");
+    var raw = name + "|" + sc + "|" + diff + "|" + lvl + "|" + s;
+    var h = 5381;
+    for (var i = 0; i < raw.length; i++) {
+      h = ((h << 5) + h + raw.charCodeAt(i)) & 0xFFFFFFFF;
+    }
+    return (h >>> 0).toString(36);
+  }
+
   // ── Anti-abuse: rate limiting ──────────────────────────────────────
   var _lastSubmitTime = 0;
 
@@ -399,7 +411,8 @@ try {
       name: name,
       score: sc,
       level: lvl,
-      timestamp: firebase.database.ServerValue.TIMESTAMP
+      timestamp: firebase.database.ServerValue.TIMESTAMP,
+      v: _scoreToken(name, sc, diff, lvl)
     }).then(() => { console.log("[submitScore] Firebase push OK"); });
   };
 
