@@ -231,9 +231,88 @@
     background: #cc8800;
     color: #000;
   }
+  /* Name input overlay */
+  #name-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 100;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    font-family: monospace;
+  }
+  #name-overlay.show { display: flex; }
+  #name-overlay .prompt-box {
+    background: #111;
+    border: 2px solid #00cccc;
+    padding: 30px 40px;
+    text-align: center;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0,204,204,0.3);
+  }
+  #name-overlay h2 {
+    color: #00cccc;
+    font-size: 22px;
+    margin: 0 0 8px 0;
+    font-family: monospace;
+  }
+  #name-overlay .score-line {
+    color: #ffff00;
+    font-size: 16px;
+    margin-bottom: 16px;
+  }
+  #name-overlay input {
+    background: #000;
+    border: 2px solid #00ff66;
+    color: #00ff66;
+    font-family: monospace;
+    font-size: 20px;
+    padding: 8px 12px;
+    width: 200px;
+    text-align: center;
+    text-transform: uppercase;
+    outline: none;
+    border-radius: 4px;
+  }
+  #name-overlay input::placeholder { color: #336633; }
+  #name-overlay input:focus { border-color: #00ff99; box-shadow: 0 0 10px rgba(0,255,102,0.3); }
+  #name-overlay button {
+    display: block;
+    margin: 14px auto 0;
+    background: #003322;
+    border: 2px solid #00ff66;
+    color: #00ff66;
+    font-family: monospace;
+    font-size: 16px;
+    font-weight: bold;
+    padding: 8px 32px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  #name-overlay button:hover { background: #00ff66; color: #000; }
+  #name-overlay .skip-link {
+    color: #666;
+    font-size: 12px;
+    margin-top: 10px;
+    cursor: pointer;
+  }
+  #name-overlay .skip-link:hover { color: #999; }
 </style>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 </head>
 <body>
+<div id="name-overlay">
+  <div class="prompt-box">
+    <h2>ENTER YOUR NAME</h2>
+    <div class="score-line" id="overlay-score"></div>
+    <input type="text" id="player-name" maxlength="12" placeholder="PILOT" autocomplete="off" spellcheck="false">
+    <button id="submit-name">SUBMIT SCORE</button>
+    <div class="skip-link" id="skip-name">skip</div>
+  </div>
+</div>
 <canvas id="game"></canvas>
 <div id="debug-bar">
   <button class="dbg-btn" data-dbg="ammo">+ALL</button>
@@ -259,6 +338,70 @@
 </div>
 <script>
 "use strict";
+
+// ── Firebase + Leaderboard ───────────────────────────────────────────
+const firebaseConfig = {
+  // TODO: Replace with your Firebase project config
+  // Go to https://console.firebase.google.com/ → Project Settings → Your apps → Web
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "000000000000",
+  appId: "YOUR_APP_ID"
+};
+
+let firebaseReady = false;
+try {
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+  firebaseReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
+
+  var submitScore = function(name, sc, diff, lvl) {
+    if (!firebaseReady) return Promise.resolve();
+    return db.ref("leaderboard/" + diff).push({
+      name: name.toUpperCase().slice(0, 12),
+      score: sc,
+      level: lvl,
+      timestamp: firebase.database.ServerValue.TIMESTAMP
+    }).then(() => {});
+  };
+
+  var fetchLeaderboard = function(diff, limit, callback) {
+    if (!firebaseReady) { callback([]); return; }
+    db.ref("leaderboard/" + diff)
+      .orderByChild("score")
+      .limitToLast(limit || 10)
+      .once("value")
+      .then(snap => {
+        const entries = [];
+        snap.forEach(child => {
+          entries.push(child.val());
+        });
+        // Sort descending by score
+        entries.sort((a, b) => b.score - a.score);
+        callback(entries);
+      })
+      .catch(() => callback([]));
+  };
+} catch(e) {
+  firebaseReady = false;
+  var submitScore = function() { return Promise.resolve(); };
+  var fetchLeaderboard = function(d, l, cb) { cb([]); };
+}
+
+let leaderboardData = [];
+let leaderboardLoaded = false;
+let playerName = localStorage.getItem("spaceattack_name") || "";
+let scoreSubmitted = false;
+let showingNameInput = false;
+
+// Leaderboard viewer state (title screen)
+let lbViewDiff = 1; // index into DIFF_ORDER
+let lbViewData = [];
+let lbViewLoaded = false;
+let lbViewDebounce = {};
 
 // ── Canvas setup ─────────────────────────────────────────────────────
 const canvas = document.getElementById("game");
@@ -3025,7 +3168,7 @@ function handleBossDeath() {
 //  Game states
 // ════════════════════════════════════════════════════════════════════════
 
-let gameState = "title"; // title | playing | won | lost
+let gameState = "title"; // title | leaderboard | playing | won | lost
 let selectedDiff = 1;
 let difficulty = "medium";
 
@@ -3142,6 +3285,14 @@ function updateTitle() {
     startGame(DIFF_ORDER[selectedDiff]);
   }
 
+  // Leaderboard view (L key)
+  const lPressed = keys["KeyL"];
+  if (lPressed && !titleKeyDebounce.l) {
+    playSound("menuConfirm");
+    enterLeaderboardView();
+  }
+  titleKeyDebounce.l = lPressed;
+
   // Debug mode toggle (backtick on desktop)
   const backquotePressed = keys["Backquote"];
   if (backquotePressed && !titleKeyDebounce.backquote) {
@@ -3207,7 +3358,7 @@ function drawTitle() {
     drawText("1-5=Ammo  0=Spawn  I=Invincible  K=Kill all  N=Kill 50%", W / 2, 460, "#886600", 12, "center");
   }
 
-  drawText("UP/DOWN = Select    ENTER/SPACE = Start", W / 2, 480, COL.status, 14, "center");
+  drawText("UP/DOWN = Select    ENTER/SPACE = Start    L = Leaderboard", W / 2, 480, COL.status, 14, "center");
   drawText("ARROWS = Move  SPACE = Shoot  SHIFT = Special  TAB = Cycle", W / 2, 505, "#666666", 12, "center");
 }
 
@@ -4130,15 +4281,57 @@ function drawGame() {
 
   // end-state overlay
   if (gameState === "won" || gameState === "lost") {
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillStyle = "rgba(0,0,0,0.75)";
     ctx.fillRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
-    const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
-    drawText(msg1, W / 2, H / 2 - 30, COL.msg, 36, "center");
-    drawText(`Score: ${score}`, W / 2, H / 2 + 10, COL.msg, 20, "center");
-    const restartHint = touchActive ? "RETRY = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
-    drawText(restartHint, W / 2, H / 2 + 50, COL.status, 16, "center");
+
+    if (showingNameInput) {
+      // Name input overlay is on top — just show a minimal message
+      const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
+      drawText(msg1, W / 2, H / 2, COL.msg, 36, "center");
+    } else if (scoreSubmitted && leaderboardLoaded) {
+      // Show leaderboard
+      const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
+      const diffLabel = DIFFICULTIES[difficulty].label;
+      drawText(msg1, W / 2, FIELD_Y + 30, COL.msg, 30, "center");
+      drawText(`Score: ${score}`, W / 2, FIELD_Y + 58, COL.msg, 16, "center");
+
+      // Leaderboard header
+      const lbY = FIELD_Y + 85;
+      drawText(`── ${diffLabel} LEADERBOARD ──`, W / 2, lbY, "#00cccc", 16, "center");
+
+      // Draw entries
+      const lbStartY = lbY + 28;
+      if (leaderboardData.length === 0) {
+        drawText("No scores yet", W / 2, lbStartY + 20, "#666", 14, "center");
+      } else {
+        for (let i = 0; i < leaderboardData.length && i < 10; i++) {
+          const entry = leaderboardData[i];
+          const ey = lbStartY + i * 22;
+          const rank = `${i + 1}.`.padStart(3);
+          const eName = (entry.name || "???").padEnd(12);
+          const eScore = String(entry.score).padStart(7);
+          const eLvl = `Lv${entry.level || "?"}`;
+          const isMe = playerName && entry.name === playerName && entry.score === score;
+          const col = isMe ? "#00ff66" : "#cccccc";
+          const marker = isMe ? " ◄" : "";
+          drawText(`${rank} ${eName} ${eScore}  ${eLvl}${marker}`, W / 2, ey, col, 14, "center");
+        }
+      }
+
+      const restartHint = touchActive ? "RETRY = Restart    ESC = Menu" : "R = Restart    M / ESC = Menu";
+      drawText(restartHint, W / 2, FIELD_Y + FIELD_H - 20, COL.status, 14, "center");
+    } else {
+      // Still loading / submitting
+      const msg1 = gameState === "won" ? "YOU WIN!" : "GAME OVER";
+      drawText(msg1, W / 2, H / 2 - 20, COL.msg, 36, "center");
+      drawText(`Score: ${score}`, W / 2, H / 2 + 14, COL.msg, 20, "center");
+      if (scoreSubmitted) {
+        drawText("Loading leaderboard...", W / 2, H / 2 + 44, "#666", 14, "center");
+      }
+    }
+
     // Light up SPEC button as RETRY on mobile
-    if (touchActive) {
+    if (touchActive && !showingNameInput) {
       const btn = document.getElementById('btn-special');
       const nameEl = document.getElementById('special-name');
       const countEl = document.getElementById('special-count');
@@ -4153,17 +4346,188 @@ function drawGame() {
   }
 }
 
+// ── Leaderboard viewer (title screen) ────────────────────────────────
+
+function enterLeaderboardView() {
+  gameState = "leaderboard";
+  lbViewDiff = selectedDiff;
+  lbViewData = [];
+  lbViewLoaded = false;
+  lbViewDebounce = {};
+  fetchLeaderboard(DIFF_ORDER[lbViewDiff], 10, (data) => {
+    lbViewData = data;
+    lbViewLoaded = true;
+  });
+}
+
+function updateLeaderboardView() {
+  const leftPressed = keys["ArrowLeft"] || keys["KeyA"];
+  const rightPressed = keys["ArrowRight"] || keys["KeyD"];
+  const escPressed = keys["Escape"] || keys["Backspace"];
+
+  if (leftPressed && !lbViewDebounce.left) {
+    lbViewDiff = (lbViewDiff - 1 + DIFF_ORDER.length) % DIFF_ORDER.length;
+    lbViewLoaded = false;
+    lbViewData = [];
+    fetchLeaderboard(DIFF_ORDER[lbViewDiff], 10, (data) => {
+      lbViewData = data;
+      lbViewLoaded = true;
+    });
+    playSound("menuSelect");
+  }
+  if (rightPressed && !lbViewDebounce.right) {
+    lbViewDiff = (lbViewDiff + 1) % DIFF_ORDER.length;
+    lbViewLoaded = false;
+    lbViewData = [];
+    fetchLeaderboard(DIFF_ORDER[lbViewDiff], 10, (data) => {
+      lbViewData = data;
+      lbViewLoaded = true;
+    });
+    playSound("menuSelect");
+  }
+  if (escPressed && !lbViewDebounce.esc) {
+    gameState = "title";
+    playSound("menuSelect");
+  }
+
+  lbViewDebounce.left = leftPressed;
+  lbViewDebounce.right = rightPressed;
+  lbViewDebounce.esc = escPressed;
+}
+
+function drawLeaderboardView() {
+  drawText("LEADERBOARD", W / 2, 60, COL.logo, 36, "center");
+
+  // Difficulty tabs
+  const tabY = 110;
+  const tabWidth = FIELD_W / DIFF_ORDER.length;
+  for (let i = 0; i < DIFF_ORDER.length; i++) {
+    const label = DIFFICULTIES[DIFF_ORDER[i]].label;
+    const tx = FIELD_X + tabWidth * i + tabWidth / 2;
+    const selected = i === lbViewDiff;
+    const col = selected ? "#00ff66" : "#666666";
+    const sz = selected ? 16 : 13;
+    drawText(label, tx, tabY, col, sz, "center");
+    if (selected) {
+      ctx.fillStyle = "#00ff66";
+      ctx.fillRect(tx - tabWidth / 2 + 10, tabY + 12, tabWidth - 20, 2);
+    }
+  }
+
+  // Separator
+  ctx.fillStyle = "#333";
+  ctx.fillRect(FIELD_X + 40, tabY + 20, FIELD_W - 80, 1);
+
+  // Entries
+  const startY = tabY + 45;
+  if (!lbViewLoaded) {
+    drawText("Loading...", W / 2, startY + 60, "#666", 16, "center");
+  } else if (lbViewData.length === 0) {
+    drawText("No scores yet", W / 2, startY + 60, "#666", 16, "center");
+    if (!firebaseReady) {
+      drawText("(Firebase not configured)", W / 2, startY + 85, "#553300", 12, "center");
+    }
+  } else {
+    // Column headers
+    drawText("RANK  NAME           SCORE    LVL", W / 2, startY, "#00cccc", 13, "center");
+    for (let i = 0; i < lbViewData.length && i < 10; i++) {
+      const entry = lbViewData[i];
+      const ey = startY + 28 + i * 26;
+      const rank = `${i + 1}.`.padStart(3);
+      const eName = (entry.name || "???").padEnd(12);
+      const eScore = String(entry.score).padStart(7);
+      const eLvl = `Lv${entry.level || "?"}`;
+      const isMe = playerName && entry.name === playerName;
+      const col = isMe ? "#00ff66" : (i < 3 ? "#ffcc00" : "#cccccc");
+      drawText(`${rank}  ${eName} ${eScore}   ${eLvl}`, W / 2, ey, col, 15, "center");
+    }
+  }
+
+  // Navigation hint
+  drawText("◄ ► = Switch Difficulty    ESC = Back", W / 2, H - 40, COL.status, 14, "center");
+}
+
+// ── Name entry + leaderboard on game end ─────────────────────────────
+
+function showNameInput() {
+  showingNameInput = true;
+  scoreSubmitted = false;
+  leaderboardLoaded = false;
+  leaderboardData = [];
+  const overlay = document.getElementById("name-overlay");
+  const input = document.getElementById("player-name");
+  const scoreLine = document.getElementById("overlay-score");
+  if (scoreLine) {
+    const diffLabel = DIFFICULTIES[difficulty].label;
+    scoreLine.textContent = `${diffLabel} · Level ${level} · Score: ${score}`;
+  }
+  if (input) {
+    input.value = playerName;
+  }
+  overlay.classList.add("show");
+  setTimeout(() => { if (input) input.focus(); }, 100);
+}
+
+function hideNameInput() {
+  showingNameInput = false;
+  document.getElementById("name-overlay").classList.remove("show");
+}
+
+function doSubmitScore(skipSubmit) {
+  const input = document.getElementById("player-name");
+  const name = input ? input.value.trim().toUpperCase() : "";
+  if (!skipSubmit && name) {
+    playerName = name;
+    localStorage.setItem("spaceattack_name", playerName);
+    submitScore(name, score, difficulty, level).then(() => {
+      scoreSubmitted = true;
+      // Fetch updated leaderboard for current difficulty
+      fetchLeaderboard(difficulty, 10, (data) => {
+        leaderboardData = data;
+        leaderboardLoaded = true;
+      });
+    });
+  } else {
+    scoreSubmitted = true;
+    // Still fetch leaderboard even if skipped
+    fetchLeaderboard(difficulty, 10, (data) => {
+      leaderboardData = data;
+      leaderboardLoaded = true;
+    });
+  }
+  hideNameInput();
+}
+
+// Wire up the submit button and skip link
+document.getElementById("submit-name").addEventListener("click", () => doSubmitScore(false));
+document.getElementById("skip-name").addEventListener("click", () => doSubmitScore(true));
+document.getElementById("player-name").addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "Enter") doSubmitScore(false);
+});
+// Prevent game key handler from eating input keystrokes
+document.getElementById("player-name").addEventListener("keyup", (e) => e.stopPropagation());
+
 // ── End-state input ──────────────────────────────────────────────────
 let endKeyDebounce = {};
 
 function updateEndState() {
+  // Don't process game keys while name input is open
+  if (showingNameInput) return;
+
   const rPressed = keys["KeyR"] || (touchActive && keys["ShiftLeft"]);
   const mPressed = keys["KeyM"] || keys["Escape"];
 
   if (rPressed && !endKeyDebounce.r) {
+    scoreSubmitted = false;
+    leaderboardLoaded = false;
+    leaderboardData = [];
     startGame(difficulty);
   }
   if (mPressed && !endKeyDebounce.m) {
+    scoreSubmitted = false;
+    leaderboardLoaded = false;
+    leaderboardData = [];
     gameState = "title";
   }
 
@@ -4173,6 +4537,7 @@ function updateEndState() {
 
 // ── Escape to menu during gameplay ───────────────────────────────────
 let escDebounce = false;
+let prevGameState = "title";
 
 // ── Main loop ────────────────────────────────────────────────────────
 function gameLoop() {
@@ -4185,6 +4550,12 @@ function gameLoop() {
     if (invBtn) invBtn.classList.toggle('active', debugInvincible);
   }
 
+  // Detect transition to won/lost → show name input
+  if ((gameState === "won" || gameState === "lost") && prevGameState === "playing") {
+    showNameInput();
+  }
+  prevGameState = gameState;
+
   ctx.fillStyle = COL.bg;
   ctx.fillRect(0, 0, W, H);
   drawStars();
@@ -4193,6 +4564,11 @@ function gameLoop() {
     if (bgMusicPlaying) stopBGMusic();
     updateTitle();
     drawTitle();
+    escDebounce = false;
+  } else if (gameState === "leaderboard") {
+    if (bgMusicPlaying) stopBGMusic();
+    updateLeaderboardView();
+    drawLeaderboardView();
     escDebounce = false;
   } else if (gameState === "playing") {
     if (keys["Escape"] && !escDebounce) {
