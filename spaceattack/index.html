@@ -448,9 +448,6 @@ try {
     if (fk + bk > maxAliens) return false;
     // Minimum frames: at least level * 46 frames (~1 sec/level absolute minimum)
     if (f < e.level * 46) return false;
-    // Shots vs kills: shots fired should be at least totalKills / 4 (AoE weapons)
-    var totalKills = fk + bk + mk + ak;
-    if (totalKills > 0 && sf < totalKills / 4) return false;
     // Easy mode: no powerups on easy difficulty
     if (diff === "easy" && pu > 0) return false;
     return true;
@@ -3252,7 +3249,7 @@ function handleBossDeath() {
     const ey = mothership.y + Math.random() * mothership.h;
     explosions.push(new BombExplosion(ex, ey));
   }
-  if (_session) { _session.bd++; _session.bh += mothership.maxHp; }
+  if (_session) _session.bd++;
   bossDeathTimer = 30; // 1s delay before win
   // Kill remaining minions
   for (const m of bossMinions) {
@@ -4420,6 +4417,7 @@ function updateGame() {
     bossDeathTimer--;
     if (bossDeathTimer === 0) {
       score += mothership.maxHp * 10;
+      if (_session) _session.bh += mothership.maxHp;
       level++;
       levelTransitionTimer = 90; // ~2s interstitial
     }
