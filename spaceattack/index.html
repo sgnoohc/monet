@@ -3504,19 +3504,15 @@ function updateTutorial() {
       break;
     }
     case 4: { // Special — fire rail beam
-      // Normal shooting
-      if (keys["Space"] || keys["KeyZ"]) {
-        const p = player.shoot();
-        if (p) { projectiles.push(p); playSound("shoot"); }
-      }
-      // Rail beam (Shift)
+      // Rail beam (Shift) — advances step once fired
       const shiftPressed = keys["ShiftLeft"] || keys["ShiftRight"];
       if (shiftPressed && !tutorialDebounce.shift && railAmmo > 0) {
         railAmmo--;
         const rb = new RailBeam(player.x + player.w / 2);
         tutorialRailBeams.push(rb);
         playSound("railGun");
-        // Rail kills all aliens in column
+        tutorialGoal.fired = true;
+        // Rail kills all aliens in its column
         for (const a of aliens) {
           if (!a.alive) continue;
           if (Math.abs((a.x + a.w / 2) - rb.x) < 20) {
@@ -3526,26 +3522,9 @@ function updateTutorial() {
         }
       }
       tutorialDebounce.shift = shiftPressed;
-      // Normal projectile collisions
-      for (const p of projectiles) p.update();
-      projectiles = projectiles.filter(p => p.alive);
-      for (const p of projectiles) {
-        if (!p.alive || p.dir !== -1) continue;
-        for (const a of aliens) {
-          if (!a.alive) continue;
-          if (rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
-            p.alive = false;
-            a.takeHit();
-            if (!a.alive) {
-              explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
-              playSound("alienDie");
-            }
-            break;
-          }
-        }
-      }
+      // Let remaining rail beam animation play, then advance
       aliens = aliens.filter(a => a.alive);
-      if (aliens.length === 0 && tutorialTimer > 10) {
+      if (tutorialGoal.fired && tutorialRailBeams.length === 0) {
         playSound("menuConfirm");
         setupTutorialStep(5);
       }
@@ -3564,17 +3543,15 @@ function updateTutorial() {
       }
       for (const p of projectiles) p.update();
       projectiles = projectiles.filter(p => p.alive);
-      // Bullet-bunker collisions
+      // Bullet-bunker collisions (only alien shots damage bunkers, player shots pass through)
       for (const p of projectiles) {
-        if (!p.alive) continue;
+        if (!p.alive || p.dir !== 1) continue;
         for (const b of bunkers) {
           if (b.isDestroyed) continue;
           if (rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
             if (b.damageAt(p.x + p.w / 2, p.y + p.h / 2, LASER_BLAST_RADIUS)) {
               p.alive = false;
-              if (p.dir === 1) {
-                tutorialGoal.absorbed++;
-              }
+              tutorialGoal.absorbed++;
             }
           }
         }
