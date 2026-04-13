@@ -975,159 +975,493 @@ function playSound(type) {
   }
 }
 
-// ── Background Music (Synthwave) ─────────────────────────────────────
+// ── Background Music (Synthwave — 3-min evolving arrangement) ────────
 let bgMusicPlaying = false;
 let bgMusicNodes = null;
+let bgMusicScheduler = null;
 
 function startBGMusic() {
   if (bgMusicPlaying) return;
   if (audioCtx.state === "suspended") audioCtx.resume();
   bgMusicPlaying = true;
 
-  const t = audioCtx.currentTime;
-  const masterGain = audioCtx.createGain();
-  masterGain.gain.value = 0.12;
-  masterGain.connect(audioCtx.destination);
+  // Difficulty scales BPM and percussion intensity
+  const diffIntensity = { easy: 0.5, medium: 0.7, difficult: 0.9, insane: 1.1, doomsday: 1.3 };
+  const intensity = diffIntensity[difficulty] || 0.7;
+  const t0 = audioCtx.currentTime;
+  const BPM = Math.round(110 + 30 * intensity); // 125 easy → 149 doomsday
+  const beat = 60 / BPM;
+  const bar = beat * 4;
+  const CYCLE = bar * 96;          // 96 bars = ~3 min
 
-  // Bass line — deep sawtooth with lowpass
+  // Note frequencies
+  const N = {
+    C2:65.41, D2:73.42, Eb2:77.78, F2:87.31, G2:98.00, Ab2:103.83, Bb2:116.54,
+    C3:130.81, D3:146.83, Eb3:155.56, F3:174.61, G3:196.00, Ab3:207.65, Bb3:233.08,
+    C4:261.63, D4:293.66, Eb4:311.13, F4:349.23, G4:392.00, Ab4:415.30, Bb4:466.16,
+    C5:523.25, Eb5:622.25, G5:783.99,
+  };
+
+  // ── Master chain ──
+  const master = audioCtx.createGain();
+  master.gain.value = 0.13;
+  const compressor = audioCtx.createDynamicsCompressor();
+  compressor.threshold.value = -18;
+  compressor.ratio.value = 4;
+  master.connect(compressor).connect(audioCtx.destination);
+
+  // ── Kick drum (noise + sine) ──
+  const kickBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.15, audioCtx.sampleRate);
+  const kd = kickBuf.getChannelData(0);
+  for (let i = 0; i < kd.length; i++) {
+    const t = i / audioCtx.sampleRate;
+    kd[i] = Math.sin(2 * Math.PI * (160 - 120 * t) * t) * Math.exp(-t * 25) * 0.8
+           + (Math.random() * 2 - 1) * Math.exp(-t * 60) * 0.3;
+  }
+
+  // ── Snare (noise burst) ──
+  const snareBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.1, audioCtx.sampleRate);
+  const sd = snareBuf.getChannelData(0);
+  for (let i = 0; i < sd.length; i++) {
+    const t = i / audioCtx.sampleRate;
+    sd[i] = (Math.random() * 2 - 1) * Math.exp(-t * 30) * 0.5
+           + Math.sin(2 * Math.PI * 200 * t) * Math.exp(-t * 40) * 0.3;
+  }
+
+  // ── Hi-hat ──
+  const hatBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.04, audioCtx.sampleRate);
+  const hd = hatBuf.getChannelData(0);
+  for (let i = 0; i < hd.length; i++) {
+    const t = i / audioCtx.sampleRate;
+    hd[i] = (Math.random() * 2 - 1) * Math.exp(-t * 80);
+  }
+
+  // ── Bass oscillator ──
   const bassOsc = audioCtx.createOscillator();
   bassOsc.type = "sawtooth";
   const bassFilter = audioCtx.createBiquadFilter();
-  bassFilter.type = "lowpass";
-  bassFilter.frequency.value = 200;
-  bassFilter.Q.value = 2;
+  bassFilter.type = "lowpass"; bassFilter.frequency.value = 120; bassFilter.Q.value = 4;
   const bassGain = audioCtx.createGain();
-  bassGain.gain.value = 0.5;
-  bassOsc.connect(bassFilter).connect(bassGain).connect(masterGain);
+  bassGain.gain.value = 0;
+  bassOsc.connect(bassFilter).connect(bassGain).connect(master);
+  bassOsc.start(t0);
 
-  // Bass note sequence (minor key: C2, Eb2, F2, G2)
-  const bassNotes = [65.41, 77.78, 87.31, 98.00, 87.31, 77.78];
-  const bassLen = bassNotes.length;
-  const beatDur = 0.5; // seconds per beat
-  const loopLen = bassLen * beatDur;
-
-  // Schedule bass notes in a loop via ScriptProcessor alternative: use a repeating pattern
-  // We'll use a long automation sequence and re-schedule periodically
-  function scheduleBass(startTime, loops) {
-    for (let l = 0; l < loops; l++) {
-      for (let i = 0; i < bassLen; i++) {
-        const noteTime = startTime + l * loopLen + i * beatDur;
-        bassOsc.frequency.setValueAtTime(bassNotes[i], noteTime);
-      }
-    }
-  }
-  const totalLoops = 200; // ~100s of music
-  scheduleBass(t, totalLoops);
-  bassOsc.start(t);
-
-  // Pad — warm detuned saw chord
-  const padNotes = [130.81, 155.56, 196.00]; // C3, Eb3, G3 minor chord
-  const padOscs = [];
+  // ── Pad (detuned saws) ──
   const padGain = audioCtx.createGain();
-  padGain.gain.value = 0.15;
+  padGain.gain.value = 0;
   const padFilter = audioCtx.createBiquadFilter();
-  padFilter.type = "lowpass";
-  padFilter.frequency.value = 800;
-  padFilter.Q.value = 0.5;
-  padGain.connect(padFilter).connect(masterGain);
+  padFilter.type = "lowpass"; padFilter.frequency.value = 400; padFilter.Q.value = 1;
+  padGain.connect(padFilter).connect(master);
+  const padOscs = [];
 
-  for (const freq of padNotes) {
-    const osc1 = audioCtx.createOscillator();
-    osc1.type = "sawtooth";
-    osc1.frequency.value = freq;
-    osc1.detune.value = -8;
-    osc1.connect(padGain);
-    osc1.start(t);
-    padOscs.push(osc1);
-    const osc2 = audioCtx.createOscillator();
-    osc2.type = "sawtooth";
-    osc2.frequency.value = freq;
-    osc2.detune.value = 8;
-    osc2.connect(padGain);
-    osc2.start(t);
-    padOscs.push(osc2);
-  }
-
-  // Arpeggio — higher pitch pulsing notes
+  // ── Arp oscillator ──
   const arpOsc = audioCtx.createOscillator();
   arpOsc.type = "square";
+  const arpFilter = audioCtx.createBiquadFilter();
+  arpFilter.type = "lowpass"; arpFilter.frequency.value = 1200;
   const arpGain = audioCtx.createGain();
   arpGain.gain.value = 0;
-  const arpFilter = audioCtx.createBiquadFilter();
-  arpFilter.type = "lowpass";
-  arpFilter.frequency.value = 2000;
-  arpOsc.connect(arpFilter).connect(arpGain).connect(masterGain);
+  arpOsc.connect(arpFilter).connect(arpGain).connect(master);
+  arpOsc.start(t0);
 
-  const arpNotes = [261.63, 311.13, 392.00, 523.25, 392.00, 311.13]; // C4,Eb4,G4,C5,G4,Eb4
-  const arpBeat = beatDur / 2; // eighth notes
-  function scheduleArp(startTime, loops) {
-    for (let l = 0; l < loops; l++) {
-      for (let i = 0; i < arpNotes.length; i++) {
-        const noteTime = startTime + l * (arpNotes.length * arpBeat) + i * arpBeat;
-        arpOsc.frequency.setValueAtTime(arpNotes[i], noteTime);
-        arpGain.gain.setValueAtTime(0.2, noteTime);
-        arpGain.gain.setValueAtTime(0.02, noteTime + arpBeat * 0.6);
+  // ── Lead oscillator (for melody in climax) ──
+  const leadOsc = audioCtx.createOscillator();
+  leadOsc.type = "sawtooth";
+  const leadFilter = audioCtx.createBiquadFilter();
+  leadFilter.type = "lowpass"; leadFilter.frequency.value = 3000; leadFilter.Q.value = 2;
+  const leadGain = audioCtx.createGain();
+  leadGain.gain.value = 0;
+  const leadDelay = audioCtx.createDelay(0.5);
+  leadDelay.delayTime.value = beat * 0.75;
+  const leadDelayGain = audioCtx.createGain();
+  leadDelayGain.gain.value = 0.3;
+  leadOsc.connect(leadFilter).connect(leadGain).connect(master);
+  leadGain.connect(leadDelay).connect(leadDelayGain).connect(master);
+  leadOsc.start(t0);
+
+  // ── Sub bass (sine) ──
+  const subOsc = audioCtx.createOscillator();
+  subOsc.type = "sine";
+  const subGain = audioCtx.createGain();
+  subGain.gain.value = 0;
+  subOsc.connect(subGain).connect(master);
+  subOsc.start(t0);
+
+  // ── LFO on pad filter ──
+  const lfo = audioCtx.createOscillator();
+  lfo.type = "sine"; lfo.frequency.value = 0.12;
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.value = 300;
+  lfo.connect(lfoGain).connect(padFilter.frequency);
+  lfo.start(t0);
+
+  // Percussion gain bus
+  const percGain = audioCtx.createGain();
+  percGain.gain.value = 1.0;
+  const hatHP = audioCtx.createBiquadFilter();
+  hatHP.type = "highpass"; hatHP.frequency.value = 7000;
+  percGain.connect(master);
+
+  // Track all buffer sources for cleanup
+  const allSources = [];
+
+  // ── CHORD PROGRESSIONS (4 sections, each 24 bars) ──
+  // Section A (bars 0-23):  Cm      | Ab      | Eb      | Bb
+  // Section B (bars 24-47): Cm      | Fm      | Ab      | G
+  // Section C (bars 48-71): Ab      | Bb      | Cm      | Cm
+  // Section D (bars 72-95): Fm      | G       | Ab → Bb | Cm
+  const chords = [
+    // Section A — intro/build (24 bars, 6 repetitions of 4-bar prog)
+    ...Array(6).fill([
+      { bass: N.C2,  pad: [N.C3, N.Eb3, N.G3],  bars: 1 },
+      { bass: N.Ab2, pad: [N.Ab3, N.C4, N.Eb4], bars: 1 },
+      { bass: N.Eb2, pad: [N.Eb3, N.G3, N.Bb3], bars: 1 },
+      { bass: N.Bb2, pad: [N.Bb3, N.D4, N.F4],  bars: 1 },
+    ]).flat(),
+    // Section B — development (24 bars)
+    ...Array(6).fill([
+      { bass: N.C2,  pad: [N.C3, N.Eb3, N.G3],  bars: 1 },
+      { bass: N.F2,  pad: [N.F3, N.Ab3, N.C4],  bars: 1 },
+      { bass: N.Ab2, pad: [N.Ab3, N.C4, N.Eb4], bars: 1 },
+      { bass: N.G2,  pad: [N.G3, N.Bb3, N.D4],  bars: 1 },
+    ]).flat(),
+    // Section C — climax (24 bars)
+    ...Array(6).fill([
+      { bass: N.Ab2, pad: [N.Ab3, N.C4, N.Eb4], bars: 1 },
+      { bass: N.Bb2, pad: [N.Bb3, N.D4, N.F4],  bars: 1 },
+      { bass: N.C2,  pad: [N.C3, N.Eb3, N.G3],  bars: 1 },
+      { bass: N.C2,  pad: [N.C3, N.Eb3, N.G3],  bars: 1 },
+    ]).flat(),
+    // Section D — resolution/outro (24 bars)
+    ...Array(6).fill([
+      { bass: N.F2,  pad: [N.F3, N.Ab3, N.C4],  bars: 1 },
+      { bass: N.G2,  pad: [N.G3, N.Bb3, N.D4],  bars: 1 },
+      { bass: N.Ab2, pad: [N.Ab3, N.C4, N.Eb4], bars: 1 },
+      { bass: N.C2,  pad: [N.C3, N.Eb3, N.G3],  bars: 1 },
+    ]).flat(),
+  ];
+
+  // ── Arp patterns per section ──
+  const arpA = [N.C4, N.Eb4, N.G4, N.C5, N.G4, N.Eb4, N.C4, N.G3];
+  const arpB = [N.C4, N.F4, N.Ab4, N.C5, N.Ab4, N.F4, N.C4, N.Ab3];
+  const arpC = [N.C4, N.Eb4, N.G4, N.Bb4, N.C5, N.Bb4, N.G4, N.Eb4, N.C4, N.G4, N.Eb5, N.C5, N.G4, N.Eb4, N.C4, N.G3];
+  const arpD = [N.C4, N.Eb4, N.G4, N.C5, N.Eb5, N.C5, N.G4, N.Eb4];
+
+  // ── Lead melody (only in sections C & D) ──
+  // Each entry: [freq, startBeat, durationBeats]
+  const melodyC = [
+    [N.Eb5,0,2],[N.D4,2,1],[N.C4,3,1],[N.Eb4,4,2],[N.G4,6,2],
+    [N.Ab4,8,3],[N.G4,11,1],[N.Eb4,12,2],[N.D4,14,2],
+    [N.C4,16,2],[N.Eb4,18,1],[N.G4,19,1],[N.C5,20,3],[N.Bb4,23,1],
+    [N.Ab4,24,2],[N.G4,26,2],[N.Eb4,28,2],[N.G4,30,2],
+    [N.Ab4,32,3],[N.Bb4,35,1],[N.C5,36,2],[N.Bb4,38,2],
+    [N.Ab4,40,2],[N.G4,42,1],[N.Eb4,43,1],[N.C4,44,4],
+  ];
+  const melodyD = [
+    [N.C5,0,2],[N.Bb4,2,1],[N.Ab4,3,1],[N.G4,4,2],[N.Eb4,6,2],
+    [N.F4,8,3],[N.G4,11,1],[N.Ab4,12,2],[N.Bb4,14,2],
+    [N.C5,16,4],[N.Bb4,20,2],[N.Ab4,22,2],
+    [N.G4,24,2],[N.Ab4,26,2],[N.Bb4,28,2],[N.C5,30,2],
+    [N.Eb5,32,4],[N.C5,36,2],[N.G4,38,2],
+    [N.Ab4,40,2],[N.Bb4,42,2],[N.C5,44,2],[N.G5,46,2],
+  ];
+
+  function scheduleOneCycle(cycleStart) {
+    // ── Schedule chord changes (bass + pad + sub) ──
+    let chordTime = cycleStart;
+    for (let ci = 0; ci < chords.length; ci++) {
+      const ch = chords[ci];
+      const dur = ch.bars * bar;
+      bassOsc.frequency.setValueAtTime(ch.bass, chordTime);
+      subOsc.frequency.setValueAtTime(ch.bass / 2, chordTime);
+      chordTime += dur;
+    }
+
+    // Create pad oscillators fresh each cycle (reuse existing or create)
+    if (padOscs.length === 0) {
+      for (let i = 0; i < 6; i++) { // 3 notes × 2 (detuned)
+        const o = audioCtx.createOscillator();
+        o.type = "sawtooth";
+        o.connect(padGain);
+        o.start(cycleStart);
+        padOscs.push(o);
+      }
+    }
+    // Schedule pad note changes
+    let padTime = cycleStart;
+    for (let ci = 0; ci < chords.length; ci++) {
+      const ch = chords[ci];
+      for (let n = 0; n < 3; n++) {
+        padOscs[n * 2].frequency.setValueAtTime(ch.pad[n], padTime);
+        padOscs[n * 2].detune.setValueAtTime(-10, padTime);
+        padOscs[n * 2 + 1].frequency.setValueAtTime(ch.pad[n], padTime);
+        padOscs[n * 2 + 1].detune.setValueAtTime(10, padTime);
+      }
+      padTime += ch.bars * bar;
+    }
+
+    // ── Section-based volume/filter envelopes ──
+    const sA = cycleStart;
+    const sB = cycleStart + 24 * bar;
+    const sC = cycleStart + 48 * bar;
+    const sD = cycleStart + 72 * bar;
+    const sEnd = cycleStart + 96 * bar;
+
+    // Bass: silent → fade in over A, full in B-C, slight drop D end
+    bassGain.gain.setValueAtTime(0, sA);
+    bassGain.gain.linearRampToValueAtTime(0.35, sA + 8 * bar);
+    bassGain.gain.setValueAtTime(0.35, sB);
+    bassGain.gain.linearRampToValueAtTime(0.55, sC);
+    bassGain.gain.setValueAtTime(0.55, sC);
+    bassGain.gain.setValueAtTime(0.55, sD);
+    bassGain.gain.linearRampToValueAtTime(0.35, sD + 20 * bar);
+    bassGain.gain.linearRampToValueAtTime(0.1, sEnd);
+
+    // Bass filter opens through sections
+    bassFilter.frequency.setValueAtTime(120, sA);
+    bassFilter.frequency.linearRampToValueAtTime(200, sB);
+    bassFilter.frequency.linearRampToValueAtTime(350, sC);
+    bassFilter.frequency.setValueAtTime(350, sD);
+    bassFilter.frequency.linearRampToValueAtTime(150, sEnd);
+
+    // Sub bass: only from B onward
+    subGain.gain.setValueAtTime(0, sA);
+    subGain.gain.setValueAtTime(0, sB);
+    subGain.gain.linearRampToValueAtTime(0.25, sB + 4 * bar);
+    subGain.gain.setValueAtTime(0.3, sC);
+    subGain.gain.setValueAtTime(0.25, sD);
+    subGain.gain.linearRampToValueAtTime(0, sD + 22 * bar);
+
+    // Pad: quiet intro → swell → full at climax → fade
+    padGain.gain.setValueAtTime(0.05, sA);
+    padGain.gain.linearRampToValueAtTime(0.12, sA + 16 * bar);
+    padGain.gain.setValueAtTime(0.15, sB);
+    padGain.gain.linearRampToValueAtTime(0.22, sC);
+    padGain.gain.setValueAtTime(0.22, sC);
+    padGain.gain.setValueAtTime(0.18, sD);
+    padGain.gain.linearRampToValueAtTime(0.05, sEnd);
+
+    // Pad filter opens dramatically at climax
+    padFilter.frequency.setValueAtTime(400, sA);
+    padFilter.frequency.linearRampToValueAtTime(800, sB);
+    padFilter.frequency.linearRampToValueAtTime(2200, sC);
+    padFilter.frequency.setValueAtTime(2200, sC + 12 * bar);
+    padFilter.frequency.linearRampToValueAtTime(1200, sD);
+    padFilter.frequency.linearRampToValueAtTime(400, sEnd);
+
+    // LFO speed increases toward climax
+    lfo.frequency.setValueAtTime(0.08, sA);
+    lfo.frequency.linearRampToValueAtTime(0.15, sB);
+    lfo.frequency.linearRampToValueAtTime(0.25, sC);
+    lfo.frequency.setValueAtTime(0.15, sD);
+
+    // Arp filter opens with intensity
+    arpFilter.frequency.setValueAtTime(800, sA);
+    arpFilter.frequency.linearRampToValueAtTime(1500, sB);
+    arpFilter.frequency.linearRampToValueAtTime(3500, sC);
+    arpFilter.frequency.linearRampToValueAtTime(2000, sD);
+    arpFilter.frequency.linearRampToValueAtTime(800, sEnd);
+
+    // ── Schedule arps per section ──
+    function scheduleArpSection(startTime, numBars, pattern, volume) {
+      const stepDur = beat / (pattern.length / 4); // fit pattern in 1 bar
+      for (let b = 0; b < numBars; b++) {
+        for (let i = 0; i < pattern.length; i++) {
+          const nt = startTime + b * bar + i * stepDur;
+          arpOsc.frequency.setValueAtTime(pattern[i], nt);
+          arpGain.gain.setValueAtTime(volume, nt);
+          arpGain.gain.setValueAtTime(volume * 0.08, nt + stepDur * 0.55);
+        }
+      }
+    }
+    // A: no arp for first 8 bars, then gentle
+    arpGain.gain.setValueAtTime(0, sA);
+    scheduleArpSection(sA + 8 * bar, 16, arpA, 0.1);
+    // B: fuller arp
+    scheduleArpSection(sB, 24, arpB, 0.18);
+    // C: fast intense arp (16th notes)
+    scheduleArpSection(sC, 24, arpC, 0.22);
+    // D: pulling back
+    scheduleArpSection(sD, 20, arpD, 0.14);
+    // Last 4 bars: arp fades
+    arpGain.gain.setValueAtTime(0.14, sD + 20 * bar);
+    arpGain.gain.linearRampToValueAtTime(0, sEnd);
+
+    // ── Lead melody (sections C and D only) ──
+    function scheduleMelody(startTime, melody) {
+      for (const [freq, startBeat, durBeats] of melody) {
+        const nt = startTime + startBeat * beat;
+        const nd = durBeats * beat;
+        leadOsc.frequency.setValueAtTime(freq, nt);
+        leadGain.gain.setValueAtTime(0.18, nt);
+        leadGain.gain.setValueAtTime(0.18, nt + nd * 0.7);
+        leadGain.gain.linearRampToValueAtTime(0.01, nt + nd * 0.95);
+      }
+    }
+    leadGain.gain.setValueAtTime(0, sA);
+    leadGain.gain.setValueAtTime(0, sB);
+    // Brief lead teaser at end of B
+    scheduleMelody(sB + 20 * bar, [[N.Eb4,0,2],[N.G4,2,2],[N.C5,4,4]]);
+    scheduleMelody(sC, melodyC);
+    scheduleMelody(sD, melodyD);
+    leadGain.gain.setValueAtTime(0.01, sD + 48 * beat);
+    leadGain.gain.linearRampToValueAtTime(0, sEnd);
+
+    // ── Drums ──
+    function playBufAt(buf, time, gain, dest) {
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf;
+      const g = audioCtx.createGain();
+      g.gain.value = gain;
+      src.connect(g).connect(dest);
+      src.start(time);
+      allSources.push(src);
+    }
+
+    const pI = intensity; // percussion intensity multiplier
+
+    // Section A: intro — hats from bar 4, kick from bar 8, builds gradually
+    for (let b = 2; b < 24; b++) {
+      const bVol = Math.min(1, b / 16); // fade in
+      for (let s = 0; s < (b < 8 ? 4 : 8); s++) {
+        const ht = sA + b * bar + s * beat / (b < 8 ? 1 : 2);
+        playBufAt(hatBuf, ht, (s % 2 === 0 ? 0.12 : 0.06) * bVol * pI, hatHP);
+        hatHP.connect(percGain);
+      }
+    }
+    for (let b = 8; b < 24; b++) {
+      playBufAt(kickBuf, sA + b * bar, 0.45 * pI, percGain);
+      playBufAt(kickBuf, sA + b * bar + 2.5 * beat, 0.25 * pI, percGain);
+      // Add snare on 2 and 4 from bar 12 onward
+      if (b >= 12) {
+        playBufAt(snareBuf, sA + b * bar + beat, 0.2 * pI, percGain);
+        playBufAt(snareBuf, sA + b * bar + 3 * beat, 0.2 * pI, percGain);
+      }
+      // Fill at end of section
+      if (b === 23) {
+        for (let r = 0; r < 6; r++)
+          playBufAt(snareBuf, sA + b * bar + 2 * beat + r * beat / 3, (0.15 + r * 0.04) * pI, percGain);
+      }
+    }
+
+    // Section B: full kit with syncopated kicks, 8th-note hats
+    for (let b = 0; b < 24; b++) {
+      const bt = sB + b * bar;
+      playBufAt(kickBuf, bt, 0.6 * pI, percGain);
+      playBufAt(kickBuf, bt + 1.75 * beat, 0.3 * pI, percGain);
+      playBufAt(kickBuf, bt + 2.5 * beat, 0.4 * pI, percGain);
+      playBufAt(snareBuf, bt + beat, 0.35 * pI, percGain);
+      playBufAt(snareBuf, bt + 3 * beat, 0.35 * pI, percGain);
+      // Ghost snares on higher difficulties
+      if (pI > 0.8) {
+        playBufAt(snareBuf, bt + 0.5 * beat, 0.1 * pI, percGain);
+        playBufAt(snareBuf, bt + 2 * beat, 0.1 * pI, percGain);
+      }
+      for (let s = 0; s < 8; s++) {
+        playBufAt(hatBuf, bt + s * beat / 2, (s % 2 === 0 ? 0.16 : 0.08) * pI, hatHP);
+        hatHP.connect(percGain);
+      }
+      // Fill every 8 bars
+      if (b % 8 === 7) {
+        for (let r = 0; r < 8; r++)
+          playBufAt(snareBuf, bt + 3 * beat + r * beat / 8, (0.15 + r * 0.03) * pI, percGain);
+      }
+    }
+
+    // Section C: CLIMAX — heavy kick, 16th hats, snare rolls, max intensity
+    for (let b = 0; b < 24; b++) {
+      const bt = sC + b * bar;
+      // Triple kick pattern
+      playBufAt(kickBuf, bt, 0.8 * pI, percGain);
+      playBufAt(kickBuf, bt + 1.25 * beat, 0.45 * pI, percGain);
+      playBufAt(kickBuf, bt + 2 * beat, 0.35 * pI, percGain);
+      playBufAt(kickBuf, bt + 2.75 * beat, 0.55 * pI, percGain);
+      // Hard snare on 2 and 4
+      playBufAt(snareBuf, bt + beat, 0.5 * pI, percGain);
+      playBufAt(snareBuf, bt + 3 * beat, 0.5 * pI, percGain);
+      // Extra ghost snares
+      playBufAt(snareBuf, bt + 0.5 * beat, 0.15 * pI, percGain);
+      playBufAt(snareBuf, bt + 1.5 * beat, 0.12 * pI, percGain);
+      playBufAt(snareBuf, bt + 3.5 * beat, 0.15 * pI, percGain);
+      // Snare roll every 4 bars
+      if (b % 4 === 3) {
+        for (let r = 0; r < 12; r++)
+          playBufAt(snareBuf, bt + 3 * beat + r * beat / 12, (0.18 + r * 0.025) * pI, percGain);
+      }
+      // 16th hats with accents
+      for (let s = 0; s < 16; s++) {
+        const accent = s % 4 === 0 ? 0.2 : s % 2 === 0 ? 0.1 : 0.05;
+        playBufAt(hatBuf, bt + s * beat / 4, accent * pI, hatHP);
+        hatHP.connect(percGain);
+      }
+      // Open hat on off-beats for extra drive
+      if (pI > 0.8) {
+        playBufAt(hatBuf, bt + 0.5 * beat, 0.22 * pI, hatHP);
+        playBufAt(hatBuf, bt + 2.5 * beat, 0.22 * pI, hatHP);
+        hatHP.connect(percGain);
+      }
+    }
+
+    // Section D: gradual wind-down with occasional fills
+    for (let b = 0; b < 24; b++) {
+      const bt = sD + b * bar;
+      const decay = Math.max(0.15, 1 - b / 26);
+      playBufAt(kickBuf, bt, 0.55 * decay * pI, percGain);
+      playBufAt(kickBuf, bt + 2.5 * beat, 0.3 * decay * pI, percGain);
+      if (b < 20) {
+        playBufAt(snareBuf, bt + beat, 0.3 * decay * pI, percGain);
+        playBufAt(snareBuf, bt + 3 * beat, 0.3 * decay * pI, percGain);
+      }
+      // Hats thin out gradually
+      const hatSteps = b < 8 ? 8 : b < 16 ? 4 : 2;
+      for (let s = 0; s < hatSteps; s++) {
+        playBufAt(hatBuf, bt + s * bar / hatSteps, 0.12 * decay * pI, hatHP);
+        hatHP.connect(percGain);
+      }
+      // Transition fill every 8 bars
+      if (b % 8 === 7 && b < 22) {
+        for (let r = 0; r < 6; r++)
+          playBufAt(snareBuf, bt + 2.5 * beat + r * beat / 4, (0.12 + r * 0.02) * decay * pI, percGain);
       }
     }
   }
-  scheduleArp(t, totalLoops);
-  arpOsc.start(t);
 
-  // Hi-hat rhythm — filtered noise pulses
-  const hatBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.05, audioCtx.sampleRate);
-  const hatData = hatBuf.getChannelData(0);
-  for (let i = 0; i < hatData.length; i++) hatData[i] = Math.random() * 2 - 1;
+  // Schedule first cycle
+  scheduleOneCycle(t0);
 
-  const hatGain = audioCtx.createGain();
-  hatGain.gain.value = 0;
-  const hatFilter = audioCtx.createBiquadFilter();
-  hatFilter.type = "highpass";
-  hatFilter.frequency.value = 8000;
-  hatGain.connect(hatFilter).connect(masterGain);
+  // Re-schedule on loop using setInterval
+  bgMusicScheduler = setInterval(() => {
+    if (!bgMusicPlaying) { clearInterval(bgMusicScheduler); return; }
+    const now = audioCtx.currentTime;
+    const elapsed = now - t0;
+    const nextCycle = Math.ceil(elapsed / CYCLE) * CYCLE + t0;
+    if (nextCycle - now < 10) { // schedule ~10s ahead
+      scheduleOneCycle(nextCycle);
+    }
+  }, 5000);
 
-  // Schedule hat hits
-  const hatSources = [];
-  for (let l = 0; l < totalLoops * 3; l++) {
-    const hitTime = t + l * (beatDur / 2);
-    const src = audioCtx.createBufferSource();
-    src.buffer = hatBuf;
-    src.connect(hatGain);
-    src.start(hitTime);
-    hatGain.gain.setValueAtTime(0.25, hitTime);
-    hatGain.gain.exponentialRampToValueAtTime(0.001, hitTime + 0.04);
-    hatSources.push(src);
-  }
-
-  // Slow LFO on pad filter for movement
-  const lfo = audioCtx.createOscillator();
-  lfo.type = "sine";
-  lfo.frequency.value = 0.15;
-  const lfoGain = audioCtx.createGain();
-  lfoGain.gain.value = 400;
-  lfo.connect(lfoGain).connect(padFilter.frequency);
-  lfo.start(t);
-
-  bgMusicNodes = { masterGain, bassOsc, padOscs, arpOsc, lfo, hatSources };
+  bgMusicNodes = { master, bassOsc, subOsc, padOscs, arpOsc, leadOsc, lfo, percGain, allSources, compressor, hatHP, leadDelay, leadDelayGain };
 }
 
 function stopBGMusic() {
   if (!bgMusicPlaying || !bgMusicNodes) return;
   bgMusicPlaying = false;
+  if (bgMusicScheduler) { clearInterval(bgMusicScheduler); bgMusicScheduler = null; }
   const t = audioCtx.currentTime;
-  // Fade out
-  bgMusicNodes.masterGain.gain.setValueAtTime(bgMusicNodes.masterGain.gain.value, t);
-  bgMusicNodes.masterGain.gain.linearRampToValueAtTime(0, t + 0.5);
-  // Stop all oscillators after fade
+  bgMusicNodes.master.gain.setValueAtTime(bgMusicNodes.master.gain.value, t);
+  bgMusicNodes.master.gain.linearRampToValueAtTime(0, t + 0.8);
   setTimeout(() => {
     try {
       bgMusicNodes.bassOsc.stop();
+      bgMusicNodes.subOsc.stop();
       bgMusicNodes.arpOsc.stop();
+      bgMusicNodes.leadOsc.stop();
       bgMusicNodes.lfo.stop();
       for (const o of bgMusicNodes.padOscs) o.stop();
-      for (const s of bgMusicNodes.hatSources) try { s.stop(); } catch(e) {}
+      for (const s of bgMusicNodes.allSources) try { s.stop(); } catch(e) {}
     } catch(e) {}
     bgMusicNodes = null;
-  }, 600);
+  }, 900);
 }
 
 // ── Colors ───────────────────────────────────────────────────────────
