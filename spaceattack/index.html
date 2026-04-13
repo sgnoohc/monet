@@ -356,20 +356,6 @@ try {
   const db = firebase.database();
   firebaseReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
 
-  // ── Anti-abuse: integrity token ──────────────────────────────────────
-  var _ss = [83,112,52,99,101,65,116,116,52,99,107]; // obfuscated salt
-  function _scoreToken(name, sc, diff, lvl, sess) {
-    var s = _ss.map(function(c){return String.fromCharCode(c)}).join("");
-    var raw = name + "|" + sc + "|" + diff + "|" + lvl + "|" + s;
-    if (sess) raw += "|" + sess;
-    // Simple hash (djb2)
-    var h = 5381;
-    for (var i = 0; i < raw.length; i++) {
-      h = ((h << 5) + h + raw.charCodeAt(i)) & 0xFFFFFFFF;
-    }
-    return (h >>> 0).toString(36);
-  }
-
   // ── Anti-abuse: rate limiting ──────────────────────────────────────
   var _lastSubmitTime = 0;
 
@@ -408,16 +394,11 @@ try {
     }
     _lastSubmitTime = now;
 
-    // Encode session as dot-delimited string
-    var sStr = [sess.f, sess.fk, sess.bk, sess.mk, sess.ak, sess.bd, sess.bh, sess.sf, sess.pu, sess.lp, sess.ht, sess.ts].join(".");
-
     return db.ref("leaderboard/" + diff).push({
       name: name,
       score: sc,
       level: lvl,
-      timestamp: firebase.database.ServerValue.TIMESTAMP,
-      v: _scoreToken(name, sc, diff, lvl, sStr),
-      s: sStr
+      timestamp: firebase.database.ServerValue.TIMESTAMP
     }).then(() => {});
   };
 
