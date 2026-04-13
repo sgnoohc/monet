@@ -3269,7 +3269,7 @@ function startGame(diffKey) {
 // ── Tutorial mode ────────────────────────────────────────────────────
 
 const TUTORIAL_STEPS = [
-  { name: "Movement",  instruction: "Move LEFT and RIGHT to fly your ship",      keys: "ARROW KEYS / A D" },
+  { name: "Movement",  instruction: "Touch BOTH edges of the field to continue",  keys: "ARROW KEYS / A D" },
   { name: "Shooting",  instruction: "Shoot SPACE to destroy all aliens",          keys: "SPACE" },
   { name: "Dodging",   instruction: "Dodge enemy fire! Survive for 5 seconds",    keys: "MOVE to dodge" },
   { name: "Powerups",  instruction: "Shoot the powerup to collect it",            keys: "SPACE to shoot" },
@@ -3331,7 +3331,7 @@ function setupTutorialStep(step) {
       tutorialGoal = { leftReached: false, rightReached: false };
       break;
     case 1: { // Shooting — destroy 3 stationary aliens
-      const cy = FIELD_Y + FIELD_H * 0.3;
+      const cy = FIELD_Y + FIELD_H * 0.35;
       const spacing = FIELD_W / 4;
       for (let i = 1; i <= 3; i++) {
         aliens.push(new Alien(FIELD_X + spacing * i - 14, cy, 1, 0, false, i % 2));
@@ -3342,14 +3342,14 @@ function setupTutorialStep(step) {
       tutorialGoal = { surviveFrames: 5 * FPS, elapsed: 0 };
       for (let i = 0; i < 5; i++) {
         const ax = FIELD_X + 40 + i * (FIELD_W - 80) / 4;
-        const a = new Alien(ax, FIELD_Y + 30, 9999, 0.06, false, i % 2);
+        const a = new Alien(ax, FIELD_Y + 90, 9999, 0.06, false, i % 2);
         aliens.push(a);
       }
       break;
     case 3: { // Powerups — shoot a rail powerup
       const pu = new PowerUp("rail");
       pu.x = FIELD_X + FIELD_W / 2 - 12;
-      pu.y = FIELD_Y + FIELD_H * 0.4;
+      pu.y = FIELD_Y + FIELD_H * 0.45;
       pu.maxLife = 99999;
       powerUps.push(pu);
       break;
@@ -3357,7 +3357,7 @@ function setupTutorialStep(step) {
     case 4: { // Special — use rail beam
       railAmmo = 1;
       selectedWeapon = 0;
-      const cy = FIELD_Y + FIELD_H * 0.25;
+      const cy = FIELD_Y + FIELD_H * 0.35;
       const spacing = FIELD_W / 6;
       for (let i = 1; i <= 5; i++) {
         aliens.push(new Alien(FIELD_X + spacing * i - 14, cy, 1, 0, false, i % 2));
@@ -3370,7 +3370,7 @@ function setupTutorialStep(step) {
       const spacing = FIELD_W / 3;
       bunkers.push(new Bunker(FIELD_X + spacing * 1 - 24, bunkY));
       bunkers.push(new Bunker(FIELD_X + spacing * 2 - 24, bunkY));
-      const alienY = FIELD_Y + 40;
+      const alienY = FIELD_Y + 90;
       for (let i = 0; i < 3; i++) {
         const ax = FIELD_X + 60 + i * (FIELD_W - 120) / 2;
         aliens.push(new Alien(ax, alienY, 9999, 0.05, false, i % 2));
@@ -3659,11 +3659,11 @@ function drawTutorial() {
     drawText("RIGHT >", FIELD_X + FIELD_W - 40, FIELD_Y + FIELD_H / 2, rCol, 16, "center");
   } else if (tutorialStep === 2) {
     const remaining = Math.max(0, Math.ceil((tutorialGoal.surviveFrames - tutorialGoal.elapsed) / FPS));
-    drawText(`Survive: ${remaining}s`, FIELD_X + FIELD_W / 2, FIELD_Y + 18, "#ffff00", 16, "center");
+    drawText(`Survive: ${remaining}s`, FIELD_X + FIELD_W / 2, FIELD_Y + 80, "#ffff00", 16, "center");
   } else if (tutorialStep === 4) {
     drawText(`RAIL: ${railAmmo}`, FIELD_X + 8, FIELD_Y + FIELD_H - 8, "#00ccff", 14, "left");
   } else if (tutorialStep === 5) {
-    drawText(`Absorbed: ${tutorialGoal.absorbed || 0}/${tutorialGoal.target || 3}`, FIELD_X + FIELD_W / 2, FIELD_Y + 18, "#00cccc", 16, "center");
+    drawText(`Absorbed: ${tutorialGoal.absorbed || 0}/${tutorialGoal.target || 3}`, FIELD_X + FIELD_W / 2, FIELD_Y + 80, "#00cccc", 16, "center");
   }
 
   // Draw overlay
@@ -3673,7 +3673,7 @@ function drawTutorial() {
 function drawTutorialOverlay() {
   const stepInfo = TUTORIAL_STEPS[tutorialStep];
   const panelH = 56;
-  const panelY = FIELD_Y + FIELD_H - panelH - 5;
+  const panelY = FIELD_Y + 5;
   const panelX = FIELD_X + 5;
   const panelW = FIELD_W - 10;
 
@@ -3691,7 +3691,7 @@ function drawTutorialOverlay() {
   const keyCol = (Math.floor(tutorialTimer / 20) % 2 === 0) ? "#00ff00" : "#00cc88";
   drawText(`[ ${stepInfo.keys} ]`, panelX + panelW / 2, panelY + 38, keyCol, 12, "center");
 
-  // Progress dots at the very bottom
+  // Progress dots below panel
   const dotY = panelY + panelH + 10;
   const dotSpacing = 16;
   const totalW = (TUTORIAL_STEPS.length - 1) * dotSpacing;
