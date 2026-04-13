@@ -3371,9 +3371,11 @@ function setupTutorialStep(step) {
       bunkers.push(new Bunker(FIELD_X + spacing * 1 - 24, bunkY));
       bunkers.push(new Bunker(FIELD_X + spacing * 2 - 24, bunkY));
       const alienY = FIELD_Y + 90;
-      for (let i = 0; i < 3; i++) {
-        const ax = FIELD_X + 60 + i * (FIELD_W - 120) / 2;
-        aliens.push(new Alien(ax, alienY, 9999, 0.05, false, i % 2));
+      // Place aliens directly above each bunker so shots land on them
+      for (let i = 1; i <= 2; i++) {
+        const bx = FIELD_X + spacing * i - 24;  // bunker x
+        const ax = bx + 24 - 14;  // center alien (w=28) on bunker (w=48)
+        aliens.push(new Alien(ax, alienY, 9999, 0.08, false, i % 2));
       }
       break;
     }
