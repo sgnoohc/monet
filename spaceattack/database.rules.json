@@ -18,10 +18,7 @@
                         && newData.child('level').val() <= 99
                         && newData.child('timestamp').val() === now
                         && newData.child('v').isString()
-                        && newData.child('v').val().length >= 1",
-          "$other": {
-            ".validate": false
-          }
+                        && newData.child('v').val().length >= 1"
         }
       }
     },
