@@ -406,44 +406,99 @@ try {
     }
     _lastSubmitTime = now;
 
+    var _q3 = [102,124,107,124,98,124,104,124,112];
+    var _r7 = _q3.map(function(c){return String.fromCharCode(c)}).join("");
+    var _w5 = [88,51,118,65,108,116,57];
+    var _u2 = _w5.map(function(c){return String.fromCharCode(c)}).join("");
+    var _x4 = String(sess.f) + _r7.charAt(1) + String(sess.fk) + _r7.charAt(3) +
+              String(sess.bk) + _r7.charAt(5) + String(sess.bh) + _r7.charAt(7) +
+              String(sess.pf) + _r7.charAt(1) + _u2;
+    var _h9 = 5381;
+    for (var _i3 = 0; _i3 < _x4.length; _i3++) {
+      _h9 = ((_h9 << 5) + _h9 + _x4.charCodeAt(_i3)) & 0xFFFFFFFF;
+    }
+    sess.kc = (_h9 >>> 0);
+    var sStr = [sess.f, sess.fk, sess.bk, sess.mk, sess.ak,
+                sess.bd, sess.bh, sess.sf, sess.pu, sess.lp,
+                sess.ht, sess.ts, sess.pf, sess.kc].join(".");
     return db.ref("leaderboard/" + diff).push({
       name: name,
       score: sc,
       level: lvl,
       timestamp: firebase.database.ServerValue.TIMESTAMP,
-      v: _scoreToken(name, sc, diff, lvl)
+      v: _scoreToken(name, sc, diff, lvl),
+      s: sStr
     }).then(() => {});
   };
 
-  // Session plausibility checker for leaderboard filtering
   function _validateSession(e, diff) {
-    // Backward compat: entries without session data pass
     if (!e.s || typeof e.s !== "string") return true;
-    var parts = e.s.split(".");
-    if (parts.length !== 12) return false;
-    var f = +parts[0], fk = +parts[1], bk = +parts[2], mk = +parts[3], ak = +parts[4];
-    var bd = +parts[5], bh = +parts[6], sf = +parts[7], pu = +parts[8], lp = +parts[9];
-    var ht = +parts[10], ts = +parts[11];
-    // All fields must be non-negative integers
-    var vals = [f, fk, bk, mk, ak, bd, bh, sf, pu, lp, ht, ts];
-    for (var i = 0; i < vals.length; i++) {
-      if (!Number.isFinite(vals[i]) || vals[i] < 0 || vals[i] !== Math.floor(vals[i])) return false;
+    var _p = e.s.split("."); if (_p.length !== 14) return false;
+    var _v = _p.map(Number), _t7 = 0, _z1 = 0;
+    for (var _j = 0; _j < _v.length; _j++) {
+      if (!Number.isFinite(_v[_j]) || _v[_j] < 0 || _v[_j] % 1 !== 0) return false;
+      _t7 += _v[_j]; _z1 ^= (_v[_j] & 0xFF);
     }
-    // Score decomposition: score should equal kill-based points + boss HP bonus
-    var expectedScore = fk * 100 + bk * 150 + mk * 50 + ak * 75 + bh * 10;
-    if (e.score !== expectedScore) return false;
-    // Kill count ceiling: max aliens per 5-level cycle (grid sizes: 10,18,28,32,40)
-    var gridSizes = [10, 18, 28, 32, 40];
-    var maxAliens = 0;
-    for (var lv = 1; lv <= e.level; lv++) {
-      // Only non-boss levels have alien grids (every 5th level is boss)
-      if (lv % 5 !== 0) maxAliens += gridSizes[Math.min((lv - 1) % 5, gridSizes.length - 1)];
+    var _a=_v[0],_b=_v[1],_c=_v[2],_d=_v[3],_e=_v[4],_f=_v[5],_g=_v[6],_h=_v[7],
+        _i=_v[8],_k=_v[9],_m=_v[10],_n=_v[11],_o=_v[12],_r=_v[13];
+    var _w3 = _b * 100 + _c * 150 + _d * 50 + _e * 75 + _g * 10;
+    if (e.score !== _w3) return false;
+    var _q9 = [10,18,28,32,40], _s2 = 0, _y6 = 0;
+    for (var _l = 1; _l <= e.level; _l++) {
+      if (_l % 5 !== 0) {
+        var _gi = (_l - 1) % 5; _gi = _gi < 5 ? _gi : 4;
+        var _gr = _q9[_gi]; _s2 += _gr;
+        var _lc = _gi + 1;
+        var _br = _lc <= 2 ? 0 : _lc <= 3 ? 1 : 2;
+        var _gc = [5,6,7,8,8];
+        _y6 += _br * _gc[_gi];
+      }
     }
-    if (fk + bk > maxAliens) return false;
-    // Minimum frames: at least level * 46 frames (~1 sec/level absolute minimum)
-    if (f < e.level * 46) return false;
-    // Easy mode: no powerups on easy difficulty
-    if (diff === "easy" && pu > 0) return false;
+    if (_b + _c > _s2) return false;
+    if (e.level > 1 && (_b + _c) < (function(){
+      var _t = 0;
+      for (var _l2 = 1; _l2 < e.level; _l2++) {
+        if (_l2 % 5 !== 0) _t += _q9[Math.min((_l2 - 1) % 5, 4)];
+      }
+      return _t;
+    })()) return false;
+    if (_c > _y6) return false;
+    if (_a < e.level * 46) return false;
+    var _bp = {};
+    _bp[String.fromCharCode(101,97,115,121)] = 40;
+    _bp[String.fromCharCode(109,101,100,105,117,109)] = 60;
+    _bp[String.fromCharCode(100,105,102,102,105,99,117,108,116)] = 80;
+    _bp[String.fromCharCode(105,110,115,97,110,101)] = 120;
+    _bp[String.fromCharCode(100,111,111,109,115,100,97,121)] = 180;
+    var _baseHp = _bp[diff];
+    if (_baseHp === void 0) return false;
+    var _hpM = [400,600,800,1000,1200];
+    var _maxBd = (e.level / 5) | 0;
+    var _minBd = e.level > 5 ? ((e.level - 1) / 5) | 0 : 0;
+    if (_f > _maxBd || _f < _minBd) return false;
+    var _expectedBh = 0;
+    for (var _bi = 0; _bi < _f; _bi++) {
+      var _cIdx = (_bi / 5) | 0;
+      var _bIdx = _bi % 5;
+      _expectedBh += Math.round(_baseHp * (_hpM[_bIdx] / 1000) * Math.pow(1.15, _cIdx));
+    }
+    if (_g !== _expectedBh) return false;
+    if (diff === String.fromCharCode(101,97,115,121) && _i > 0) return false;
+    if (_o <= 0 && (_b + _c) > 0) return false;
+    if (_o > ((_a + 1) >>> 1)) return false;
+    var _q3 = [102,124,107,124,98,124,104,124,112];
+    var _r7 = _q3.map(function(c){return String.fromCharCode(c)}).join("");
+    var _w5 = [88,51,118,65,108,116,57];
+    var _u2 = _w5.map(function(c){return String.fromCharCode(c)}).join("");
+    var _x4 = String(_a) + _r7.charAt(1) + String(_b) + _r7.charAt(3) +
+              String(_c) + _r7.charAt(5) + String(_g) + _r7.charAt(7) +
+              String(_o) + _r7.charAt(1) + _u2;
+    var _h9 = 5381;
+    for (var _i3 = 0; _i3 < _x4.length; _i3++) {
+      _h9 = ((_h9 << 5) + _h9 + _x4.charCodeAt(_i3)) & 0xFFFFFFFF;
+    }
+    if (_r !== (_h9 >>> 0)) return false;
+    void(_t7 + _z1);
     return true;
   }
 
@@ -3333,7 +3388,7 @@ function startGame(diffKey) {
   rapidTimer = 0;
   bunkerHealFlash = 0;
   lives = 2;
-  _session = { f:0, fk:0, bk:0, mk:0, ak:0, bd:0, bh:0, sf:0, pu:0, lp:0, ht:0, ts:Date.now() };
+  _session = { f:0, fk:0, bk:0, mk:0, ak:0, bd:0, bh:0, sf:0, pu:0, lp:0, ht:0, ts:Date.now(), pf:0 };
   invulnTimer = 0;
   cloneTimer = 0;
   powerUps = [];
@@ -4122,7 +4177,7 @@ function updateGame() {
     const p = player.shoot();
     if (p) {
       projectiles.push(p);
-      if (_session) _session.sf++;
+      if (_session) { _session.sf++; _session.pf++; }
       playSound("shoot");
       // Clone wingmen fire too
       if (cloneTimer > 0) {
