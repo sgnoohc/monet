@@ -356,15 +356,105 @@ try {
   const db = firebase.database();
   firebaseReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
 
-  var submitScore = function(name, sc, diff, lvl) {
+  // ── Anti-abuse: integrity token ──────────────────────────────────────
+  var _ss = [83,112,52,99,101,65,116,116,52,99,107]; // obfuscated salt
+  function _scoreToken(name, sc, diff, lvl, sess) {
+    var s = _ss.map(function(c){return String.fromCharCode(c)}).join("");
+    var raw = name + "|" + sc + "|" + diff + "|" + lvl + "|" + s;
+    if (sess) raw += "|" + sess;
+    // Simple hash (djb2)
+    var h = 5381;
+    for (var i = 0; i < raw.length; i++) {
+      h = ((h << 5) + h + raw.charCodeAt(i)) & 0xFFFFFFFF;
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  // ── Anti-abuse: rate limiting ──────────────────────────────────────
+  var _lastSubmitTime = 0;
+
+  var submitScore = function(name, sc, diff, lvl, sess) {
     if (!firebaseReady) return Promise.resolve();
+
+    // Sanitize name: only A-Z 0-9 space dash underscore
+    name = String(name).toUpperCase().replace(/[^A-Z0-9 \-_]/g, "").slice(0, 12);
+    if (!name || name.length < 1) return Promise.reject("Invalid name");
+
+    // Validate score bounds
+    if (typeof sc !== "number" || !Number.isInteger(sc) || sc <= 0 || sc > 999999) {
+      return Promise.reject("Invalid score");
+    }
+
+    // Validate level
+    if (typeof lvl !== "number" || !Number.isInteger(lvl) || lvl < 1 || lvl > 99) {
+      return Promise.reject("Invalid level");
+    }
+
+    // Validate difficulty
+    var _validDiffs = ["easy", "medium", "difficult", "insane", "doomsday"];
+    if (_validDiffs.indexOf(diff) === -1) {
+      return Promise.reject("Invalid difficulty");
+    }
+
+    // Require session data
+    if (!sess || typeof sess !== "object" || typeof sess.f !== "number") {
+      return Promise.reject("Invalid session");
+    }
+
+    // Rate limit: 10 seconds between submissions
+    var now = Date.now();
+    if (now - _lastSubmitTime < 10000) {
+      return Promise.reject("Too fast — wait before submitting again");
+    }
+    _lastSubmitTime = now;
+
+    // Encode session as dot-delimited string
+    var sStr = [sess.f, sess.fk, sess.bk, sess.mk, sess.ak, sess.bd, sess.bh, sess.sf, sess.pu, sess.lp, sess.ht, sess.ts].join(".");
+
     return db.ref("leaderboard/" + diff).push({
-      name: name.toUpperCase().slice(0, 12),
+      name: name,
       score: sc,
       level: lvl,
-      timestamp: firebase.database.ServerValue.TIMESTAMP
+      timestamp: firebase.database.ServerValue.TIMESTAMP,
+      v: _scoreToken(name, sc, diff, lvl, sStr),
+      s: sStr
     }).then(() => {});
   };
+
+  // Session plausibility checker for leaderboard filtering
+  function _validateSession(e, diff) {
+    // Backward compat: entries without session data pass
+    if (!e.s || typeof e.s !== "string") return true;
+    var parts = e.s.split(".");
+    if (parts.length !== 12) return false;
+    var f = +parts[0], fk = +parts[1], bk = +parts[2], mk = +parts[3], ak = +parts[4];
+    var bd = +parts[5], bh = +parts[6], sf = +parts[7], pu = +parts[8], lp = +parts[9];
+    var ht = +parts[10], ts = +parts[11];
+    // All fields must be non-negative integers
+    var vals = [f, fk, bk, mk, ak, bd, bh, sf, pu, lp, ht, ts];
+    for (var i = 0; i < vals.length; i++) {
+      if (!Number.isFinite(vals[i]) || vals[i] < 0 || vals[i] !== Math.floor(vals[i])) return false;
+    }
+    // Score decomposition: score should equal kill-based points + boss HP bonus
+    var expectedScore = fk * 100 + bk * 150 + mk * 50 + ak * 75 + bh * 10;
+    if (e.score !== expectedScore) return false;
+    // Kill count ceiling: max aliens per 5-level cycle (grid sizes: 10,18,28,32,40)
+    var gridSizes = [10, 18, 28, 32, 40];
+    var maxAliens = 0;
+    for (var lv = 1; lv <= e.level; lv++) {
+      // Only non-boss levels have alien grids (every 5th level is boss)
+      if (lv % 5 !== 0) maxAliens += gridSizes[Math.min((lv - 1) % 5, gridSizes.length - 1)];
+    }
+    if (fk + bk > maxAliens) return false;
+    // Minimum frames: at least level * 46 frames (~1 sec/level absolute minimum)
+    if (f < e.level * 46) return false;
+    // Shots vs kills: shots fired should be at least totalKills / 4 (AoE weapons)
+    var totalKills = fk + bk + mk + ak;
+    if (totalKills > 0 && sf < totalKills / 4) return false;
+    // Easy mode: no powerups on easy difficulty
+    if (diff === "easy" && pu > 0) return false;
+    return true;
+  }
 
   var fetchLeaderboard = function(diff, limit, callback) {
     if (!firebaseReady) { callback([]); return; }
@@ -375,7 +465,13 @@ try {
       .then(snap => {
         const entries = [];
         snap.forEach(child => {
-          entries.push(child.val());
+          const e = child.val();
+          // Filter out malformed or out-of-range entries
+          if (!e || typeof e.name !== "string" || e.name.length < 1 || e.name.length > 12) return;
+          if (typeof e.score !== "number" || e.score <= 0 || e.score > 999999) return;
+          if (typeof e.level !== "number" || e.level < 1 || e.level > 99) return;
+          if (!_validateSession(e, diff)) return;
+          entries.push(e);
         });
         // Sort descending by score
         entries.sort((a, b) => b.score - a.score);
@@ -3110,6 +3206,7 @@ function triggerBombExplosion(cx, cy) {
       const dead = a.takeHit();
       if (dead) {
         score += a.points;
+        _trackKill(a.points);
         explosions.push(new Explosion(ax, ay));
       }
     }
@@ -3128,6 +3225,7 @@ function triggerBombExplosion(cx, cy) {
     if (Math.sqrt(dx2 * dx2 + dy2 * dy2) < blastRadius) {
       m.alive = false;
       score += m.points;
+      _trackKill(m.points);
       explosions.push(new Explosion(mx2, my2));
     }
   }
@@ -3154,6 +3252,7 @@ function handleBossDeath() {
     const ey = mothership.y + Math.random() * mothership.h;
     explosions.push(new BombExplosion(ex, ey));
   }
+  if (_session) { _session.bd++; _session.bh += mothership.maxHp; }
   bossDeathTimer = 30; // 1s delay before win
   // Kill remaining minions
   for (const m of bossMinions) {
@@ -3182,6 +3281,14 @@ let lives, invulnTimer, cloneTimer;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer, bossMinions;
 let asteroids, asteroidTimer;
 let level, levelTransitionTimer;
+let _session = null;
+function _trackKill(pts) {
+  if (!_session) return;
+  if (pts === 100) _session.fk++;
+  else if (pts === 150) _session.bk++;
+  else if (pts === 50) _session.mk++;
+  else if (pts === 75) _session.ak++;
+}
 
 // Tutorial state
 let tutorialStep = 0;
@@ -3235,6 +3342,7 @@ function startGame(diffKey) {
   rapidTimer = 0;
   bunkerHealFlash = 0;
   lives = 2;
+  _session = { f:0, fk:0, bk:0, mk:0, ak:0, bd:0, bh:0, sf:0, pu:0, lp:0, ht:0, ts:Date.now() };
   invulnTimer = 0;
   cloneTimer = 0;
   powerUps = [];
@@ -3814,6 +3922,7 @@ let shiftDebounce = false;
 
 function updateGame() {
   if (gameState !== "playing") return;
+  if (_session) _session.f++;
 
   // Level transition interstitial — only tick the timer, skip gameplay
   if (levelTransitionTimer > 0) {
@@ -3887,6 +3996,7 @@ function updateGame() {
           if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
             a.alive = false;
             score += a.points;
+            _trackKill(a.points);
             explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
           }
         }
@@ -3897,6 +4007,7 @@ function updateGame() {
           if (Math.abs(mCx - beamX) < beamHalf + m.w / 2) {
             m.alive = false;
             score += m.points;
+            _trackKill(m.points);
             explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
           }
         }
@@ -4020,6 +4131,7 @@ function updateGame() {
     const p = player.shoot();
     if (p) {
       projectiles.push(p);
+      if (_session) _session.sf++;
       playSound("shoot");
       // Clone wingmen fire too
       if (cloneTimer > 0) {
@@ -4076,6 +4188,7 @@ function updateGame() {
       if (!debugInvincible) {
         if (invulnTimer <= 0) {
           lives--;
+          if (_session) _session.ht++;
           invulnTimer = 60;
           playSound("playerDeath");
           if (lives <= 0) { gameState = "lost"; return; }
@@ -4117,8 +4230,10 @@ function updateGame() {
       if (!p.isTorpedo && !p.isHoming) {
         for (const pu of powerUps) {
           if (pu.alive && rectCollide(p.x, p.y, p.w, p.h, pu.x, pu.y, pu.w, pu.h)) {
+            if (_session) _session.pu++;
             if (pu.type === "life") {
               lives = Math.min(5, lives + 1);
+              if (_session) _session.lp++;
             } else {
               const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo + homingAmmo + rapidAmmo > 0;
               switch (pu.type) {
@@ -4150,6 +4265,7 @@ function updateGame() {
           } else if (p.isHoming) {
             a.alive = false;
             score += a.points;
+            _trackKill(a.points);
             explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
             playSound("explode");
             hit = true;
@@ -4158,7 +4274,7 @@ function updateGame() {
             const dead = a.takeHit();
             explosions.push(new Explosion(p.x, p.y));
             playSound(dead ? "explode" : "hit");
-            if (dead) score += a.points;
+            if (dead) { score += a.points; _trackKill(a.points); }
             hit = true;
             break;
           }
@@ -4197,7 +4313,7 @@ function updateGame() {
             const dead = m.takeHit();
             explosions.push(new Explosion(p.x, p.y));
             playSound(dead ? "explode" : "hit");
-            if (dead) score += m.points;
+            if (dead) { score += m.points; _trackKill(m.points); }
             hit = true;
             break;
           }
@@ -4213,7 +4329,7 @@ function updateGame() {
             const dead = ast.takeHit();
             explosions.push(new Explosion(p.x, p.y));
             playSound(dead ? "explode" : "hit");
-            if (dead) score += 75;
+            if (dead) { score += 75; _trackKill(75); }
             hit = true;
             break;
           }
@@ -4228,6 +4344,7 @@ function updateGame() {
           hit = true;
         } else {
           lives--;
+          if (_session) _session.ht++;
           invulnTimer = 60;
           explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
           playSound("playerDeath");
@@ -4329,6 +4446,7 @@ function updateGame() {
     if (Math.sqrt(dx * dx + dy * dy) < ast.radius + 10) {
       if (!debugInvincible && invulnTimer <= 0) {
         lives--;
+        if (_session) _session.ht++;
         invulnTimer = 60;
         explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
         playSound("playerDeath");
@@ -4685,9 +4803,15 @@ function drawGame() {
   const aliveCount = aliens.filter(a => a.alive).length;
   const diffLabel = DIFFICULTIES[difficulty].label;
   drawText(`SPACE ATTACK  [${diffLabel}] Lv.${level}`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
-  // Draw lives as mini ship icons
+  drawText(`Score: ${score}`, FIELD_X + 260, FIELD_Y - 10, COL.status, 14, "left");
+  if (bossPhase && mothership) {
+    drawText(`BOSS: ${mothership.hp}/${mothership.maxHp}`, FIELD_X + 400, FIELD_Y - 10, "#ff0044", 14, "left");
+  } else {
+    drawText(`Aliens: ${aliveCount}`, FIELD_X + 400, FIELD_Y - 10, COL.status, 14, "left");
+  }
+  // Draw lives as mini ship icons (right-aligned)
   for (let i = 0; i < lives; i++) {
-    const lx = FIELD_X + 230 + i * 14;
+    const lx = FIELD_X + 500 + i * 14;
     const ly = FIELD_Y - 14;
     ctx.save();
     ctx.fillStyle = "#00ff66";
@@ -4704,12 +4828,6 @@ function drawGame() {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-  }
-  drawText(`Score: ${score}`, FIELD_X + 300, FIELD_Y - 10, COL.status, 14, "left");
-  if (bossPhase && mothership) {
-    drawText(`BOSS: ${mothership.hp}/${mothership.maxHp}`, FIELD_X + 450, FIELD_Y - 10, "#ff0044", 14, "left");
-  } else {
-    drawText(`Aliens: ${aliveCount}`, FIELD_X + 450, FIELD_Y - 10, COL.status, 14, "left");
   }
   if (debugMode) {
     let debugLabel = "[DEBUG]";
@@ -4941,13 +5059,20 @@ function hideNameInput() {
 
 function doSubmitScore(skipSubmit) {
   const input = document.getElementById("player-name");
-  const name = input ? input.value.trim().toUpperCase() : "";
+  const name = input ? input.value.trim().toUpperCase().replace(/[^A-Z0-9 \-_]/g, "").slice(0, 12) : "";
   if (!skipSubmit && name) {
     playerName = name;
     localStorage.setItem("spaceattack_name", playerName);
-    submitScore(name, score, difficulty, level).then(() => {
+    submitScore(name, score, difficulty, level, _session).then(() => {
       scoreSubmitted = true;
       // Fetch updated leaderboard for current difficulty
+      fetchLeaderboard(difficulty, 10, (data) => {
+        leaderboardData = data;
+        leaderboardLoaded = true;
+      });
+    }).catch(() => {
+      // Validation or rate-limit rejection — still show leaderboard
+      scoreSubmitted = true;
       fetchLeaderboard(difficulty, 10, (data) => {
         leaderboardData = data;
         leaderboardLoaded = true;
