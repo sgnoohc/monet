@@ -3169,7 +3169,7 @@ function handleBossDeath() {
 //  Game states
 // ════════════════════════════════════════════════════════════════════════
 
-let gameState = "title"; // title | leaderboard | playing | won | lost
+let gameState = "title"; // title | leaderboard | playing | won | lost | tutorial
 let selectedDiff = 1;
 let difficulty = "medium";
 
@@ -3182,6 +3182,13 @@ let lives, invulnTimer, cloneTimer;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer, bossMinions;
 let asteroids, asteroidTimer;
 let level, levelTransitionTimer;
+
+// Tutorial state
+let tutorialStep = 0;
+let tutorialTimer = 0;
+let tutorialGoal = {};
+let tutorialDebounce = {};
+let tutorialRailBeams = [];
 
 const LEVEL_GRID = [{c:5,r:2},{c:6,r:3},{c:7,r:4},{c:8,r:4},{c:8,r:5}];
 
@@ -3259,6 +3266,454 @@ function startGame(diffKey) {
   startBGMusic();
 }
 
+// ── Tutorial mode ────────────────────────────────────────────────────
+
+const TUTORIAL_STEPS = [
+  { name: "Movement",  instruction: "Move LEFT and RIGHT to fly your ship",      keys: "ARROW KEYS / A D" },
+  { name: "Shooting",  instruction: "Shoot SPACE to destroy all aliens",          keys: "SPACE" },
+  { name: "Dodging",   instruction: "Dodge enemy fire! Survive for 5 seconds",    keys: "MOVE to dodge" },
+  { name: "Powerups",  instruction: "Shoot the powerup to collect it",            keys: "SPACE to shoot" },
+  { name: "Special",   instruction: "Press SHIFT to fire the rail beam!",         keys: "SHIFT" },
+  { name: "Bunkers",   instruction: "Bunkers absorb shots — hide behind them!",   keys: "Watch the bunkers" },
+  { name: "Complete",  instruction: "Tutorial complete! You're ready for battle!", keys: "ENTER / SPACE" },
+];
+
+function startTutorial() {
+  gameState = "tutorial";
+  player = new Player();
+  aliens = [];
+  bunkers = [];
+  projectiles = [];
+  explosions = [];
+  powerUps = [];
+  tutorialRailBeams = [];
+  score = 0;
+  lives = 99;
+  invulnTimer = 0;
+  railAmmo = 0;
+  bombAmmo = 0;
+  healAmmo = 0;
+  slowAmmo = 0;
+  cloneAmmo = 0;
+  homingAmmo = 0;
+  rapidAmmo = 0;
+  selectedWeapon = 0;
+  slowTimer = 0;
+  rapidTimer = 0;
+  cloneTimer = 0;
+  bunkerHealFlash = 0;
+  tutorialStep = 0;
+  tutorialTimer = 0;
+  tutorialGoal = {};
+  tutorialDebounce = {};
+  generateStars("medium");
+  setupTutorialStep(0);
+}
+
+function setupTutorialStep(step) {
+  tutorialStep = step;
+  tutorialTimer = 0;
+  tutorialGoal = {};
+  tutorialDebounce = {};
+  aliens = [];
+  projectiles = [];
+  explosions = [];
+  powerUps = [];
+  bunkers = [];
+  tutorialRailBeams = [];
+  player = new Player();
+  invulnTimer = 0;
+  railAmmo = 0;
+  selectedWeapon = 0;
+
+  switch (step) {
+    case 0: // Movement — reach both edges
+      tutorialGoal = { leftReached: false, rightReached: false };
+      break;
+    case 1: { // Shooting — destroy 3 stationary aliens
+      const cy = FIELD_Y + FIELD_H * 0.3;
+      const spacing = FIELD_W / 4;
+      for (let i = 1; i <= 3; i++) {
+        aliens.push(new Alien(FIELD_X + spacing * i - 14, cy, 1, 0, false, i % 2));
+      }
+      break;
+    }
+    case 2: // Dodging — survive 5 seconds under fire
+      tutorialGoal = { surviveFrames: 5 * FPS, elapsed: 0 };
+      for (let i = 0; i < 5; i++) {
+        const ax = FIELD_X + 40 + i * (FIELD_W - 80) / 4;
+        const a = new Alien(ax, FIELD_Y + 30, 9999, 0.06, false, i % 2);
+        aliens.push(a);
+      }
+      break;
+    case 3: { // Powerups — shoot a rail powerup
+      const pu = new PowerUp("rail");
+      pu.x = FIELD_X + FIELD_W / 2 - 12;
+      pu.y = FIELD_Y + FIELD_H * 0.4;
+      pu.maxLife = 99999;
+      powerUps.push(pu);
+      break;
+    }
+    case 4: { // Special — use rail beam
+      railAmmo = 1;
+      selectedWeapon = 0;
+      const cy = FIELD_Y + FIELD_H * 0.25;
+      const spacing = FIELD_W / 6;
+      for (let i = 1; i <= 5; i++) {
+        aliens.push(new Alien(FIELD_X + spacing * i - 14, cy, 1, 0, false, i % 2));
+      }
+      break;
+    }
+    case 5: { // Bunkers — watch 3 shots get absorbed
+      tutorialGoal = { absorbed: 0, target: 3 };
+      const bunkY = FIELD_Y + FIELD_H - 60;
+      const spacing = FIELD_W / 3;
+      bunkers.push(new Bunker(FIELD_X + spacing * 1 - 24, bunkY));
+      bunkers.push(new Bunker(FIELD_X + spacing * 2 - 24, bunkY));
+      const alienY = FIELD_Y + 40;
+      for (let i = 0; i < 3; i++) {
+        const ax = FIELD_X + 60 + i * (FIELD_W - 120) / 2;
+        aliens.push(new Alien(ax, alienY, 9999, 0.05, false, i % 2));
+      }
+      break;
+    }
+    case 6: // Complete
+      break;
+  }
+}
+
+function updateTutorial() {
+  tutorialTimer++;
+
+  // ESC exits to title
+  if (keys["Escape"] && !tutorialDebounce.esc) {
+    gameState = "title";
+    return;
+  }
+  tutorialDebounce.esc = !!keys["Escape"];
+
+  // Player movement (all steps except 6)
+  if (tutorialStep < 6) {
+    player.update();
+  }
+
+  // Invulnerability timer
+  if (invulnTimer > 0) invulnTimer--;
+
+  // Update explosions
+  for (const e of explosions) e.update();
+  explosions = explosions.filter(e => e.alive);
+
+  // Update rail beams
+  for (const rb of tutorialRailBeams) rb.update();
+  tutorialRailBeams = tutorialRailBeams.filter(rb => rb.alive);
+
+  switch (tutorialStep) {
+    case 0: { // Movement — check if player reached both edges
+      if (player.x <= FIELD_X + 5) tutorialGoal.leftReached = true;
+      if (player.x + player.w >= FIELD_X + FIELD_W - 5) tutorialGoal.rightReached = true;
+      if (tutorialGoal.leftReached && tutorialGoal.rightReached) {
+        playSound("menuConfirm");
+        setupTutorialStep(1);
+      }
+      break;
+    }
+    case 1: { // Shooting — player shoots, check collisions
+      // Shooting
+      if (keys["Space"] || keys["KeyZ"]) {
+        const p = player.shoot();
+        if (p) { projectiles.push(p); playSound("shoot"); }
+      }
+      // Update projectiles
+      for (const p of projectiles) p.update();
+      projectiles = projectiles.filter(p => p.alive);
+      // Check bullet-alien collisions
+      for (const p of projectiles) {
+        if (!p.alive || p.dir !== -1) continue;
+        for (const a of aliens) {
+          if (!a.alive) continue;
+          if (rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
+            p.alive = false;
+            a.takeHit();
+            if (!a.alive) {
+              explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+              playSound("alienDie");
+            }
+            break;
+          }
+        }
+      }
+      aliens = aliens.filter(a => a.alive);
+      if (aliens.length === 0 && tutorialTimer > 10) {
+        playSound("menuConfirm");
+        setupTutorialStep(2);
+      }
+      break;
+    }
+    case 2: { // Dodging — survive under fire
+      tutorialGoal.elapsed++;
+      // Aliens shoot
+      for (const a of aliens) {
+        const p = a.tryShoot();
+        if (p) projectiles.push(p);
+      }
+      // Update projectiles
+      for (const p of projectiles) p.update();
+      projectiles = projectiles.filter(p => p.alive);
+      // Check hits on player
+      for (const p of projectiles) {
+        if (!p.alive || p.dir !== 1) continue;
+        if (invulnTimer > 0) continue;
+        if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
+          p.alive = false;
+          invulnTimer = FPS * 1;
+          playSound("playerHit");
+        }
+      }
+      if (tutorialGoal.elapsed >= tutorialGoal.surviveFrames) {
+        playSound("menuConfirm");
+        setupTutorialStep(3);
+      }
+      break;
+    }
+    case 3: { // Powerups — shoot the powerup to collect
+      if (keys["Space"] || keys["KeyZ"]) {
+        const p = player.shoot();
+        if (p) { projectiles.push(p); playSound("shoot"); }
+      }
+      for (const p of projectiles) p.update();
+      projectiles = projectiles.filter(p => p.alive);
+      for (const pu of powerUps) pu.update();
+      // Check bullet-powerup collision
+      for (const p of projectiles) {
+        if (!p.alive || p.dir !== -1) continue;
+        for (const pu of powerUps) {
+          if (!pu.alive) continue;
+          if (rectCollide(p.x, p.y, p.w, p.h, pu.x, pu.y, pu.w, pu.h)) {
+            p.alive = false;
+            pu.alive = false;
+            playSound("powerUp");
+          }
+        }
+      }
+      powerUps = powerUps.filter(pu => pu.alive);
+      if (powerUps.length === 0 && tutorialTimer > 10) {
+        playSound("menuConfirm");
+        setupTutorialStep(4);
+      }
+      break;
+    }
+    case 4: { // Special — fire rail beam
+      // Normal shooting
+      if (keys["Space"] || keys["KeyZ"]) {
+        const p = player.shoot();
+        if (p) { projectiles.push(p); playSound("shoot"); }
+      }
+      // Rail beam (Shift)
+      const shiftPressed = keys["ShiftLeft"] || keys["ShiftRight"];
+      if (shiftPressed && !tutorialDebounce.shift && railAmmo > 0) {
+        railAmmo--;
+        const rb = new RailBeam(player.x + player.w / 2);
+        tutorialRailBeams.push(rb);
+        playSound("railGun");
+        // Rail kills all aliens in column
+        for (const a of aliens) {
+          if (!a.alive) continue;
+          if (Math.abs((a.x + a.w / 2) - rb.x) < 20) {
+            a.alive = false;
+            explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+          }
+        }
+      }
+      tutorialDebounce.shift = shiftPressed;
+      // Normal projectile collisions
+      for (const p of projectiles) p.update();
+      projectiles = projectiles.filter(p => p.alive);
+      for (const p of projectiles) {
+        if (!p.alive || p.dir !== -1) continue;
+        for (const a of aliens) {
+          if (!a.alive) continue;
+          if (rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
+            p.alive = false;
+            a.takeHit();
+            if (!a.alive) {
+              explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
+              playSound("alienDie");
+            }
+            break;
+          }
+        }
+      }
+      aliens = aliens.filter(a => a.alive);
+      if (aliens.length === 0 && tutorialTimer > 10) {
+        playSound("menuConfirm");
+        setupTutorialStep(5);
+      }
+      break;
+    }
+    case 5: { // Bunkers — watch shots get absorbed
+      // Player shooting
+      if (keys["Space"] || keys["KeyZ"]) {
+        const p = player.shoot();
+        if (p) { projectiles.push(p); playSound("shoot"); }
+      }
+      // Aliens shoot
+      for (const a of aliens) {
+        const p = a.tryShoot();
+        if (p) projectiles.push(p);
+      }
+      for (const p of projectiles) p.update();
+      projectiles = projectiles.filter(p => p.alive);
+      // Bullet-bunker collisions
+      for (const p of projectiles) {
+        if (!p.alive) continue;
+        for (const b of bunkers) {
+          if (b.isDestroyed) continue;
+          if (rectCollide(p.x, p.y, p.w, p.h, b.x, b.y, b.w, b.h)) {
+            if (b.damageAt(p.x + p.w / 2, p.y + p.h / 2, LASER_BLAST_RADIUS)) {
+              p.alive = false;
+              if (p.dir === 1) {
+                tutorialGoal.absorbed++;
+              }
+            }
+          }
+        }
+      }
+      // Player hit check
+      for (const p of projectiles) {
+        if (!p.alive || p.dir !== 1) continue;
+        if (invulnTimer > 0) continue;
+        if (rectCollide(p.x, p.y, p.w, p.h, player.x, player.y, player.w, player.h)) {
+          p.alive = false;
+          invulnTimer = FPS * 1;
+          playSound("playerHit");
+        }
+      }
+      // Bullet-alien collisions (player can shoot aliens)
+      for (const p of projectiles) {
+        if (!p.alive || p.dir !== -1) continue;
+        for (const a of aliens) {
+          if (!a.alive) continue;
+          if (rectCollide(p.x, p.y, p.w, p.h, a.x, a.y, a.w, a.h)) {
+            p.alive = false;
+            // aliens are unkillable here (9999 HP) — just show they take no damage
+            break;
+          }
+        }
+      }
+      if (tutorialGoal.absorbed >= tutorialGoal.target) {
+        playSound("menuConfirm");
+        setupTutorialStep(6);
+      }
+      break;
+    }
+    case 6: { // Complete — press Enter/Space to exit
+      const confirmPressed = keys["Enter"] || keys["Space"];
+      if (confirmPressed && !tutorialDebounce.confirm) {
+        playSound("menuConfirm");
+        gameState = "title";
+      }
+      tutorialDebounce.confirm = !!confirmPressed;
+      break;
+    }
+  }
+}
+
+function drawTutorial() {
+  // Field border
+  ctx.strokeStyle = COL.border;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H);
+
+  // Bunkers
+  for (const b of bunkers) if (!b.isDestroyed) b.draw();
+
+  // Aliens
+  for (const a of aliens) if (a.alive) a.draw();
+
+  // Player
+  if (tutorialStep < 6) player.draw();
+
+  // Power-ups
+  for (const pu of powerUps) if (pu.alive) pu.draw();
+
+  // Projectiles
+  for (const p of projectiles) if (p.alive) p.draw();
+
+  // Explosions
+  for (const e of explosions) if (e.alive) e.draw();
+
+  // Rail beams
+  for (const rb of tutorialRailBeams) if (rb.alive) rb.draw();
+
+  // Top bar: step name and progress
+  const stepInfo = TUTORIAL_STEPS[tutorialStep];
+  drawText(`TUTORIAL`, FIELD_X + 8, 18, "#00cccc", 14, "left");
+  drawText(`Step ${tutorialStep + 1}/${TUTORIAL_STEPS.length}: ${stepInfo.name}`, FIELD_X + FIELD_W - 8, 18, "#ffffff", 14, "right");
+
+  // Step-specific HUD
+  if (tutorialStep === 0) {
+    const lCol = tutorialGoal.leftReached ? "#00ff00" : "#666666";
+    const rCol = tutorialGoal.rightReached ? "#00ff00" : "#666666";
+    drawText("< LEFT", FIELD_X + 40, FIELD_Y + FIELD_H / 2, lCol, 16, "center");
+    drawText("RIGHT >", FIELD_X + FIELD_W - 40, FIELD_Y + FIELD_H / 2, rCol, 16, "center");
+  } else if (tutorialStep === 2) {
+    const remaining = Math.max(0, Math.ceil((tutorialGoal.surviveFrames - tutorialGoal.elapsed) / FPS));
+    drawText(`Survive: ${remaining}s`, FIELD_X + FIELD_W / 2, FIELD_Y + 18, "#ffff00", 16, "center");
+  } else if (tutorialStep === 4) {
+    drawText(`RAIL: ${railAmmo}`, FIELD_X + 8, FIELD_Y + FIELD_H - 8, "#00ccff", 14, "left");
+  } else if (tutorialStep === 5) {
+    drawText(`Absorbed: ${tutorialGoal.absorbed || 0}/${tutorialGoal.target || 3}`, FIELD_X + FIELD_W / 2, FIELD_Y + 18, "#00cccc", 16, "center");
+  }
+
+  // Draw overlay
+  drawTutorialOverlay();
+}
+
+function drawTutorialOverlay() {
+  const stepInfo = TUTORIAL_STEPS[tutorialStep];
+  const panelH = 56;
+  const panelY = FIELD_Y + FIELD_H - panelH - 5;
+  const panelX = FIELD_X + 5;
+  const panelW = FIELD_W - 10;
+
+  // Semi-transparent panel
+  ctx.fillStyle = "rgba(0, 0, 0, 0.75)";
+  ctx.fillRect(panelX, panelY, panelW, panelH);
+  ctx.strokeStyle = "#00cccc";
+  ctx.lineWidth = 1;
+  ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+  // Instruction text
+  drawText(stepInfo.instruction, panelX + panelW / 2, panelY + 18, "#ffffff", 15, "center");
+
+  // Key hint
+  const keyCol = (Math.floor(tutorialTimer / 20) % 2 === 0) ? "#00ff00" : "#00cc88";
+  drawText(`[ ${stepInfo.keys} ]`, panelX + panelW / 2, panelY + 38, keyCol, 12, "center");
+
+  // Progress dots at the very bottom
+  const dotY = panelY + panelH + 10;
+  const dotSpacing = 16;
+  const totalW = (TUTORIAL_STEPS.length - 1) * dotSpacing;
+  const startX = FIELD_X + FIELD_W / 2 - totalW / 2;
+  for (let i = 0; i < TUTORIAL_STEPS.length; i++) {
+    const dx = startX + i * dotSpacing;
+    ctx.beginPath();
+    ctx.arc(dx, dotY, 3, 0, Math.PI * 2);
+    if (i < tutorialStep) {
+      ctx.fillStyle = "#00ff00";
+    } else if (i === tutorialStep) {
+      ctx.fillStyle = "#00cccc";
+    } else {
+      ctx.fillStyle = "#444444";
+    }
+    ctx.fill();
+  }
+
+  // ESC hint
+  drawText("ESC = Exit tutorial", FIELD_X + FIELD_W - 12, FIELD_Y + FIELD_H + 12, "#666666", 10, "right");
+}
+
 // ── Title screen ─────────────────────────────────────────────────────
 let debugMode = false;
 let debugInvincible = false;
@@ -3296,6 +3751,14 @@ function updateTitle() {
     enterLeaderboardView();
   }
   titleKeyDebounce.l = lPressed;
+
+  // Tutorial (T key)
+  const tPressed = keys["KeyT"];
+  if (tPressed && !titleKeyDebounce.t) {
+    playSound("menuConfirm");
+    startTutorial();
+  }
+  titleKeyDebounce.t = tPressed;
 
   // Debug mode toggle (backtick on desktop)
   const backquotePressed = keys["Backquote"];
@@ -3362,7 +3825,7 @@ function drawTitle() {
     drawText("1-5=Ammo  0=Spawn  I=Invincible  K=Kill all  N=Kill 50%", W / 2, 460, "#886600", 12, "center");
   }
 
-  drawText("UP/DOWN = Select    ENTER/SPACE = Start    L = Leaderboard", W / 2, 480, COL.status, 14, "center");
+  drawText("UP/DOWN = Select    ENTER/SPACE = Start    L = Leaderboard    T = Tutorial", W / 2, 480, COL.status, 14, "center");
   drawText("ARROWS = Move  SPACE = Shoot  SHIFT = Special  TAB = Cycle", W / 2, 505, "#666666", 12, "center");
 }
 
@@ -4593,6 +5056,11 @@ function gameLoop() {
     if (bgMusicPlaying) stopBGMusic();
     updateLeaderboardView();
     drawLeaderboardView();
+    escDebounce = false;
+  } else if (gameState === "tutorial") {
+    if (bgMusicPlaying) stopBGMusic();
+    updateTutorial();
+    drawTutorial();
     escDebounce = false;
   } else if (gameState === "playing") {
     if (keys["Escape"] && !escDebounce) {
