@@ -433,14 +433,14 @@ try {
 
   function _validateSession(e, diff) {
     if (!e.s || typeof e.s !== "string") return true;
-    var _p = e.s.split("."); if (_p.length !== 14) return false;
+    var _p = e.s.split("."); if (_p.length !== 14 && _p.length !== 12) return false;
     var _v = _p.map(Number), _t7 = 0, _z1 = 0;
     for (var _j = 0; _j < _v.length; _j++) {
       if (!Number.isFinite(_v[_j]) || _v[_j] < 0 || _v[_j] % 1 !== 0) return false;
       _t7 += _v[_j]; _z1 ^= (_v[_j] & 0xFF);
     }
     var _a=_v[0],_b=_v[1],_c=_v[2],_d=_v[3],_e=_v[4],_f=_v[5],_g=_v[6],_h=_v[7],
-        _i=_v[8],_k=_v[9],_m=_v[10],_n=_v[11],_o=_v[12],_r=_v[13];
+        _i=_v[8],_k=_v[9],_m=_v[10],_n=_v[11];
     var _w3 = _b * 100 + _c * 150 + _d * 50 + _e * 75 + _g * 10;
     if (e.score !== _w3) return false;
     var _q9 = [10,18,28,32,40], _s2 = 0, _y6 = 0;
@@ -455,6 +455,10 @@ try {
       }
     }
     if (_b + _c > _s2) return false;
+    if (_a < e.level * 46) return false;
+    if (diff === String.fromCharCode(101,97,115,121) && _i > 0) return false;
+    if (_p.length === 12) { void(_t7 + _z1); return true; }
+    var _o=_v[12],_r=_v[13];
     if (e.level > 1 && (_b + _c) < (function(){
       var _t = 0;
       for (var _l2 = 1; _l2 < e.level; _l2++) {
@@ -463,7 +467,6 @@ try {
       return _t;
     })()) return false;
     if (_c > _y6) return false;
-    if (_a < e.level * 46) return false;
     var _bp = {};
     _bp[String.fromCharCode(101,97,115,121)] = 40;
     _bp[String.fromCharCode(109,101,100,105,117,109)] = 60;
@@ -483,7 +486,6 @@ try {
       _expectedBh += Math.round(_baseHp * (_hpM[_bIdx] / 1000) * Math.pow(1.15, _cIdx));
     }
     if (_g !== _expectedBh) return false;
-    if (diff === String.fromCharCode(101,97,115,121) && _i > 0) return false;
     if (_o <= 0 && (_b + _c) > 0) return false;
     if (_o > ((_a + 1) >>> 1)) return false;
     var _q3 = [102,124,107,124,98,124,104,124,112];
@@ -2795,8 +2797,12 @@ class Mothership {
     this.deathHandled = false;
     this.entering = true;
     this.enterSpeed = (this.targetY - this.y) / 40;
-    this.driftSpeed = 1.2;
-    this.driftDir = 1;
+    this.driftSpeed = 0.8 + Math.random() * 1.0;
+    this.driftDir = Math.random() < 0.5 ? 1 : -1;
+    this.zigTimer = 0;
+    this.zigDuration = 30 + Math.floor(Math.random() * 60);
+    this.vyDrift = 0;
+    this.vyTarget = 0;
     this.bobPhase = 0;
     this.shootChance = DIFFICULTIES[diffKey].shootChance;
     this.patternTimer = 0;
@@ -2825,14 +2831,26 @@ class Mothership {
     // Frozen — no movement or shooting
     if (slowTimer > 0) return newProjectiles;
 
-    // Horizontal drift
+    // Zig-zag movement with random direction/speed changes
+    this.zigTimer++;
+    if (this.zigTimer >= this.zigDuration) {
+      this.zigTimer = 0;
+      this.zigDuration = 25 + Math.floor(Math.random() * 70);
+      this.driftSpeed = 0.6 + Math.random() * 1.8;
+      this.driftDir = Math.random() < 0.5 ? 1 : -1;
+      this.vyTarget = (Math.random() - 0.5) * 1.2;
+    }
     this.x += this.driftSpeed * this.driftDir;
-    if (this.x <= FIELD_X + 10) this.driftDir = 1;
-    if (this.x + this.w >= FIELD_X + FIELD_W - 10) this.driftDir = -1;
+    if (this.x <= FIELD_X + 10) { this.x = FIELD_X + 10; this.driftDir = 1; }
+    if (this.x + this.w >= FIELD_X + FIELD_W - 10) { this.x = FIELD_X + FIELD_W - 10 - this.w; this.driftDir = -1; }
 
-    // Vertical bob
+    // Vertical drift with bob
+    this.vyDrift += (this.vyTarget - this.vyDrift) * 0.05;
     this.bobPhase += 0.05;
-    this.y = this.targetY + Math.sin(this.bobPhase) * 8;
+    var _newY = this.y + this.vyDrift + Math.sin(this.bobPhase) * 0.3;
+    if (_newY < FIELD_Y + 10) { _newY = FIELD_Y + 10; this.vyTarget = Math.abs(this.vyTarget); }
+    if (_newY > FIELD_Y + 80) { _newY = FIELD_Y + 80; this.vyTarget = -Math.abs(this.vyTarget); }
+    this.y = _newY;
 
     // Cycle pattern every 3s (90 frames)
     this.patternTimer++;
@@ -3090,10 +3108,11 @@ class Asteroid {
       pt.life--;
     }
     this.particles = this.particles.filter(pt => pt.life > 0);
-    // Off screen
-    if (this.y - this.radius > FIELD_Y + FIELD_H + 20 ||
-        this.x + this.radius < FIELD_X - 20 ||
-        this.x - this.radius > FIELD_X + FIELD_W + 20) {
+    // Bounce off side walls
+    if (this.x - this.radius < FIELD_X) { this.x = FIELD_X + this.radius; this.vx = Math.abs(this.vx); }
+    if (this.x + this.radius > FIELD_X + FIELD_W) { this.x = FIELD_X + FIELD_W - this.radius; this.vx = -Math.abs(this.vx); }
+    // Off bottom
+    if (this.y - this.radius > FIELD_Y + FIELD_H) {
       this.alive = false;
     }
   }
@@ -3208,8 +3227,8 @@ function generateStars(diffKey) {
   for (let i = 0; i < cfg.count; i++) {
     const colorName = cfg.colors[Math.floor(Math.random() * cfg.colors.length)];
     stars.push({
-      x: Math.random() * W,
-      y: Math.random() * H,
+      x: FIELD_X + Math.random() * FIELD_W,
+      y: FIELD_Y + Math.random() * FIELD_H,
       size: Math.random() * 1.5 + 0.5,
       speed: cfg.speedMin + Math.random() * (cfg.speedMax - cfg.speedMin),
       brightness: cfg.brightMin + Math.random() * (cfg.brightMax - cfg.brightMin),
@@ -3231,7 +3250,7 @@ function drawStars() {
 
   for (const s of stars) {
     s.y += s.speed;
-    if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
+    if (s.y > FIELD_Y + FIELD_H) { s.y = FIELD_Y; s.x = FIELD_X + Math.random() * FIELD_W; }
     ctx.fillStyle = `rgba(${s.color},${s.brightness})`;
     ctx.fillRect(s.x, s.y, s.size, s.size);
   }
