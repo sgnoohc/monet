@@ -2046,6 +2046,10 @@ class Alien {
     this.variant = variant || 0;
     this.alive = true;
     this.points = isBomber ? 150 : 100;
+    this.jitterX = 0;
+    this.jitterY = 0;
+    this.jitterTimer = Math.floor(Math.random() * 60);
+    this.jitterInterval = 40 + Math.floor(Math.random() * 50);
   }
 
   get color() {
@@ -2276,7 +2280,8 @@ class Projectile {
 
   update() {
     const speedMult = (this.dir === 1 && slowTimer > 0) ? 0.1 : 1;
-    this.y += this.dir * PROJ_SPEED * speedMult;
+    const playerMult = this.dir === -1 ? 2.5 : 1;
+    this.y += this.dir * PROJ_SPEED * speedMult * playerMult;
     if (this.y < FIELD_Y || this.y > FIELD_Y + FIELD_H) this.alive = false;
   }
 
@@ -4244,6 +4249,22 @@ function updateGame() {
       for (const a of alive) a.y += 16;
     } else {
       for (const a of alive) a.x += alienDir * speed;
+    }
+  }
+
+  // Per-alien random jitter
+  if (!frozen) {
+    for (const a of alive) {
+      a.jitterTimer++;
+      if (a.jitterTimer >= a.jitterInterval) {
+        a.jitterTimer = 0;
+        a.jitterInterval = 30 + Math.floor(Math.random() * 60);
+        a.jitterX = (Math.random() - 0.5) * 6;
+        a.jitterY = (Math.random() - 0.5) * 4;
+      }
+      a.x += a.jitterX * 0.15;
+      a.y += a.jitterY * 0.1;
+      a.x = Math.max(FIELD_X, Math.min(FIELD_X + FIELD_W - a.w, a.x));
     }
   }
 
