@@ -356,153 +356,29 @@ try {
   const db = firebase.database();
   firebaseReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
 
-  // ── Anti-abuse: integrity token ──────────────────────────────────────
-  var _ss = [83,112,52,99,101,65,116,116,52,99,107]; // obfuscated salt
-  function _scoreToken(name, sc, diff, lvl) {
-    var s = _ss.map(function(c){return String.fromCharCode(c)}).join("");
-    var raw = name + "|" + sc + "|" + diff + "|" + lvl + "|" + s;
-    var h = 5381;
-    for (var i = 0; i < raw.length; i++) {
-      h = ((h << 5) + h + raw.charCodeAt(i)) & 0xFFFFFFFF;
-    }
-    return (h >>> 0).toString(36);
-  }
-
-  // ── Anti-abuse: rate limiting ──────────────────────────────────────
-  var _lastSubmitTime = 0;
-
-  var submitScore = function(name, sc, diff, lvl, sess) {
+  var submitScore = function(name, sc, diff, lvl) {
     if (!firebaseReady) return Promise.resolve();
 
-    // Sanitize name: only A-Z 0-9 space dash underscore
     name = String(name).toUpperCase().replace(/[^A-Z0-9 \-_]/g, "").slice(0, 12);
     if (!name || name.length < 1) return Promise.reject("Invalid name");
-
-    // Validate score bounds
     if (typeof sc !== "number" || !Number.isInteger(sc) || sc <= 0 || sc > 999999) {
       return Promise.reject("Invalid score");
     }
-
-    // Validate level
     if (typeof lvl !== "number" || !Number.isInteger(lvl) || lvl < 1 || lvl > 99) {
       return Promise.reject("Invalid level");
     }
-
-    // Validate difficulty
     var _validDiffs = ["easy", "medium", "difficult", "insane", "doomsday"];
     if (_validDiffs.indexOf(diff) === -1) {
       return Promise.reject("Invalid difficulty");
     }
 
-    // Require session data
-    if (!sess || typeof sess !== "object" || typeof sess.f !== "number") {
-      return Promise.reject("Invalid session");
-    }
-
-    // Rate limit: 10 seconds between submissions
-    var now = Date.now();
-    if (now - _lastSubmitTime < 10000) {
-      return Promise.reject("Too fast — wait before submitting again");
-    }
-    _lastSubmitTime = now;
-
-    var _q3 = [102,124,107,124,98,124,104,124,112];
-    var _r7 = _q3.map(function(c){return String.fromCharCode(c)}).join("");
-    var _w5 = [88,51,118,65,108,116,57];
-    var _u2 = _w5.map(function(c){return String.fromCharCode(c)}).join("");
-    var _x4 = String(sess.f) + _r7.charAt(1) + String(sess.fk) + _r7.charAt(3) +
-              String(sess.bk) + _r7.charAt(5) + String(sess.bh) + _r7.charAt(7) +
-              String(sess.pf) + _r7.charAt(1) + _u2;
-    var _h9 = 5381;
-    for (var _i3 = 0; _i3 < _x4.length; _i3++) {
-      _h9 = ((_h9 << 5) + _h9 + _x4.charCodeAt(_i3)) & 0xFFFFFFFF;
-    }
-    sess.kc = (_h9 >>> 0);
-    var sStr = [sess.f, sess.fk, sess.bk, sess.mk, sess.ak,
-                sess.bd, sess.bh, sess.sf, sess.pu, sess.lp,
-                sess.ht, sess.ts, sess.pf, sess.kc].join(".");
     return db.ref("leaderboard/" + diff).push({
       name: name,
       score: sc,
       level: lvl,
-      timestamp: firebase.database.ServerValue.TIMESTAMP,
-      v: _scoreToken(name, sc, diff, lvl),
-      s: sStr
+      timestamp: firebase.database.ServerValue.TIMESTAMP
     }).then(() => {});
   };
-
-  function _validateSession(e, diff) {
-    if (!e.s || typeof e.s !== "string") return true;
-    var _p = e.s.split("."); if (_p.length !== 14 && _p.length !== 12) return false;
-    var _v = _p.map(Number), _t7 = 0, _z1 = 0;
-    for (var _j = 0; _j < _v.length; _j++) {
-      if (!Number.isFinite(_v[_j]) || _v[_j] < 0 || _v[_j] % 1 !== 0) return false;
-      _t7 += _v[_j]; _z1 ^= (_v[_j] & 0xFF);
-    }
-    var _a=_v[0],_b=_v[1],_c=_v[2],_d=_v[3],_e=_v[4],_f=_v[5],_g=_v[6],_h=_v[7],
-        _i=_v[8],_k=_v[9],_m=_v[10],_n=_v[11];
-    var _w3 = _b * 100 + _c * 150 + _d * 50 + _e * 75 + _g * 10;
-    if (e.score !== _w3) return false;
-    var _q9 = [10,18,28,32,40], _s2 = 0, _y6 = 0;
-    for (var _l = 1; _l <= e.level; _l++) {
-      if (_l % 5 !== 0) {
-        var _gi = (_l - 1) % 5; _gi = _gi < 5 ? _gi : 4;
-        var _gr = _q9[_gi]; _s2 += _gr;
-        var _lc = _gi + 1;
-        var _br = _lc <= 2 ? 0 : _lc <= 3 ? 1 : 2;
-        var _gc = [5,6,7,8,8];
-        _y6 += _br * _gc[_gi];
-      }
-    }
-    if (_b + _c > _s2) return false;
-    if (_a < e.level * 46) return false;
-    if (diff === String.fromCharCode(101,97,115,121) && _i > 0) return false;
-    if (_p.length === 12) { void(_t7 + _z1); return true; }
-    var _o=_v[12],_r=_v[13];
-    if (e.level > 1 && (_b + _c) < (function(){
-      var _t = 0;
-      for (var _l2 = 1; _l2 < e.level; _l2++) {
-        if (_l2 % 5 !== 0) _t += _q9[Math.min((_l2 - 1) % 5, 4)];
-      }
-      return _t;
-    })()) return false;
-    if (_c > _y6) return false;
-    var _bp = {};
-    _bp[String.fromCharCode(101,97,115,121)] = 40;
-    _bp[String.fromCharCode(109,101,100,105,117,109)] = 60;
-    _bp[String.fromCharCode(100,105,102,102,105,99,117,108,116)] = 80;
-    _bp[String.fromCharCode(105,110,115,97,110,101)] = 120;
-    _bp[String.fromCharCode(100,111,111,109,115,100,97,121)] = 180;
-    var _baseHp = _bp[diff];
-    if (_baseHp === void 0) return false;
-    var _hpM = [400,600,800,1000,1200];
-    var _maxBd = (e.level / 5) | 0;
-    var _minBd = e.level > 5 ? ((e.level - 1) / 5) | 0 : 0;
-    if (_f > _maxBd || _f < _minBd) return false;
-    var _expectedBh = 0;
-    for (var _bi = 0; _bi < _f; _bi++) {
-      var _cIdx = (_bi / 5) | 0;
-      var _bIdx = _bi % 5;
-      _expectedBh += Math.round(_baseHp * (_hpM[_bIdx] / 1000) * Math.pow(1.15, _cIdx));
-    }
-    if (_g !== _expectedBh) return false;
-    if (_o <= 0 && (_b + _c) > 0) return false;
-    if (_o > ((_a + 1) >>> 1)) return false;
-    var _q3 = [102,124,107,124,98,124,104,124,112];
-    var _r7 = _q3.map(function(c){return String.fromCharCode(c)}).join("");
-    var _w5 = [88,51,118,65,108,116,57];
-    var _u2 = _w5.map(function(c){return String.fromCharCode(c)}).join("");
-    var _x4 = String(_a) + _r7.charAt(1) + String(_b) + _r7.charAt(3) +
-              String(_c) + _r7.charAt(5) + String(_g) + _r7.charAt(7) +
-              String(_o) + _r7.charAt(1) + _u2;
-    var _h9 = 5381;
-    for (var _i3 = 0; _i3 < _x4.length; _i3++) {
-      _h9 = ((_h9 << 5) + _h9 + _x4.charCodeAt(_i3)) & 0xFFFFFFFF;
-    }
-    if (_r !== (_h9 >>> 0)) return false;
-    void(_t7 + _z1);
-    return true;
-  }
 
   var fetchLeaderboard = function(diff, limit, callback) {
     if (!firebaseReady) { callback([]); return; }
@@ -514,14 +390,11 @@ try {
         const entries = [];
         snap.forEach(child => {
           const e = child.val();
-          // Filter out malformed or out-of-range entries
           if (!e || typeof e.name !== "string" || e.name.length < 1 || e.name.length > 12) return;
           if (typeof e.score !== "number" || e.score <= 0 || e.score > 999999) return;
           if (typeof e.level !== "number" || e.level < 1 || e.level > 99) return;
-          if (!_validateSession(e, diff)) return;
           entries.push(e);
         });
-        // Sort descending by score
         entries.sort((a, b) => b.score - a.score);
         callback(entries);
       })
@@ -1936,6 +1809,13 @@ class Player {
     if (keys["ArrowLeft"] || keys["KeyA"])  this.x -= PLAYER_SPEED;
     if (keys["ArrowRight"] || keys["KeyD"]) this.x += PLAYER_SPEED;
     this.x = Math.max(FIELD_X, Math.min(FIELD_X + FIELD_W - this.w, this.x));
+    if (gameMode === "shmup") {
+      if (keys["ArrowUp"] || keys["KeyW"])    this.y -= PLAYER_SPEED;
+      if (keys["ArrowDown"] || keys["KeyS"])  this.y += PLAYER_SPEED;
+      const minY = FIELD_Y + FIELD_H * 0.55;
+      const maxY = FIELD_Y + FIELD_H - this.h - 5;
+      this.y = Math.max(minY, Math.min(maxY, this.y));
+    }
     if (this.cooldown > 0) this.cooldown--;
   }
 
@@ -3226,6 +3106,168 @@ function makeAlienGrid(shootChance, lvl) {
   return aliens;
 }
 
+// ── Shmup wave system ────────────────────────────────────────────────
+const SHMUP_WAVES = [
+  // Level 1 (easy intro)
+  [
+    { count: 3, formation: "line", path: "topDown", delay: 60 },
+    { count: 4, formation: "v", path: "sineLeft", delay: 90 },
+    { count: 3, formation: "line", path: "sineRight", delay: 90 },
+  ],
+  // Level 2
+  [
+    { count: 4, formation: "v", path: "topDown", delay: 60 },
+    { count: 5, formation: "line", path: "diagLeft", delay: 80 },
+    { count: 4, formation: "spread", path: "sineRight", delay: 80 },
+    { count: 3, formation: "column", path: "diagRight", delay: 90, bomber: true },
+  ],
+  // Level 3
+  [
+    { count: 5, formation: "v", path: "sineLeft", delay: 60 },
+    { count: 4, formation: "line", path: "diagRight", delay: 70 },
+    { count: 5, formation: "spread", path: "topDown", delay: 70 },
+    { count: 3, formation: "column", path: "sineLeft", delay: 80, bomber: true },
+    { count: 4, formation: "v", path: "diagLeft", delay: 90 },
+  ],
+  // Level 4
+  [
+    { count: 5, formation: "spread", path: "topDown", delay: 50 },
+    { count: 6, formation: "v", path: "sineRight", delay: 60 },
+    { count: 4, formation: "column", path: "diagLeft", delay: 70, bomber: true },
+    { count: 5, formation: "line", path: "sineLeft", delay: 70 },
+    { count: 4, formation: "v", path: "diagRight", delay: 80, bomber: true },
+    { count: 5, formation: "spread", path: "topDown", delay: 90 },
+  ],
+  // Level 5
+  [
+    { count: 6, formation: "v", path: "sineLeft", delay: 50 },
+    { count: 5, formation: "spread", path: "diagRight", delay: 60 },
+    { count: 4, formation: "column", path: "topDown", delay: 60, bomber: true },
+    { count: 6, formation: "line", path: "sineRight", delay: 60 },
+    { count: 5, formation: "v", path: "diagLeft", delay: 70, bomber: true },
+    { count: 4, formation: "column", path: "topDown", delay: 70, bomber: true },
+    { count: 6, formation: "spread", path: "sineLeft", delay: 80 },
+  ],
+];
+
+function getShmupFormation(formation, count, path) {
+  const positions = [];
+  const spacing = 36;
+  // Starting X center depends on path direction
+  let baseX;
+  if (path === "diagLeft" || path === "sineLeft") baseX = FIELD_X + FIELD_W * 0.7;
+  else if (path === "diagRight" || path === "sineRight") baseX = FIELD_X + FIELD_W * 0.3;
+  else baseX = FIELD_X + FIELD_W / 2;
+
+  const startY = FIELD_Y - 40; // spawn above field
+
+  switch (formation) {
+    case "line":
+      for (let i = 0; i < count; i++) {
+        positions.push({ x: baseX + (i - (count - 1) / 2) * spacing, y: startY - i * 12 });
+      }
+      break;
+    case "v":
+      for (let i = 0; i < count; i++) {
+        const half = (count - 1) / 2;
+        const offset = i - half;
+        positions.push({ x: baseX + offset * spacing * 0.8, y: startY - Math.abs(offset) * 20 });
+      }
+      break;
+    case "column":
+      for (let i = 0; i < count; i++) {
+        positions.push({ x: baseX, y: startY - i * 30 });
+      }
+      break;
+    case "spread":
+      for (let i = 0; i < count; i++) {
+        positions.push({ x: baseX + (i - (count - 1) / 2) * spacing * 1.2, y: startY - i * 8 });
+      }
+      break;
+  }
+  return positions;
+}
+
+function makeShmupWaveAliens(waveDef, shootChance, lvl) {
+  const positions = getShmupFormation(waveDef.formation, waveDef.count, waveDef.path);
+  const cycle = Math.floor((lvl - 1) / 5);
+  const shmupSpeed = 1.0 + cycle * 0.15;
+  const newAliens = [];
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i];
+    const isBomber = !!waveDef.bomber;
+    const hp = isBomber ? BOMBER_HP : FIGHTER_HP;
+    const sc = isBomber ? shootChance * 0.5 : shootChance;
+    const a = new Alien(pos.x, pos.y, hp, sc, isBomber, i % 2);
+    // Attach shmup path properties
+    a.shmupPath = waveDef.path;
+    a.shmupT = 0;
+    a.shmupBaseX = pos.x;
+    a.shmupBaseY = pos.y;
+    a.shmupDelay = i * 4; // stagger entry
+    a.shmupSpeed = shmupSpeed;
+    newAliens.push(a);
+  }
+  return newAliens;
+}
+
+function updateShmupAliens(alienList, frozen) {
+  for (const a of alienList) {
+    if (!a.alive) continue;
+    if (!a.shmupPath) continue; // classic alien, skip
+
+    if (a.shmupDelay > 0) { a.shmupDelay--; continue; }
+    if (frozen) continue;
+
+    a.shmupT += a.shmupSpeed;
+    const t = a.shmupT;
+    const amp = 60;
+    const freq = 0.02;
+
+    switch (a.shmupPath) {
+      case "topDown":
+        a.x = a.shmupBaseX + Math.sin(t * freq * 1.5) * amp * 0.5;
+        a.y = a.shmupBaseY + t * 1.2;
+        break;
+      case "sineLeft":
+        a.x = a.shmupBaseX - t * 0.5 + Math.sin(t * freq) * amp;
+        a.y = a.shmupBaseY + t * 1.0;
+        break;
+      case "sineRight":
+        a.x = a.shmupBaseX + t * 0.5 + Math.sin(t * freq) * amp;
+        a.y = a.shmupBaseY + t * 1.0;
+        break;
+      case "diagLeft":
+        a.x = a.shmupBaseX - t * 0.8;
+        a.y = a.shmupBaseY + t * 1.1 + Math.sin(t * freq * 2) * 20;
+        break;
+      case "diagRight":
+        a.x = a.shmupBaseX + t * 0.8;
+        a.y = a.shmupBaseY + t * 1.1 + Math.sin(t * freq * 2) * 20;
+        break;
+    }
+
+    // Kill if off-screen
+    if (a.y > FIELD_Y + FIELD_H + 40 || a.x < FIELD_X - 60 || a.x > FIELD_X + FIELD_W + 60) {
+      a.alive = false;
+    }
+  }
+}
+
+function spawnShmupWave(shootChance, lvl) {
+  if (shmupCurrentWave >= shmupWaves.length) {
+    shmupAllWavesSpawned = true;
+    return;
+  }
+  const waveDef = shmupWaves[shmupCurrentWave];
+  const newAliens = makeShmupWaveAliens(waveDef, shootChance, lvl);
+  for (const a of newAliens) aliens.push(a);
+  totalAliens += newAliens.length;
+  shmupWaveTimer = waveDef.delay;
+  shmupCurrentWave++;
+  if (shmupCurrentWave >= shmupWaves.length) shmupAllWavesSpawned = true;
+}
+
 // ── Star field background ────────────────────────────────────────────
 let stars = [];
 let gameFrame = 0;
@@ -3280,7 +3322,7 @@ function triggerBombExplosion(cx, cy) {
       const dead = a.takeHit();
       if (dead) {
         score += a.points;
-        _trackKill(a.points);
+
         explosions.push(new Explosion(ax, ay));
       }
     }
@@ -3299,7 +3341,6 @@ function triggerBombExplosion(cx, cy) {
     if (Math.sqrt(dx2 * dx2 + dy2 * dy2) < blastRadius) {
       m.alive = false;
       score += m.points;
-      _trackKill(m.points);
       explosions.push(new Explosion(mx2, my2));
     }
   }
@@ -3326,7 +3367,6 @@ function handleBossDeath() {
     const ey = mothership.y + Math.random() * mothership.h;
     explosions.push(new BombExplosion(ex, ey));
   }
-  if (_session) _session.bd++;
   bossDeathTimer = 30; // 1s delay before win
   // Kill remaining minions
   for (const m of bossMinions) {
@@ -3345,6 +3385,15 @@ function handleBossDeath() {
 let gameState = "title"; // title | leaderboard | playing | won | lost | tutorial
 let selectedDiff = 1;
 let difficulty = "medium";
+let gameMode = "classic"; // "classic" or "shmup"
+let selectedMode = 0;
+const MODE_ORDER = ["classic", "shmup"];
+
+// Shmup wave state
+let shmupWaves = [];
+let shmupCurrentWave = 0;
+let shmupWaveTimer = 0;
+let shmupAllWavesSpawned = false;
 
 let player, aliens, bunkers, projectiles, explosions;
 let alienDir, alienMoveTimer, baseMoveInterval, totalAliens, score;
@@ -3355,15 +3404,6 @@ let lives, invulnTimer, cloneTimer;
 let mothership, bossPhase, bossTransitionTimer, bossDeathTimer, bossMinions;
 let asteroids, asteroidTimer;
 let level, levelTransitionTimer;
-let _session = null;
-function _trackKill(pts) {
-  if (!_session) return;
-  if (pts === 100) _session.fk++;
-  else if (pts === 150) _session.bk++;
-  else if (pts === 50) _session.mk++;
-  else if (pts === 75) _session.ak++;
-}
-
 // Tutorial state
 let tutorialStep = 0;
 let tutorialTimer = 0;
@@ -3389,20 +3429,36 @@ function startGame(diffKey) {
   const cycle = Math.floor((level - 1) / 5);
   baseMoveInterval = Math.max(1, Math.round(diff.moveInterval * Math.pow(0.85, cycle)));
   player = new Player();
-  aliens = makeAlienGrid(Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle)), level);
-  const bunkY = FIELD_Y + FIELD_H - 60;
-  const spacing = FIELD_W / 5;
-  bunkers = [
-    new Bunker(FIELD_X + spacing * 1 - 24, bunkY),
-    new Bunker(FIELD_X + spacing * 2 - 24, bunkY),
-    new Bunker(FIELD_X + spacing * 3 - 24, bunkY),
-    new Bunker(FIELD_X + spacing * 4 - 24, bunkY),
-  ];
+  if (gameMode === "shmup") {
+    // Shmup mode: wave-based spawning, no bunkers, player starts mid-bottom
+    const sc = Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle));
+    aliens = [];
+    totalAliens = 0;
+    const waveIdx = (level - 1) % SHMUP_WAVES.length;
+    shmupWaves = SHMUP_WAVES[waveIdx];
+    shmupCurrentWave = 0;
+    shmupWaveTimer = 0;
+    shmupAllWavesSpawned = false;
+    spawnShmupWave(sc, level);
+    bunkers = [];
+    player.y = FIELD_Y + FIELD_H - player.h - 5;
+  } else {
+    // Classic mode
+    aliens = makeAlienGrid(Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle)), level);
+    totalAliens = aliens.length;
+    const bunkY = FIELD_Y + FIELD_H - 60;
+    const spacing = FIELD_W / 5;
+    bunkers = [
+      new Bunker(FIELD_X + spacing * 1 - 24, bunkY),
+      new Bunker(FIELD_X + spacing * 2 - 24, bunkY),
+      new Bunker(FIELD_X + spacing * 3 - 24, bunkY),
+      new Bunker(FIELD_X + spacing * 4 - 24, bunkY),
+    ];
+  }
   projectiles = [];
   explosions = [];
   alienDir = 1;
   alienMoveTimer = 0;
-  totalAliens = aliens.length;
   score = 0;
   railAmmo = 0;
   bombAmmo = 0;
@@ -3416,7 +3472,6 @@ function startGame(diffKey) {
   rapidTimer = 0;
   bunkerHealFlash = 0;
   lives = 2;
-  _session = { f:0, fk:0, bk:0, mk:0, ak:0, bd:0, bh:0, sf:0, pu:0, lp:0, ht:0, ts:Date.now(), pf:0 };
   invulnTimer = 0;
   cloneTimer = 0;
   powerUps = [];
@@ -3889,6 +3944,8 @@ let titleKeyDebounce = {};
 function updateTitle() {
   const upPressed = keys["ArrowUp"] || keys["KeyW"];
   const downPressed = keys["ArrowDown"] || keys["KeyS"];
+  const leftPressed = keys["ArrowLeft"] || keys["KeyA"];
+  const rightPressed = keys["ArrowRight"] || keys["KeyD"];
   const enterPressed = keys["Enter"] || keys["Space"];
 
   if (upPressed && !titleKeyDebounce.up) {
@@ -3899,9 +3956,18 @@ function updateTitle() {
     selectedDiff = (selectedDiff + 1) % DIFF_ORDER.length;
     playSound("menuSelect");
   }
+  if (leftPressed && !titleKeyDebounce.left) {
+    selectedMode = (selectedMode - 1 + MODE_ORDER.length) % MODE_ORDER.length;
+    playSound("menuSelect");
+  }
+  if (rightPressed && !titleKeyDebounce.right) {
+    selectedMode = (selectedMode + 1) % MODE_ORDER.length;
+    playSound("menuSelect");
+  }
   if (enterPressed && !titleKeyDebounce.enter) {
     playSound("menuConfirm");
     cheatProgress = 0;
+    gameMode = MODE_ORDER[selectedMode];
     startGame(DIFF_ORDER[selectedDiff]);
   }
 
@@ -3949,6 +4015,8 @@ function updateTitle() {
 
   titleKeyDebounce.up = upPressed;
   titleKeyDebounce.down = downPressed;
+  titleKeyDebounce.left = leftPressed;
+  titleKeyDebounce.right = rightPressed;
   titleKeyDebounce.enter = enterPressed;
 }
 
@@ -3968,11 +4036,16 @@ function drawTitle() {
     ctx.fill();
   }
 
-  drawText("SELECT DIFFICULTY", W / 2, 220, COL.msg, 20, "center");
+  // Mode selector row
+  const modeLabel = MODE_ORDER[selectedMode].toUpperCase();
+  drawText(`< ${modeLabel} >`, W / 2, 195, COL.menuSel, 18, "center");
+  drawText("LEFT/RIGHT = Mode", W / 2, 212, "#666666", 11, "center");
+
+  drawText("SELECT DIFFICULTY", W / 2, 245, COL.msg, 20, "center");
 
   for (let i = 0; i < DIFF_ORDER.length; i++) {
     const d = DIFFICULTIES[DIFF_ORDER[i]];
-    const y = 265 + i * 40;
+    const y = 290 + i * 38;
     const selected = i === selectedDiff;
     const color = selected ? COL.menuSel : COL.menu;
     const prefix = selected ? "> " : "  ";
@@ -3986,8 +4059,9 @@ function drawTitle() {
     drawText("1-5=Ammo  0=Spawn  I=Invincible  K=Kill all  N=Kill 50%", W / 2, 460, "#886600", 12, "center");
   }
 
-  drawText("UP/DOWN = Select    ENTER/SPACE = Start    L = Leaderboard    T = Tutorial", W / 2, 480, COL.status, 14, "center");
-  drawText("ARROWS = Move  SPACE = Shoot  SHIFT = Special  TAB = Cycle", W / 2, 505, "#666666", 12, "center");
+  drawText("UP/DOWN = Difficulty    LEFT/RIGHT = Mode    ENTER = Start", W / 2, 485, COL.status, 14, "center");
+  drawText("L = Leaderboard    T = Tutorial", W / 2, 503, COL.status, 12, "center");
+  drawText("ARROWS = Move  SPACE = Shoot  SHIFT = Special  TAB = Cycle", W / 2, 523, "#666666", 12, "center");
 }
 
 // ── Gameplay ─────────────────────────────────────────────────────────
@@ -3996,7 +4070,6 @@ let shiftDebounce = false;
 
 function updateGame() {
   if (gameState !== "playing") return;
-  if (_session) _session.f++;
 
   // Level transition interstitial — only tick the timer, skip gameplay
   if (levelTransitionTimer > 0) {
@@ -4005,8 +4078,29 @@ function updateGame() {
       const diff = DIFFICULTIES[difficulty];
       const cycle = Math.floor((level - 1) / 5);
       baseMoveInterval = Math.max(1, Math.round(diff.moveInterval * Math.pow(0.85, cycle)));
-      aliens = makeAlienGrid(Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle)), level);
-      totalAliens = aliens.length;
+      if (gameMode === "shmup") {
+        const sc = Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle));
+        aliens = [];
+        totalAliens = 0;
+        const waveIdx = (level - 1) % SHMUP_WAVES.length;
+        shmupWaves = SHMUP_WAVES[waveIdx];
+        shmupCurrentWave = 0;
+        shmupWaveTimer = 0;
+        shmupAllWavesSpawned = false;
+        spawnShmupWave(sc, level);
+        bunkers = [];
+      } else {
+        aliens = makeAlienGrid(Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle)), level);
+        totalAliens = aliens.length;
+        const bunkY = FIELD_Y + FIELD_H - 60;
+        const spacing = FIELD_W / 5;
+        bunkers = [
+          new Bunker(FIELD_X + spacing * 1 - 24, bunkY),
+          new Bunker(FIELD_X + spacing * 2 - 24, bunkY),
+          new Bunker(FIELD_X + spacing * 3 - 24, bunkY),
+          new Bunker(FIELD_X + spacing * 4 - 24, bunkY),
+        ];
+      }
       alienMoveTimer = 0;
       alienDir = 1;
       bossPhase = false;
@@ -4017,14 +4111,6 @@ function updateGame() {
       projectiles = [];
       asteroids = [];
       asteroidTimer = 0;
-      const bunkY = FIELD_Y + FIELD_H - 60;
-      const spacing = FIELD_W / 5;
-      bunkers = [
-        new Bunker(FIELD_X + spacing * 1 - 24, bunkY),
-        new Bunker(FIELD_X + spacing * 2 - 24, bunkY),
-        new Bunker(FIELD_X + spacing * 3 - 24, bunkY),
-        new Bunker(FIELD_X + spacing * 4 - 24, bunkY),
-      ];
     }
     return;
   }
@@ -4070,7 +4156,7 @@ function updateGame() {
           if (Math.abs(aCx - beamX) < beamHalf + a.w / 2) {
             a.alive = false;
             score += a.points;
-            _trackKill(a.points);
+    
             explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
           }
         }
@@ -4081,8 +4167,7 @@ function updateGame() {
           if (Math.abs(mCx - beamX) < beamHalf + m.w / 2) {
             m.alive = false;
             score += m.points;
-            _trackKill(m.points);
-            explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
+                  explosions.push(new Explosion(m.x + m.w / 2, m.y + m.h / 2));
           }
         }
         // Rail beam vs mothership
@@ -4205,7 +4290,6 @@ function updateGame() {
     const p = player.shoot();
     if (p) {
       projectiles.push(p);
-      if (_session) { _session.sf++; _session.pf++; }
       playSound("shoot");
       // Clone wingmen fire too
       if (cloneTimer > 0) {
@@ -4231,48 +4315,70 @@ function updateGame() {
     powerUps = powerUps.filter(pu => pu.alive);
   }
 
-  // alien movement — speed up as aliens are destroyed
+  // alien movement
   const frozen = slowTimer > 0;
-  alienMoveTimer++;
   const alive = aliens.filter(a => a.alive);
-  const ratio = alive.length / totalAliens;
-  const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio));
-  const speed = Math.min(2, Math.max(1, Math.round(2 / (ratio * ratio + 0.04))));
-  if (!frozen && alienMoveTimer >= moveInterval && alive.length > 0) {
-    alienMoveTimer = 0;
-    let reverse = false;
-    for (const a of alive) {
-      const nx = a.x + alienDir * speed;
-      if (nx <= FIELD_X || nx >= FIELD_X + FIELD_W - a.w) {
-        reverse = true;
-        break;
+
+  if (gameMode === "shmup") {
+    // Shmup: path-based movement + wave spawning
+    updateShmupAliens(aliens, frozen);
+
+    // Wave spawn timer
+    if (!shmupAllWavesSpawned) {
+      shmupWaveTimer--;
+      if (shmupWaveTimer <= 0) {
+        const diff = DIFFICULTIES[difficulty];
+        const cycle = Math.floor((level - 1) / 5);
+        const sc = Math.min(0.8, diff.shootChance * Math.pow(1.15, cycle));
+        spawnShmupWave(sc, level);
       }
     }
-    if (reverse) {
-      alienDir *= -1;
-      for (const a of alive) a.y += 16;
-    } else {
-      for (const a of alive) a.x += alienDir * speed;
+
+    // Advance wobble phase
+    if (!frozen) {
+      for (const a of alive) a.wobblePhase += 0.05;
     }
-  }
-
-  // Advance wobble phase
-  if (!frozen) {
-    for (const a of alive) a.wobblePhase += 0.05;
-  }
-
-  // aliens reached bottom?
-  for (const a of alive) {
-    if (a.y + a.h >= FIELD_Y + FIELD_H) {
-      if (!debugInvincible) {
-        if (invulnTimer <= 0) {
-          lives--;
-          if (_session) _session.ht++;
-          invulnTimer = 60;
-          playSound("playerDeath");
-          if (lives <= 0) { gameState = "lost"; return; }
+  } else {
+    // Classic: lockstep grid movement
+    alienMoveTimer++;
+    const ratio = alive.length / Math.max(1, totalAliens);
+    const moveInterval = Math.max(1, Math.round(baseMoveInterval * ratio * ratio));
+    const speed = Math.min(2, Math.max(1, Math.round(2 / (ratio * ratio + 0.04))));
+    if (!frozen && alienMoveTimer >= moveInterval && alive.length > 0) {
+      alienMoveTimer = 0;
+      let reverse = false;
+      for (const a of alive) {
+        const nx = a.x + alienDir * speed;
+        if (nx <= FIELD_X || nx >= FIELD_X + FIELD_W - a.w) {
+          reverse = true;
+          break;
         }
-        break;
+      }
+      if (reverse) {
+        alienDir *= -1;
+        for (const a of alive) a.y += 16;
+      } else {
+        for (const a of alive) a.x += alienDir * speed;
+      }
+    }
+
+    // Advance wobble phase
+    if (!frozen) {
+      for (const a of alive) a.wobblePhase += 0.05;
+    }
+
+    // aliens reached bottom? (classic only — shmup aliens fly off and die)
+    for (const a of alive) {
+      if (a.y + a.h >= FIELD_Y + FIELD_H) {
+        if (!debugInvincible) {
+          if (invulnTimer <= 0) {
+            lives--;
+            invulnTimer = 60;
+            playSound("playerDeath");
+            if (lives <= 0) { gameState = "lost"; return; }
+          }
+          break;
+        }
       }
     }
   }
@@ -4309,10 +4415,8 @@ function updateGame() {
       if (!p.isTorpedo && !p.isHoming) {
         for (const pu of powerUps) {
           if (pu.alive && rectCollide(p.x, p.y, p.w, p.h, pu.x, pu.y, pu.w, pu.h)) {
-            if (_session) _session.pu++;
             if (pu.type === "life") {
               lives = Math.min(5, lives + 1);
-              if (_session) _session.lp++;
             } else {
               const hadAny = railAmmo + bombAmmo + healAmmo + slowAmmo + cloneAmmo + homingAmmo + rapidAmmo > 0;
               switch (pu.type) {
@@ -4344,7 +4448,7 @@ function updateGame() {
           } else if (p.isHoming) {
             a.alive = false;
             score += a.points;
-            _trackKill(a.points);
+    
             explosions.push(new Explosion(a.x + a.w / 2, a.y + a.h / 2));
             playSound("explode");
             hit = true;
@@ -4353,7 +4457,7 @@ function updateGame() {
             const dead = a.takeHit();
             explosions.push(new Explosion(p.x, p.y));
             playSound(dead ? "explode" : "hit");
-            if (dead) { score += a.points; _trackKill(a.points); }
+            if (dead) { score += a.points; }
             hit = true;
             break;
           }
@@ -4392,7 +4496,7 @@ function updateGame() {
             const dead = m.takeHit();
             explosions.push(new Explosion(p.x, p.y));
             playSound(dead ? "explode" : "hit");
-            if (dead) { score += m.points; _trackKill(m.points); }
+            if (dead) { score += m.points; }
             hit = true;
             break;
           }
@@ -4408,7 +4512,7 @@ function updateGame() {
             const dead = ast.takeHit();
             explosions.push(new Explosion(p.x, p.y));
             playSound(dead ? "explode" : "hit");
-            if (dead) { score += 75; _trackKill(75); }
+            if (dead) { score += 75; }
             hit = true;
             break;
           }
@@ -4423,7 +4527,6 @@ function updateGame() {
           hit = true;
         } else {
           lives--;
-          if (_session) _session.ht++;
           invulnTimer = 60;
           explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
           playSound("playerDeath");
@@ -4452,8 +4555,10 @@ function updateGame() {
 
   // ── Boss transition & fight ──
   const allAliensDead = aliens.filter(a => a.alive).length === 0;
+  // In shmup mode, boss only triggers after all waves have been spawned AND all aliens are dead
+  const readyForBoss = gameMode === "shmup" ? (shmupAllWavesSpawned && allAliensDead) : allAliensDead;
 
-  if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0) {
+  if (readyForBoss && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0) {
     // Start alarm/warning phase
     playSound("alarm");
     bossTransitionTimer = 60; // 2s at 30fps
@@ -4499,14 +4604,13 @@ function updateGame() {
     bossDeathTimer--;
     if (bossDeathTimer === 0) {
       score += mothership.maxHp * 10;
-      if (_session) _session.bh += mothership.maxHp;
       level++;
       levelTransitionTimer = 90; // ~2s interstitial
     }
   }
 
   // Level advance (only if no boss fight pending and no level transition)
-  if (allAliensDead && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0 && levelTransitionTimer < 0 && !mothership) {
+  if (readyForBoss && !bossPhase && bossTransitionTimer < 0 && bossDeathTimer < 0 && levelTransitionTimer < 0 && !mothership) {
     level++;
     levelTransitionTimer = 90;
   }
@@ -4526,7 +4630,6 @@ function updateGame() {
     if (Math.sqrt(dx * dx + dy * dy) < ast.radius + 10) {
       if (!debugInvincible && invulnTimer <= 0) {
         lives--;
-        if (_session) _session.ht++;
         invulnTimer = 60;
         explosions.push(new Explosion(player.x + player.w / 2, player.y + player.h / 2));
         playSound("playerDeath");
@@ -4882,10 +4985,15 @@ function drawGame() {
   // status bar
   const aliveCount = aliens.filter(a => a.alive).length;
   const diffLabel = DIFFICULTIES[difficulty].label;
-  drawText(`SPACE ATTACK  [${diffLabel}] Lv.${level}`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
+  const modeTag = gameMode === "shmup" ? " SHMUP" : "";
+  drawText(`SPACE ATTACK  [${diffLabel}${modeTag}] Lv.${level}`, FIELD_X + 5, FIELD_Y - 10, COL.status, 14, "left");
   drawText(`Score: ${score}`, FIELD_X + 260, FIELD_Y - 10, COL.status, 14, "left");
   if (bossPhase && mothership) {
     drawText(`BOSS: ${mothership.hp}/${mothership.maxHp}`, FIELD_X + 400, FIELD_Y - 10, "#ff0044", 14, "left");
+  } else if (gameMode === "shmup") {
+    const waveTotal = shmupWaves ? shmupWaves.length : 0;
+    const waveNum = Math.min(shmupCurrentWave, waveTotal);
+    drawText(`Wave: ${waveNum}/${waveTotal}  Aliens: ${aliveCount}`, FIELD_X + 400, FIELD_Y - 10, COL.status, 14, "left");
   } else {
     drawText(`Aliens: ${aliveCount}`, FIELD_X + 400, FIELD_Y - 10, COL.status, 14, "left");
   }
@@ -5143,7 +5251,7 @@ function doSubmitScore(skipSubmit) {
   if (!skipSubmit && name) {
     playerName = name;
     localStorage.setItem("spaceattack_name", playerName);
-    submitScore(name, score, difficulty, level, _session).then(() => {
+    submitScore(name, score, difficulty, level).then(() => {
       scoreSubmitted = true;
       // Fetch updated leaderboard for current difficulty
       fetchLeaderboard(difficulty, 10, (data) => {
