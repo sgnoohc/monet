@@ -1,0 +1,1065 @@
+/* @version 2.9.0 */
+
+/* Fonts are Gmail's real typefaces — Google Sans for chrome, Roboto for
+   message text — embedded as data URIs by fonts.sh into fonts.css, which
+   build.sh prepends. They are NOT @import-ed from fonts.googleapis.com: an
+   extension's injected stylesheet is still bound by the page's CSP, so a
+   remote font can be blocked silently and leave you in Helvetica, which is
+   exactly what the first attempt did. */
+/* =============================================================================
+   gmailify — make outlook.cloud.microsoft (OWA) look like Gmail
+   -----------------------------------------------------------------------------
+   Source of truth. Pure CSS, no @-moz-document wrapper, so it can be pasted
+   into DevTools or loaded by any injector. Run ./build.sh to produce the
+   Stylus-installable gmailify.user.css.
+
+   Layering, most general to most specific:
+     0. tokens        Gmail's palette / type scale
+     1. fluent        retheme Fluent UI design tokens (does most of the work)
+     2. typography    font stack + density
+     3. header        top bar and search
+     4. nav           folder pane + Compose pill
+     5. list          message list rows
+     6. reading       reading pane
+     7. ribbon        hide the command ribbon
+     8. declutter     ads, Copilot / My Day, right rail
+     9. scrollbars
+
+   NOTE ON SELECTORS: OWA ships hashed Fluent class names that churn between
+   builds, so everything here hangs off attributes Microsoft keeps stable
+   (data-app-section, role, aria-label, a handful of ids). Anything that stops
+   matching after an OWA update should be re-derived with inspect.js rather
+   than pinned to a hashed class.
+   ========================================================================== */
+
+/* -- 0. tokens ------------------------------------------------------------- */
+
+:root {
+  /* surfaces */
+  --gm-bg:              #f6f8fc;  /* app canvas behind the panes */
+  --gm-surface:         #ffffff;  /* list + reading pane cards */
+  --gm-surface-sunken:  #f2f6fc;  /* read message rows */
+  --gm-hover:           #f5f5f5;
+  --gm-selected:        #c2dbff;  /* selected row */
+  --gm-nav-selected:    #d2e3fc;  /* .aps — active folder pill */
+
+  /* text */
+  --gm-text:            #202124;
+  --gm-text-secondary:  #5f6368;
+  --gm-preview:         rgba(60, 64, 67, .66);  /* softer than .y2's #5f6368 */
+  --gm-text-disabled:   #80868b;
+  --gm-link:            #0b57d0;
+
+  /* accents */
+  --gm-accent:          #0b57d0;
+  --gm-accent-hover:    #0842a0;
+  --gm-compose:         #c2e7ff;
+  --gm-compose-text:    #001d35;
+  --gm-danger:          #d93025;
+  --gm-unread-dot:      #d93025;
+
+  /* Background image behind everything, the way a Gmail theme sits behind the
+     panes. Swap in any URL — background: url("https://…/photo.jpg") — or a
+     data: URI for a local file. A page cannot load file:// images, so a local
+     photo has to be base64'd in. */
+  --gm-bg-image: linear-gradient(160deg, #a8c8e8 0%, #cfe0f0 38%, #e8eef6 70%, #f6f8fc 100%);
+
+  /* Pane translucency. With a background set, Gmail's list is a white veil the
+     image reads through rather than a solid card. Raise the alphas toward 1
+     for a flatter, more opaque look. */
+  /* These are Gmail's own values, read out of a saved copy of the inbox
+     (.bkK>.nH, .zA, .yO, .zE). The model is the opposite of the obvious one:
+     the PANE carries the white veil at 80%, unread rows are fully transparent
+     so they show it at full strength, and read rows are knocked back with a
+     9% BLACK overlay — not a weaker white one. Hover changes no background at
+     all, only the shadow. */
+  --gm-pane:        rgba(255, 255, 255, .52);   /* Gmail's own is .8; lower
+                                                   because Outlook stacks more
+                                                   surfaces inside the pane */
+  --gm-nav-veil:    transparent;                /* folder pane — fully clear */
+  --gm-nav-text:    #ffffff;                    /* folder pane label colour */
+  --gm-nav-shadow:  0 1px 2px rgba(0, 0, 0, .45);
+  --gm-row-read:    rgba(0, 0, 0, .055);        /* .yO, softened to match */
+  --gm-row-unread:  transparent;                /* .zE        */
+  --gm-row-select:  #c2dbff;                    /* .x7        */
+  --gm-row-divider: rgba(100, 121, 143, .12);   /* .zA shadow */
+
+  /* lines */
+  --gm-border:          #dadce0;
+  --gm-border-subtle:   #e8eaed;
+
+  /* shape + type */
+  --gm-radius:          16px;
+  --gm-read-top:        8px;    /* pushes the reading pane's top edge down to
+                                   line up with the message list's. Eyeballed —
+                                   gmailify.panes() prints the exact value. */
+  --gm-title-bg:        transparent;  /* the subject box's own fill */
+  --gm-radius-sm:       8px;
+  --gm-row-height:      28px;   /* 20 + 4 + 4 */
+
+  /* Message list density. Measured off a Gmail inbox: rows sit on a 25px
+     pitch — 14px text on 20px leading with 2px of padding. Outlook's default
+     single-line row is ~43px, and almost all of that difference is padding
+     and internal margins rather than text. */
+  --gm-row-font:        14px;   /* Gmail's own .875rem. Raising this changes
+                                   row height, which the windowed list has to
+                                   agree with — go up in small steps. */
+  --gm-row-line:        20px;   /* .xY height */
+  --gm-row-pad-y:       4px;    /* .zA padding */
+
+  /* Search field. --gm-search-offset shifts its left edge; 0 lines it up with
+     the end of the header's branding block, which is where the message list
+     starts on a default folder pane. Positive values push it right. */
+  --gm-search-offset:   -8px;   /* negative pulls left; raised from -32
+                                   to open the gap after the title */
+  --gm-search-width:    720px;  /* was stretching the full header */
+  --gm-search-bg:       rgba(255, 255, 255, .30);
+  --gm-search-height:   48px;   /* 56 less 15% */
+  --gm-search-radius:   24px;
+  /* Gmail uses Google Sans for chrome and Roboto for message text. */
+  --gm-font:      "Google Sans", Roboto, RobotoDraft, Helvetica, Arial, sans-serif;
+  --gm-font-text: "Google Sans Text", "Google Sans", Roboto, Arial, sans-serif;
+}
+
+/* -- 1. fluent design tokens ----------------------------------------------- */
+/* OWA is Fluent UI v9. Retheming these variables recolors most of the app in
+   one move; the sections below only handle what the tokens can't express. */
+
+:root,
+body,
+[class*="fui-FluentProvider"] {
+  --colorNeutralBackground1:        var(--gm-surface);
+  --colorNeutralBackground1Hover:   var(--gm-hover);
+  --colorNeutralBackground1Pressed: var(--gm-surface-sunken);
+  /* Background2-6 are Fluent's canvas shades — the big structural surfaces.
+     Mapped to an opaque colour they paint straight over the background image,
+     which is what hid it. Transparent here, and the image shows through every
+     container that asks for a canvas shade, named or not. Background1 stays
+     opaque: it is what menus, popovers and dialogs sit on. */
+  --colorNeutralBackground2:        transparent;
+  --colorNeutralBackground3:        transparent;
+  --colorNeutralBackground4:        transparent;
+  --colorNeutralBackground5:        transparent;
+  --colorNeutralBackground6:        transparent;
+  --colorNeutralBackgroundStatic:   transparent;
+  --colorTransparentBackground:     transparent;
+  --colorSubtleBackground:          transparent;
+  --colorSubtleBackgroundHover:     var(--gm-hover);
+  --colorSubtleBackgroundPressed:   var(--gm-surface-sunken);
+
+  --colorNeutralForeground1:        var(--gm-text);
+  --colorNeutralForeground2:        var(--gm-text-secondary);
+  --colorNeutralForeground3:        var(--gm-text-secondary);
+  --colorNeutralForeground4:        var(--gm-text-disabled);
+  --colorNeutralForegroundDisabled: var(--gm-text-disabled);
+
+  --colorBrandBackground:           var(--gm-accent);
+  --colorBrandBackgroundHover:      var(--gm-accent-hover);
+  --colorBrandBackgroundPressed:    var(--gm-accent-hover);
+  --colorBrandBackground2:          var(--gm-nav-selected);
+  --colorBrandForeground1:          var(--gm-accent);
+  --colorBrandForeground2:          var(--gm-accent);
+  --colorBrandForegroundLink:       var(--gm-link);
+  --colorCompoundBrandBackground:   var(--gm-accent);
+  --colorCompoundBrandForeground1:  var(--gm-accent);
+  --colorCompoundBrandStroke:       var(--gm-accent);
+
+  --colorNeutralStroke1:            var(--gm-border);
+  --colorNeutralStroke2:            var(--gm-border-subtle);
+  --colorNeutralStroke3:            var(--gm-border-subtle);
+
+  /* Typography is a Fluent token too. Overriding it here is the ONLY safe way
+     to restyle OWA's font: it reaches every Fluent component that asks for the
+     base font, and never touches the icon elements, which set their own
+     font-family explicitly to reach an icon font. */
+  --fontFamilyBase:     var(--gm-font);
+  --fontFamilyNumeric:  var(--gm-font);
+
+  /* OWA's OWN surface variables — not Fluent's. Counted in the shipped
+     stylesheets: --neutralPrimarySurface is referenced 291 times and
+     --neutralSecondarySurface 63, so between them they paint most of the
+     opaque white in the app. Mapping Primary to the translucent pane colour
+     gives every panel Gmail's 80% veil in one move; the canvas shades go
+     fully transparent so the background photo reads through. */
+  --neutralPrimarySurface:      var(--gm-pane);
+
+  /* The acrylic family. The folder pane is .GciPK, which is literally
+     "backdrop-filter: blur(24px); background-color: var(--whiteTranslucent65)"
+     — a 65% white sheet over a blurred photo. That, not any container
+     background, was the white in the sidebar. These four variables are used
+     only by those acrylic surfaces, so clearing them is safe; the panes that
+     should carry a veil get it from explicit rules below. */
+  --whiteTranslucent40: transparent;
+  --whiteTranslucent50: transparent;
+  --whiteTranslucent65: transparent;
+  --whiteTranslucent70: transparent;
+
+  /* Hairline borders. The message list region carries
+     "border-right: 1px solid var(--neutralLight)" and the toolbar a
+     neutralTertiaryAlt bottom border — the thin white edges around the panes.
+     Gmail's panes have no borders at all, only rounded corners. */
+  --neutralLight:         transparent;
+  --neutralTertiaryAlt:   transparent;
+  --neutralQuaternaryAlt: transparent;
+
+  /* Header. #headerRow, AppHeader and O365_NavHeader are all fictional — the
+     real one is #OwaTitleBar, whose bar reads --headerBackground. The search
+     box has its own variable rather than taking a container background. */
+  --headerBackground:           transparent;
+  --headerButtonsBackground:    transparent;
+  --headerSearchBoxBackground:  var(--gm-pane);
+  --headerTextIcons:            var(--gm-text);
+  --headerButtonIconColor:      var(--gm-text);
+  --neutralSecondarySurface:    transparent;
+  --neutralTertiarySurface:     transparent;
+  --appBackgroundGradientColor: transparent;
+
+  /* legacy Fluent v8 slots, still read by older surfaces in OWA */
+  --themePrimary:      var(--gm-accent);
+  --themeDarkAlt:      var(--gm-accent-hover);
+  --themeLighter:      var(--gm-nav-selected);
+  --themeLighterAlt:   var(--gm-bg);
+  --neutralPrimary:    var(--gm-text);
+  --neutralSecondary:  var(--gm-text-secondary);
+  --neutralLighter:    transparent;
+  --neutralLighterAlt: transparent;
+  --white:             var(--gm-surface);
+}
+
+/* -- 2. typography + canvas ------------------------------------------------ */
+
+/* Do NOT set font-family on element selectors here. Icons in OWA are
+   private-use-area glyphs served from an icon font (Fabric MDL2 / Fluent
+   System Icons) and are carried by plain <span>/<div> nodes whose only class
+   is a build-specific hash — there is no selector that reliably tells them
+   apart from text. Any rule broad enough to restyle OWA's text also hits those
+   nodes, and the glyph vanishes into a tofu box. The font swap happens through
+   --fontFamilyBase in section 1 instead, which Fluent's own components read
+   and icon elements ignore. This cost two releases to learn; leave it alone. */
+
+body {
+  background-color: var(--gm-bg) !important;
+  background-image: var(--gm-bg-image) !important;
+  background-size: cover !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  background-attachment: fixed !important;
+  color: var(--gm-text) !important;
+  font-family: var(--gm-font);
+  font-size: 14px !important;
+}
+
+/* OWA already has a dedicated background layer: a bare <div> inside #app
+   carrying an inline background-image (the "summersummit" theme photo) with
+   background-attachment:fixed and z-index:-1. Nothing was hiding our
+   background — this layer simply sits above the <body> background and was
+   still showing Outlook's own photo. Painting here instead of on body means
+   using the element OWA built for the job, at the size and attachment it
+   already has. The inline style is why !important is required. */
+/* Acrylic blur off. A plain universal property rule is cheap — it matches
+   once per element with no invalidation behaviour — unlike the :has() sweep
+   this file used to carry. */
+* {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#app > div:first-child > div {
+  background-color: transparent !important;
+  background-image: var(--gm-bg-image) !important;
+  background-position: center center !important;
+  background-repeat: no-repeat !important;
+  background-size: cover !important;
+}
+
+/* The gradient scrim OWA lays over that layer. */
+#app > div:first-child {
+  background-image: none !important;
+}
+
+/* PERFORMANCE — read before adding a :has() rule here.
+   This used to be "body *:has(div[role=\"option\"])" and friends: a universal
+   subject with a :has() argument that matches list rows. The message list is
+   virtualised, so rows are created and destroyed continuously as you scroll,
+   and each mutation forces Chrome to re-test whether EVERY element on the page
+   still matches. The result is a permanent style-recalc loop — the app visibly
+   flickers and redraws.
+   It was also unnecessary. Those containers are not painting backgrounds of
+   their own; they read OWA's surface variables, which section 1 already
+   remaps. Fix the variable, never sweep the tree.
+   :has() is fine when the subject is narrow and the subtree is static — the
+   folder list, a single known container. It is not fine on "body *". */
+
+/* Inside a row, only the row itself carries colour — its cells and spans stay
+   clear so the row's alpha is the only veil between you and the background. */
+div[role="row"] *,
+div[role="option"] *,
+[role="gridcell"],
+[role="gridcell"] * {
+  background-color: transparent !important;
+}
+
+/* Category chips (UFL / CERN …) carry their colour in a style attribute, and
+   they only started to show once the row behind them went translucent — they
+   were always opaque, just camouflaged against a white pane. Gmail's
+   equivalent is grey text with no fill. */
+div[role="row"] [style*="background"],
+div[role="option"] [style*="background"],
+[role="gridcell"] [style*="background"],
+[class*="categor" i],
+[class*="categor" i] * {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: var(--gm-text-secondary) !important;
+}
+
+/* One flat canvas. OWA stacks several differently-shaded containers and can
+   paint a theme photo behind them; Gmail has a single colour with the panes
+   floating on top. Strip the intermediates to transparent and let body show
+   through — the panes below repaint themselves. */
+#app, #appModule, #owaCanvas, #primaryContainer, #mainApp,
+body > div, body > div > div,
+[role="main"], [role="main"] > div,
+[data-app-section="AppModule"],
+[data-app-section="MainModule"],
+[data-app-section="AppHost"],
+[data-app-section="MailModule"] {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* Outlook's theme background image, wherever it is hung. */
+#owaBackgroundImage,
+[data-app-section="ThemeBackground"],
+[class*="backgroundImage"],
+[class*="themeImage"] {
+  background-image: none !important;
+  display: none !important;
+}
+
+/* Gmail rounds the panes and floats them on the canvas. */
+/* The rounded corners belong to the PANE, not to a box inside it. Rounding
+   [data-app-section="MessageList"] only curved that inner element, which is
+   why the corner appeared at the top left alone and sat a few pixels off from
+   the toolbar strip above it — the strip is a sibling, outside that box.
+   The pane is the region landmark; overflow:hidden makes the toolbar, the
+   column headers and the rows all clip to the same corner. */
+/* Written against the landmark itself, not a named region: only "Message list"
+   could be confirmed from the saved pages, since no message was open in
+   either, so naming the reading pane would be a guess. Matching
+   [role="complementary"] catches it whatever it turns out to be called. */
+[role="main"][aria-label="Reading Pane"] {
+  margin-top: var(--gm-read-top) !important;
+}
+
+[role="complementary"],
+[role="main"][aria-label="Reading Pane"] {
+  /* Scoping the veil variable to transparent here is what stops every box
+     inside from painting its own copy of it. The title box and the message
+     card are both ".WWy1F", which is literally
+     "background-color: var(--neutralPrimarySurface)" — with the pane also
+     painting, that stacked three veils and drew the rectangle around the
+     contents. The pane paints; its children do not. */
+  --neutralPrimarySurface: transparent;
+  background: var(--gm-pane) !important;
+  border: none !important;
+  border-radius: var(--gm-radius) !important;
+  overflow: hidden !important;
+}
+
+/* Scoping the variable on the pane is not enough on its own. Fluent wraps
+   sections of the app in <div class="fui-FluentProvider…"> elements that
+   RE-DECLARE every token locally, and section 1 sets --neutralPrimarySurface
+   on "[class*=fui-FluentProvider]" — so a provider sitting inside the pane
+   reinstated the veil for everything below it, which is why the subject box
+   kept its white fill. Clearing it on providers inside a pane puts the pane
+   back in charge. */
+[role="complementary"] [class*="fui-FluentProvider"],
+[role="main"][aria-label="Reading Pane"] [class*="fui-FluentProvider"] {
+  --neutralPrimarySurface: transparent;
+}
+
+/* The veil is painted ONCE, by the pane region above. Everything inside it —
+   the list box, the toolbar strip, the scroll container — is transparent.
+   Each of those also reads --neutralPrimarySurface, so leaving them painted
+   stacked a second and third layer of white on top of the first; where they
+   did not overlap exactly you saw a lighter rectangle framing the list. */
+[role="complementary"] > div,
+[data-app-section="MessageList"],
+[data-app-section="ConversationContainer"],
+#ReadingPaneContainerId,
+#MailList {
+  background: transparent !important;
+  border-radius: 0 !important;
+  border: none !important;
+}
+
+/* -- 3. header + search ---------------------------------------------------- */
+
+#OwaTitleBar,
+#OwaTitleBar > div {
+  background: transparent !important;
+  border-bottom: none !important;
+  box-shadow: none !important;
+  color: var(--gm-text) !important;
+  height: 64px !important;
+}
+
+#OwaTitleBar * {
+  color: var(--gm-text) !important;
+}
+
+/* Gmail's search is a wide rounded pill that begins where the message list
+   begins. Outlook's is narrow because its wrapper carries an inline
+   "max-width: 356px" — a class-based width rule would never have beaten it.
+   The wrapper has no usable class, so it is reached through the one stable id
+   inside it, #searchBoxColumnContainerId, scoped to the header so the :has()
+   only ever tests a handful of divs. */
+#OwaTitleBar div:has(> #searchBoxColumnContainerId) {
+  max-width: var(--gm-search-width) !important;
+  width: 100% !important;
+}
+
+/* Left edge. The header's branding block declares its own width as
+   --header-left-charms-width (248px), which is what sits to the left of the
+   search field; --gm-search-offset nudges the field from there to the list
+   edge if the folder pane is a different width. */
+#searchBoxColumnContainerId {
+  margin-left: var(--gm-search-offset) !important;
+  width: 100% !important;
+}
+
+#topSearchInput,
+#searchBoxId-Mail,
+[role="search"] {
+  background: var(--gm-search-bg) !important;
+  border: none !important;
+  border-radius: var(--gm-search-radius) !important;
+  box-shadow: none !important;
+  color: var(--gm-text) !important;
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* Height has to be set on the inner box too — the role="search" element is a
+   wrapper, and leaving its child at the old height just centres a short pill
+   inside a taller box. */
+[role="search"],
+#searchBoxId-Mail,
+#searchBoxColumnContainerId {
+  height: var(--gm-search-height) !important;
+  min-height: var(--gm-search-height) !important;
+}
+
+#topSearchInput,
+[role="search"] input {
+  background: transparent !important;
+  font-size: 16px !important;
+  height: 100% !important;
+}
+
+/* Focus: Gmail lifts it to white with a shadow, keeping the pill. */
+[role="search"]:focus-within,
+#searchBoxId-Mail:focus-within {
+  background: rgba(255, 255, 255, .92) !important;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, .1), 0 2px 6px rgba(0, 0, 0, .15) !important;
+}
+
+/* -- 4. folder pane + Compose --------------------------------------------- */
+
+/* The folder pane is the most transparent surface in the app — it is mostly
+   background with text on it. --neutralPrimarySurface would otherwise give it
+   the same 80% veil as the message list. backdrop-filter is force-cleared
+   here and on the panes: OWA applies acrylic blur to some surfaces, and a
+   blurred photo behind the folder list reads as smudge rather than depth. */
+/* Verified against a saved page: the folder pane is
+   data-app-section="NavigationPane" (FolderPaneContainer does not exist), and
+   role="navigation" is the left APP RAIL, not this. */
+[data-app-section="NavigationPane"],
+[data-app-section="NavigationPane"] > div,
+[data-app-section="NavigationPane"] > div > div,
+#folderPaneDroppableContainer {
+  --neutralPrimarySurface: var(--gm-nav-veil);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--gm-nav-veil) !important;
+  border-right: none !important;
+  padding-right: 8px !important;
+}
+
+/* White text throughout the pane. With the acrylic veil gone the folder list
+   sits directly on the photo, where the dark Gmail text loses contrast against
+   light areas. The shadow is what keeps it readable over a bright sky — drop
+   --gm-nav-shadow to none if you prefer it flat. */
+[data-app-section="NavigationPane"],
+[data-app-section="NavigationPane"] *,
+#folderPaneDroppableContainer,
+#folderPaneDroppableContainer * {
+  color: var(--gm-nav-text) !important;
+  text-shadow: var(--gm-nav-shadow) !important;
+}
+
+/* Folder entries become Gmail's right-rounded pills. These were keyed on
+   role="navigation" — the app rail — so they never fired on a folder. */
+[data-app-section="NavigationPane"] [role="treeitem"],
+#folderPaneDroppableContainer [role="treeitem"] {
+  border-radius: 0 var(--gm-radius) var(--gm-radius) 0 !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  height: 32px !important;
+  margin: 0 !important;
+  padding-left: 26px !important;
+}
+
+[data-app-section="NavigationPane"] [role="treeitem"]:hover {
+  background: rgba(255, 255, 255, .18) !important;
+}
+
+/* The selected pill keeps Gmail's pale blue, so its label goes back to dark —
+   white on #d2e3fc is unreadable. This has to outrank the white rule above,
+   which it does on specificity. */
+[data-app-section="NavigationPane"] [role="treeitem"][aria-selected="true"],
+[data-app-section="NavigationPane"] [role="treeitem"][aria-selected="true"] *,
+[data-app-section="NavigationPane"] [role="treeitem"].isSelected,
+[data-app-section="NavigationPane"] [role="treeitem"].isSelected * {
+  background: var(--gm-nav-selected) !important;
+  color: #001d35 !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+}
+
+/* TO REVERT to Outlook's own folder icons: delete this block, down to the
+   Compose pill below, and rebuild. Nothing else depends on it.
+
+   Folder icons, swapped for Gmail's. Gmail draws these as Material Symbols
+   ligatures — <span class="google-symbols">inbox</span> — and the same glyphs
+   are embedded here as a 2KB subset.
+
+   Keyed on data-folder-name, which OWA puts on every tree item and which holds
+   a clean lowercase name. The obvious hook, title, does NOT work: it reads
+   "Inbox - 1,903 items (1,162 unread)", so an exact-match selector on it never
+   fires — which is why the first attempt at this changed nothing.
+
+   The real glyph lives in a pair of <i class="fui-Icon-font"> elements (filled
+   and regular, for selected vs not). Both are hidden and ours is drawn on the
+   holder that contained them, so the row's spacing is untouched. */
+/* Hide the whole Fluent icon wrapper, not just the two <i> elements inside it.
+   Hiding only the glyphs leaves the wrapper in the flex row still claiming its
+   width, which is what made the replaced icons sit ragged against the labels. */
+[data-folder-name] > div:first-child > div {
+  display: none !important;
+}
+
+/* The holder becomes a fixed 20px box so every glyph lands on the same
+   baseline and the labels line up in one column, Gmail-style. */
+[data-folder-name]:has(> div i.fui-Icon-font) > div:first-child {
+  align-items: center !important;
+  display: inline-flex !important;
+  flex: 0 0 20px !important;
+  height: 20px !important;
+  justify-content: center !important;
+  margin-right: 14px !important;
+  min-width: 20px !important;
+  position: relative !important;
+  width: 20px !important;
+}
+
+/* Folders with children (Deleted Items, Archive) put an expand chevron in that
+   same holder, ahead of the icon. Left in flow it shares the 20px box and
+   shoves the glyph and label right, so those rows sit out of line with the
+   rest. Taking it out of flow and hanging it to the left of the icon slot
+   keeps every icon — chevron or not — on the same x, which is what Outlook
+   does natively and what Gmail's sidebar looks like. */
+[data-folder-name] > div:first-child > button {
+  height: 16px !important;
+  left: -17px !important;
+  margin: 0 !important;
+  min-width: 16px !important;
+  padding: 0 !important;
+  position: absolute !important;
+  top: 2px !important;
+  width: 16px !important;
+}
+
+/* The :has() guard limits this to tree items that actually had an icon. The
+   mailbox root carries data-folder-name too (it is the account address) but
+   holds a chevron button instead, and would otherwise pick up a stray glyph. */
+[data-folder-name]:has(> div i.fui-Icon-font) > div:first-child::before {
+  font-family: 'Material Symbols Outlined' !important;
+  display: block !important;
+  font-size: 20px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-weight: normal;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  width: 20px;
+  -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-folder-name="inbox"]                > div:first-child::before { content: "inbox"; }
+[data-folder-name="drafts"]               > div:first-child::before { content: "draft"; }
+[data-folder-name="sent items"]           > div:first-child::before { content: "send"; }
+[data-folder-name="deleted items"]        > div:first-child::before { content: "delete"; }
+[data-folder-name="junk email"]           > div:first-child::before { content: "report"; }
+[data-folder-name="archive"]              > div:first-child::before { content: "archive"; }
+[data-folder-name="snoozed"]              > div:first-child::before { content: "schedule"; }
+[data-folder-name="notes"]                > div:first-child::before { content: "label"; }
+[data-folder-name="conversation history"] > div:first-child::before { content: "history"; }
+[data-folder-name="go to groups"]         > div:first-child::before { content: "group"; }
+[data-folder-name="group"]                > div:first-child::before { content: "group"; }
+[data-folder-name="search folders"]       > div:first-child::before { content: "folder"; }
+[data-folder-name="todo"]                 > div:first-child::before { content: "star"; }
+
+/* User folders — anything not named above — get Gmail's label icon. The
+   :not() chain keeps this from overriding the specific folders, and the
+   attribute must exist, so it never fires on tree scaffolding. */
+[data-folder-name]:has(> div i.fui-Icon-font):not([data-folder-name="inbox"]):not([data-folder-name="drafts"]):not([data-folder-name="sent items"]):not([data-folder-name="deleted items"]):not([data-folder-name="junk email"]):not([data-folder-name="archive"]):not([data-folder-name="snoozed"]):not([data-folder-name="notes"]):not([data-folder-name="conversation history"]):not([data-folder-name="go to groups"]):not([data-folder-name="group"]):not([data-folder-name="search folders"]):not([data-folder-name="todo"]) > div:first-child::before {
+  content: "label";
+}
+
+/* "New mail" → Gmail's Compose pill. */
+button[aria-label="New mail"],
+button[aria-label^="New mail"],
+[data-app-section="NavigationPane"] button[aria-label*="New message"] {
+  background: var(--gm-compose) !important;
+  border: none !important;
+  border-radius: var(--gm-radius) !important;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, .3) !important;
+  color: var(--gm-compose-text) !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  height: 56px !important;
+  min-width: 140px !important;
+  padding: 0 24px !important;
+}
+
+button[aria-label="New mail"]:hover {
+  box-shadow: 0 1px 3px rgba(60, 64, 67, .3), 0 4px 8px rgba(60, 64, 67, .15) !important;
+  filter: brightness(1.02);
+}
+
+/* -- 5. message list ------------------------------------------------------- */
+/* Outlook's single-line layout renders the list as a grid: role="row" holding
+   role="gridcell", with a role="columnheader" strip on top. Older/other
+   layouts use role="option" inside role="listbox". Both are handled here —
+   whichever your build uses, the other set simply never matches. */
+
+/* Text size via Fluent's type tokens, scoped to the list, so no element-level
+   font rule is needed (see the warning in section 2). */
+[data-app-section="MessageList"],
+#MailList,
+div[role="listbox"],
+div[role="grid"],
+[role="complementary"][aria-label="Message list"] {
+  /* Row GEOMETRY goes through OWA's own variables, never through height or
+     padding on the row. The list is windowed: it decides how many rows fit,
+     renders that many, measures, and adjusts. Overriding a row's height from
+     outside makes the measurement disagree with the layout on every pass, so
+     it keeps adding and removing rows — the rows visibly blink in and out.
+     Set the variable it already reads and the arithmetic stays consistent.
+     Outlook's defaults are nearly Gmail's already: firstRowHeight 20px and
+     firstRowVerticalPadding 4px are exactly Gmail's .xY height and .zA
+     padding. Only the 40px minimum needs moving. */
+  /* ROW HEIGHT IS LEFT ALONE — and this is deliberate.
+     Setting --condensedRowMinHeight to 28px did change the row height, but it
+     also changed how many rows the virtualiser renders: 42 rows in a snapshot
+     before, 57 after, at the same window size. The scroller estimates its
+     content height from the row height it expects; when the rendered height
+     disagrees it corrects, re-renders, and measures again — rows blink in and
+     out. No JS row-height constant is visible in the shipped bundles, so this
+     could not be proven from the source, only from that row count.
+     Outlook's own Settings -> Mail -> Layout -> Message spacing changes the
+     height on BOTH sides at once, which CSS cannot do. Use that.
+
+  --condensedRowMinHeight: var(--gm-row-height);
+  --firstRowHeight: var(--gm-row-line);
+  --firstRowVerticalPadding: var(--gm-row-pad-y);
+  --condensedRowPaddingBottom: var(--gm-row-pad-y);
+  */
+
+  --fontFamilyBase: var(--gm-font-text);
+  --fontSizeBase100: var(--gm-row-font);
+  --fontSizeBase200: var(--gm-row-font);
+  --fontSizeBase300: var(--gm-row-font);
+  --lineHeightBase100: var(--gm-row-line);
+  --lineHeightBase200: var(--gm-row-line);
+  --lineHeightBase300: var(--gm-row-line);
+}
+
+/* Font on the row and its cells, not on leaf spans. A container inherits down
+   to text nodes that set no font of their own, while icon leaves — which set
+   font-family explicitly to reach their glyph — are untouched. This is the
+   only element-level font rule in the file, and it is deliberately shallow. */
+div[role="row"],
+div[role="option"],
+[role="gridcell"] {
+  font-family: var(--gm-font-text) !important;
+  /* No font-size here. Text size changes content height, which the windowed
+     list measures — it goes through --fontSizeBase* above, where Outlook's own
+     layout sees it. */
+}
+
+/* The list toolbar (Inbox, the star, Select, Jump to, Filter, By Date) and the
+   From / Subject / Received header strip are LEFT IN PLACE. Hiding them is
+   where the flickering came from — display:none on a container the message
+   list measures keeps the list re-rendering, and the row count in a saved
+   snapshot rose from 42 to 57 while it thrashed. They are styled to blend with
+   the pane instead: the white bar and its bottom border were
+   "background-color: var(--neutralPrimarySurface); border-bottom: 1px solid
+   var(--neutralTertiaryAlt)", and both of those variables are already
+   neutralised in section 1, so the strip reads as part of the list rather than
+   a bar across the top of it.
+
+   If you want them gone, do it in Outlook — the column headers come off with
+   a right-click on the header strip — not with display:none here. */
+
+/* Nor the briefing / "what's new in your email" banner above the list. */
+[data-app-section="UpsellBannerSection"],   /* verified */
+[data-app-section="BriefingBanner"],
+[data-app-section="MessageListBanner"],
+[aria-label*="briefing" i],
+[data-app-section="TipBanner"] {
+  display: none !important;
+}
+
+/* The row itself: colour only. Everything dimensional is set through the
+   variables at the top of this section. */
+div[role="listbox"] > div[role="option"],
+div[role="option"][data-convid],
+[data-app-section="MessageList"] [role="option"],
+[data-app-section="MessageList"] div[role="row"],
+div[role="grid"] div[role="row"] {
+  background: var(--gm-row-read) !important;
+  border-bottom: none !important;
+  border-radius: 0 !important;
+  /* Gmail draws the row divider as an inset shadow on the row, not a border
+     on the cells — a border would sit above the translucency and read as a
+     hard line over the background image. */
+  box-shadow: inset 0 -1px 0 0 var(--gm-row-divider) !important;
+  color: var(--gm-text) !important;
+}
+
+/* Cells: colour and rules only. Their padding and line-height feed the same
+   measurement as the row height above, so they are left to Outlook. */
+[role="gridcell"],
+div[role="option"] > div {
+  border-left: none !important;
+  border-right: none !important;
+}
+
+div[role="option"][aria-selected="true"],
+div[role="row"][aria-selected="true"] {
+  background: var(--gm-row-select) !important;
+}
+
+/* Hover lifts the row with a shadow and leaves the background alone — copied
+   verbatim from .zA:hover. */
+div[role="option"]:hover,
+div[role="grid"] div[role="row"]:hover {
+  box-shadow: inset 1px 0 0 rgb(218, 220, 224), inset -1px 0 0 rgb(218, 220, 224),
+              0 1px 2px 0 rgba(60, 64, 67, .3),
+              0 1px 3px 1px rgba(60, 64, 67, .15) !important;
+  z-index: 2 !important;
+}
+
+/* Unread rows: white ground, black bold text — Gmail's core list signal. */
+/* Unread rows announce themselves: aria-label starts with "Unread". The
+   previous :has([class*="unread"]) form re-ran on every row mutation for no
+   benefit. */
+div[role="option"][aria-label^="Unread"],
+div[role="option"][aria-label*="Unread"] {
+  background: var(--gm-row-unread) !important;
+  box-shadow: inset 0 -1px 0 0 var(--gm-row-divider) !important;
+  color: var(--gm-text) !important;
+  font-weight: 700 !important;
+}
+
+div[role="option"][aria-label*="Unread"] span {
+  color: var(--gm-text) !important;
+  font-weight: 700 !important;
+}
+
+/* The selection checkbox. Its checked state is a background fill, which the
+   blanket "everything inside a row is transparent" rule above wipes out —
+   leaving a white tick on a clear box, i.e. nothing. Repainted here explicitly,
+   in Gmail's shape: a grey outline square that fills with blue when checked.
+   role="checkbox" with aria-checked is OWA's own wrapper, so no class hashes
+   are involved. */
+[role="checkbox"] label > div,
+[role="checkbox"] > div > div {
+  border: 2px solid var(--gm-text-secondary) !important;
+  border-radius: 2px !important;
+  box-sizing: border-box !important;
+}
+
+[role="checkbox"][aria-checked="true"] label > div,
+[role="checkbox"][aria-checked="true"] > div > div {
+  background-color: var(--gm-accent) !important;
+  border-color: var(--gm-accent) !important;
+}
+
+[role="checkbox"][aria-checked="true"] i[data-icon-name="CheckMark"],
+[role="checkbox"][aria-checked="true"] [data-icon-name="CheckMark"] {
+  color: #fff !important;
+  opacity: 1 !important;
+}
+
+/* Preview text is the quiet part of the row: softer than the subject and never
+   bold, even on an unread message — Gmail bolds the sender and subject only.
+
+   The span carries nothing but a build hash (.ASFJj at time of writing), so
+   there is no honest stable selector for it; the earlier [class*="preview"]
+   guess matched nothing at all. If the snippet stops softening after an
+   Outlook update, re-derive it: find the preview text in a saved page and take
+   its class. The structural fallback below is the second line of defence — the
+   preview sits one level deeper than the subject, in its own wrapper. */
+div[role="option"] span.ASFJj,
+div[role="option"] > div > div > div > div > div:last-child > div > span {
+  color: var(--gm-preview) !important;
+  font-weight: 400 !important;
+}
+
+/* Must outrank the unread rule, which bolds every span in the row. */
+div[role="option"][aria-label*="Unread"] span.ASFJj {
+  color: var(--gm-preview) !important;
+  font-weight: 400 !important;
+}
+
+/* Category tags (UFL / CERN …) — Gmail's equivalent chip is small and grey,
+   not a coloured badge competing with the subject. */
+[class*="categor" i] [class*="pill" i],
+[aria-label*="category" i],
+[data-app-section="CategoryTag"] {
+  background: transparent !important;
+  border: none !important;
+  color: var(--gm-text-secondary) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+}
+
+/* Gmail has no per-row pill/card chrome. */
+[data-app-section="MessageList"] [role="option"] > div {
+  border-radius: 0 !important;
+}
+
+/* -- 6. reading pane ------------------------------------------------------- */
+
+#ReadingPaneContainerId,
+[data-app-section="ConversationContainer"] {
+  background: var(--gm-pane) !important;
+  padding: 16px 24px !important;
+}
+
+/* Subject line: Gmail's 22px regular, not Outlook's bold 20px. */
+[data-app-section="ConversationContainer"] [role="heading"],
+#ReadingPaneContainerId [role="heading"] {
+  color: var(--gm-text) !important;
+  font-size: 22px !important;
+  font-weight: 400 !important;
+  line-height: 28px !important;
+}
+
+/* Message bodies sit flush; Gmail draws a hairline between messages. */
+[data-app-section="ConversationContainer"] [role="listitem"] {
+  border-bottom: 1px solid var(--gm-border-subtle) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Reply / Reply all / Forward, and the bar they sit in. Gmail puts those at
+   the bottom of the message, not in a toolbar strip across the top.
+
+   The buttons are matched by aria-label alone — plain attribute selectors,
+   no :has() — because the list is virtualised and a :has() that can reach it
+   brings the flickering back. The bar itself needs :has(), so it is scoped to
+   a region that is NOT the message list, keeping the test away from churning
+   nodes.
+
+   UNVERIFIED: no saved page had a message open, so neither the labels nor the
+   bar's shape could be checked against the real DOM. If the buttons go but an
+   empty strip remains, that strip is the thing to name properly. */
+button[aria-label="Reply"],
+button[aria-label="Reply all"],
+button[aria-label="Forward"],
+button[title="Reply"],
+button[title="Reply all"],
+button[title="Forward"] {
+  display: none !important;
+}
+
+/* Title box + message card as one surface. The conversation container is a
+   grid with "row-gap: 6px", which is the line between them; the card adds its
+   own 4px radius and a drop shadow, which reads as a second box floating
+   inside the pane. With the gap closed and the card's own chrome removed, the
+   pane's 16px corner and overflow:hidden do the rounding for both — the same
+   way the message list clips its toolbar and rows. */
+[data-app-section="ConversationContainer"] > div {
+  row-gap: 0 !important;
+}
+
+/* The subject box. It is NOT under ConversationContainer — that was the
+   earlier guess and it matched nothing; the subject lives under
+   data-app-section="MailReadCompose", inside #ReadingPaneContainerId.
+   .NTPm6 is a build hash, so re-derive it if this stops matching: find the
+   span whose id ends in _SUBJECT and take its box. */
+[role="main"][aria-label="Reading Pane"] .NTPm6 {
+  background: var(--gm-title-bg) !important;
+  border: none !important;
+  border-radius: 0 !important;
+  /* .NTPm6 ships "box-shadow: var(--shadow4)" — that is the box drawn around
+     the subject. Gmail's subject is bare text on the pane. */
+  box-shadow: none !important;
+}
+
+/* The subject text also sits in its own rounded, filled pill: .MshDW gives it
+   a 4px radius and .mBy5m another --neutralPrimarySurface fill. Both go, so
+   the subject reads as text rather than a chip. */
+[role="main"][aria-label="Reading Pane"] .MshDW,
+[role="main"][aria-label="Reading Pane"] .mBy5m {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[role="main"][aria-label="Reading Pane"] [id="focused"],
+[data-app-section="ConversationContainer"] [id="focused"] {
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* The Reply / Reply all / Forward toolbar across the message header. The
+   buttons sit in a fui-Toolbar inside [aria-label="Email message"], so the bar
+   goes as a unit rather than leaving empty boxes behind. */
+[aria-label="Email message"] [class*="fui-Toolbar"],
+[aria-label="Email message"] [role="toolbar"] {
+  display: none !important;
+}
+
+/* The "Retention: Inbox UF (3 years) Expires: …" strip. It sits in
+   .infoBarDivClass — a rare unhashed class — but that container holds every
+   info bar Outlook shows on a message, including security warnings, and CSS
+   cannot match on text. So rather than emptying the container, only bars
+   carrying the INFORMATIONAL icon are hidden: retention and notices like
+   "This message is in French" use InfoFilled, while warnings and errors use
+   their own icons and still come through.
+   To hide the lot instead, target .infoBarDivClass directly — and know that
+   phishing and external-sender warnings go with it. */
+[role="main"][aria-label="Reading Pane"] [role="group"][class*="fui-MessageBar"]:has([data-icon-name="InfoFilled"]) {
+  display: none !important;
+}
+
+/* The Quick actions bar at the foot of the message — the rectangle at the
+   lowest end. Hiding only the Reply / Reply all / Forward buttons left this
+   strip behind, the same way hiding the Select label left an empty button. */
+[aria-label="Quick actions"] {
+  display: none !important;
+}
+
+/* -- 7. ribbon ------------------------------------------------------------- */
+/* Gmail has no ribbon — actions live in a thin toolbar. Collapse it. */
+
+[data-app-section="Ribbon"],          /* verified */
+[data-app-section="RibbonTabs"],
+#ribbonContainer,
+div[role="menubar"][aria-label*="ibbon"],
+div[aria-label="Ribbon"] {
+  display: none !important;
+}
+
+/* Keep the compact command bar, flatten it to Gmail's icon strip. */
+[data-app-section="CommandBar"],
+div[role="toolbar"] {
+  background: var(--gm-bg) !important;
+  border: none !important;
+  box-shadow: none !important;
+  min-height: 48px !important;
+}
+
+div[role="toolbar"] button {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 50% !important;
+  color: var(--gm-text-secondary) !important;
+}
+
+div[role="toolbar"] button:hover {
+  background: rgba(32, 33, 36, .06) !important;
+}
+
+/* New-mail toast. Outlook sizes it for Segoe UI; Google Sans sits taller, so
+   the text overflows a box with a fixed height and the card reads as clipped.
+   Letting it size to its content fixes it without touching the type.
+   UNVERIFIED: no saved page captured a toast, so this is written against the
+   NotificationPane section alone — if it is still clipped, save a page while
+   one is on screen and it can be targeted exactly. */
+[data-app-section="NotificationPane"],
+[data-app-section="NotificationPane"] > div,
+[data-app-section="NotificationPane"] > div > div {
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}
+
+[data-app-section="NotificationPane"] [class*="fui-FluentProvider"] {
+  --neutralPrimarySurface: var(--gm-surface);   /* a toast floats over the app,
+                                                   so it stays opaque */
+}
+
+/* -- 8. declutter ---------------------------------------------------------- */
+
+/* The left app rail (Mail / Calendar / People / To Do / …). Gmail has no
+   equivalent, so it goes. Microsoft has renamed this container several times,
+   hence the spread of candidates — run gmailify.at() on it (see inspect.js) and
+   prune this list to whichever one actually matches your build. */
+#appBar,
+#LeftRail,
+#leftRailContainer,
+[data-app-section="AppBar"],
+[data-app-section="AppRail"],
+[data-app-section="LeftRail"],
+[role="navigation"][aria-label="left-rail-appbar"],   /* verified */
+div[aria-label="App bar"],
+nav[aria-label="App bar"],
+div[role="navigation"][aria-label="App bar"],
+div[aria-label="Navigation bar"],
+div[role="toolbar"][aria-label*="App"] {
+  display: none !important;
+}
+
+
+div[aria-label="Advertisement"],
+div[data-app-section="AdsRegion"],
+#app-ad-container,
+[data-app-section="RightRail"],
+[aria-label="My Day"],
+div[data-app-section="MyDayPane"],
+button[aria-label*="Copilot"],
+div[aria-label*="Copilot"] {
+  display: none !important;
+}
+
+/* -- 9. scrollbars --------------------------------------------------------- */
+
+* {
+  scrollbar-color: #dadce0 transparent;
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #dadce0;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: #bdc1c6; background-clip: content-box; }
