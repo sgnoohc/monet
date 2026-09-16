@@ -30,12 +30,17 @@ VERSION=${VERSION:-0.1.0}
                domain("outlook.live.com") {
 HEADER
   # Embedded @font-face blocks first, then the stylesheet.
-  sed 's/^/  /; s/[[:space:]]*$//' fonts.css
+  # LOCAL=1 builds your personal copy: the Google Sans faces from
+  # fonts.local.css and the photo from background.css, neither of which is
+  # committed.  LOCAL=1 ./build.sh gmailify.css gmailify.local.user.css
+  FONTS=fonts.css
+  if [ "${LOCAL:-0}" = "1" ] && [ -f fonts.local.css ]; then FONTS=fonts.local.css; fi
+  sed 's/^/  /; s/[[:space:]]*$//' "$FONTS"
   sed 's/^/  /; s/[[:space:]]*$//' "$SRC"
   # Background last: it overrides the --gm-bg-image default in gmailify.css.
   # Opt-in, because background.css embeds a photo that should stay on your own
-  # machine rather than being committed:  WITH_BG=1 ./build.sh
-  if [ "${WITH_BG:-0}" = "1" ] && [ -f background.css ]; then
+  # machine rather than being committed.
+  if [ "${LOCAL:-0}" = "1" ] && [ -f background.css ]; then
     sed 's/^/  /; s/[[:space:]]*$//' background.css
   fi
   echo "}"

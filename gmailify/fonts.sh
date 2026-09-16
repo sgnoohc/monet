@@ -12,8 +12,13 @@ cd "$(dirname "$0")"
 # Google Sans / Google Sans Text are Google-restricted fonts: fine to use on
 # your own machine, not something to redistribute in a public repo. They are
 # only fetched with --google-sans, and the result is gitignored.
+# Plain run writes fonts.css (committed, Roboto + Material Symbols).
+# --google-sans writes fonts.local.css, which is gitignored, so the two builds
+# never overwrite each other.
 WANT_GOOGLE_SANS=0
-[ "${1:-}" = "--google-sans" ] && WANT_GOOGLE_SANS=1
+OUT=fonts.css
+if [ "${1:-}" = "--google-sans" ]; then WANT_GOOGLE_SANS=1; OUT=fonts.local.css; fi
+export OUT
 
 UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 API="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap"
@@ -73,6 +78,6 @@ if m:
     kept += 1
     print(f"  embedded Material Symbols Outlined  ({len(data)//1024} KB)")
 
-open('fonts.css', 'w').write('\n'.join(out) + '\n')
-print(f"fonts.css: {kept} faces")
+open(__import__('os').environ.get('OUT','fonts.css'), 'w').write('\n'.join(out) + '\n')
+print(f"{__import__('os').environ.get('OUT','fonts.css')}: {kept} faces")
 PY

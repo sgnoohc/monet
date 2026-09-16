@@ -27,10 +27,12 @@ like Gmail. Read this before installing it, changing it, or debugging it.
    ```sh
    ./fonts.sh --google-sans                                   # Google Sans + Google Sans Text
    ./background.sh /path/to/any/photo.jpg                     # any image they like
-   WITH_BG=1 ./build.sh gmailify.css gmailify.local.user.css
+   LOCAL=1 ./build.sh gmailify.css gmailify.local.user.css
    ```
 
-   Then install `gmailify.local.user.css` by `file://` URL, which needs **Allow
+   `--google-sans` writes `fonts.local.css` rather than `fonts.css`, so the two
+   builds never overwrite each other. Then install `gmailify.local.user.css` by
+   `file://` URL, which needs **Allow
    access to file URLs** enabled for Stylus at `chrome://extensions` → Stylus →
    Details. `background.css` and `gmailify.local.user.css` are gitignored.
 

@@ -37,12 +37,13 @@ redistribute Google's assets:
 ```sh
 ./fonts.sh --google-sans                              # Google Sans + Google Sans Text
 ./background.sh ~/Pictures/bg.jpg                     # a background photo
-WITH_BG=1 ./build.sh gmailify.css gmailify.local.user.css
+LOCAL=1 ./build.sh gmailify.css gmailify.local.user.css
 ```
 
-Install `gmailify.local.user.css` instead. It and `background.css` are
-gitignored; the committed `gmailify.user.css` is the plain build, so your photo
-never lands in the repo.
+Install `gmailify.local.user.css` instead. It, `fonts.local.css` and
+`background.css` are gitignored, and the two builds use separate font files so a
+plain `./build.sh` cannot strip Google Sans out of your local copy. Rebuild
+yours with the `LOCAL=1` line after any edit.
 
 Without the first, the UI falls back to Roboto, which is what Gmail's own font
 stack falls back to as well. Without the second you get a gradient instead of a
