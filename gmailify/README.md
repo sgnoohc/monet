@@ -48,6 +48,10 @@ Without the first, the UI falls back to Roboto, which is what Gmail's own font
 stack falls back to as well. Without the second you get a gradient instead of a
 photo. Both are personal-machine steps; don't commit their output.
 
+Working on this with Claude Code? `CLAUDE.md` in this directory carries the
+install steps, the verified Outlook selectors, and the five rules that keep the
+app from flickering or losing its icons.
+
 ## Files
 
 | file | what it is |
@@ -56,6 +60,7 @@ photo. Both are personal-machine steps; don't commit their output.
 | `gmailify.user.css` | generated, committed — the installable style |
 | `gmailify.local.user.css` | generated, gitignored — your build, with photo and Google Sans |
 | `fonts.css` | generated: Google Sans + Roboto as base64 `@font-face` (`./fonts.sh`) |
+| `CLAUDE.md` | agent-facing notes: install, hooks, and the rules not to break |
 | `build.sh` | regenerates `gmailify.user.css` (fonts.css + gmailify.css) |
 | `fonts.sh` | re-downloads the latin subsets and rebuilds `fonts.css` |
 | `background.css` | generated: background photo as a data URI (`./background.sh img.jpg`) |
