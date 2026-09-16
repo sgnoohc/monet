@@ -17,7 +17,8 @@ uploaded anywhere and no language model is involved.
 """
 import argparse, os, subprocess, sys
 
-from . import answerkey, autograde, config, gradepage, matching, ocr, render, reviewpage, split, zoneeditor
+from . import (answerkey, autograde, config, gradepage, matching, ocr, render,
+               reviewpage, split, stats, zoneeditor)
 
 
 def _load(path):
@@ -182,6 +183,48 @@ def cmd_grade(a):
         subprocess.run(["open", dest], check=False)
 
 
+def cmd_stats(a):
+    try:
+        parts, students, out_of = stats.read(a.grades, only_reviewed=a.only_reviewed)
+    except (OSError, stats.GradesError) as err:
+        sys.exit(f"error: {err}")
+
+    if a.part:
+        hit = [p for p in parts if a.part.lower() in p["label"].lower()]
+        if not hit:
+            sys.exit(f"error: no part matches {a.part!r}. Parts: "
+                     + ", ".join(p["label"] for p in parts))
+        if len(hit) > 1:
+            sys.exit(f"error: {a.part!r} matches {len(hit)} parts: "
+                     + ", ".join(p["label"] for p in hit))
+        p = hit[0]
+        values = [s["scores"][p["col"]] for s in students
+                  if s["scores"].get(p["col"]) is not None]
+        title, ceiling, table = p["label"], (p["max"] or max(values)), []
+    else:
+        values = [s["total"] for s in students]
+        title, ceiling = (a.title or "Grade distribution"), out_of
+        table = stats.part_stats(parts, students)
+
+    st = stats.summary(values)
+    hi = a.max if a.max is not None else ceiling
+    try:
+        edges, counts, under, over = stats.bins(values, nbins=a.nbins, lo=a.min,
+                                                hi=hi, width=a.width)
+    except stats.GradesError as err:
+        sys.exit(f"error: {err}")
+    print()
+    print(stats.render_text(title, st, edges, counts, under, over, table, ceiling))
+    print()
+    if a.html:
+        with open(a.html, "w") as f:
+            f.write(stats.render_html(title, st, edges, counts, under, over,
+                                      table, ceiling))
+        print(f"wrote {a.html}")
+        if not a.no_open:
+            subprocess.run(["open", a.html], check=False)
+
+
 def cmd_check(a):
     cfg = _load(a.config)
     tpl = config.path_of(cfg, "template")
@@ -253,6 +296,20 @@ def main():
     p = sub.add_parser("grade", help="build the grading page")
     p.add_argument("config"); p.add_argument("--out"); p.add_argument("--dest")
     p.add_argument("--no-open", action="store_true"); p.set_defaults(fn=cmd_grade)
+
+    p = sub.add_parser("stats", help="statistics and grade distribution from an export")
+    p.add_argument("grades", help="CSV exported by the grading page")
+    p.add_argument("--nbins", type=int, default=10, help="number of bins (default 10)")
+    p.add_argument("--min", type=float, default=0.0, help="low edge (default 0)")
+    p.add_argument("--max", type=float, help="high edge (default: the paper's total)")
+    p.add_argument("--width", type=float, help="bin width; overrides --nbins")
+    p.add_argument("--part", help="histogram one part instead of the total")
+    p.add_argument("--only-reviewed", action="store_true",
+                   help="ignore sheets not yet marked reviewed")
+    p.add_argument("--title")
+    p.add_argument("--html", help="also write an HTML report")
+    p.add_argument("--no-open", action="store_true")
+    p.set_defaults(fn=cmd_stats)
 
     p = sub.add_parser("check", help="summarise the config")
     p.add_argument("config"); p.set_defaults(fn=cmd_check)

@@ -43,6 +43,7 @@ redpen grade quiz.json                      # grade
 | `grade` | build the grading page |
 | `check` | summarise the config |
 | `clean` | drop cached page renders |
+| `stats` | statistics and a grade-distribution histogram from an export |
 
 ## Use the blank quiz as the template, not the answer key
 
@@ -105,6 +106,30 @@ Answer key format in `parts[].key`:
 
 The spaces around `/` matter — a bare slash also lives inside `m/s`. Set
 `"auto": false` on anything OCR should not judge, such as a sketch.
+
+## Statistics and the distribution
+
+```bash
+redpen stats grades.csv                       # 10 bins over 0 … paper total
+redpen stats grades.csv --nbins 20
+redpen stats grades.csv --min 50 --max 100 --nbins 10
+redpen stats grades.csv --width 5 --min 60    # 5-point bins; --width overrides --nbins
+redpen stats grades.csv --part "sketch"       # one part instead of the total
+redpen stats grades.csv --html report.html    # also write a page
+```
+
+Prints n, mean, median, standard deviation, min, max and the quartiles, then an
+ASCII histogram, then a per-part table sorted by mean percentage — the quickest
+way to see which question actually hurt.
+
+Binning is `--nbins` (default 10) between `--min` (default 0) and `--max`
+(default the paper's total), or give `--width` for a fixed bin size and the bin
+count follows. The top edge belongs to the last bin, so full marks are counted.
+Narrowing the range does not silently drop anyone: values outside it are
+reported as "N below range, M above".
+
+`--only-reviewed` ignores sheets you have not yet worked through, which is what
+you want for a mid-marking sanity check.
 
 ## Config
 
