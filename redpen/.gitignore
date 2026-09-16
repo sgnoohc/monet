@@ -1,0 +1,20 @@
+# Never commit student work.
+*.pdf
+*.csv
+students/
+needs_review/
+split_report.csv
+autograde.json
+*_grading.html
+*_progress.json
+
+# Build + cache artefacts
+.redpen_cache/
+# compiled from the .swift source on first use
+redpen/vision/visionocr
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.DS_Store

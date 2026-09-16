@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "redpen"
+version = "0.1.0"
+description = "Define answer zones on a quiz, split bulk scans by student, grade in the browser — entirely on your own machine."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["Pillow>=9"]
+
+[project.scripts]
+redpen = "redpen.cli:main"
+
+[tool.setuptools]
+packages = ["redpen"]
+
+[tool.setuptools.package-data]
+redpen = ["vision/*.swift"]

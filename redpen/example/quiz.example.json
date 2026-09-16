@@ -1,0 +1,32 @@
+{
+  "title": "Example Quiz 1",
+  "template": "blank-quiz.pdf",
+  "key_pdf": "quiz-answer-key.pdf",
+  "pages_per_student": 2,
+  "dpi": 200,
+  "ocr_dpi": 400,
+  "roster": "roster.csv",
+  "roster_name_column": 0,
+  "roster_id_column": 1,
+  "roster_mode": "suggest",
+  "name_zone": "name",
+  "review_gap": 0.10,
+  "review_score": 0.55,
+
+  "zones": [
+    { "id": "name",    "page": 1, "rect": [0.568, 0.008, 0.357, 0.034], "kind": "name" },
+    { "id": "q1",      "page": 1, "rect": [0.742, 0.163, 0.166, 0.030], "kind": "answer" },
+    { "id": "q2_time", "page": 1, "rect": [0.742, 0.508, 0.166, 0.029], "kind": "answer" },
+    { "id": "q2_dist", "page": 1, "rect": [0.742, 0.537, 0.166, 0.029], "kind": "answer" },
+    { "id": "q3",      "page": 2, "rect": [0.540, 0.744, 0.450, 0.240], "kind": "answer" }
+  ],
+
+  "parts": [
+    { "id": "q1", "label": "1  time to stop",  "key": "15.0 s",
+      "points": 10, "zones": ["q1"] },
+    { "id": "q2", "label": "2  time & distance", "key": "12.0 s / 216 m",
+      "points": 20, "zones": ["q2_time", "q2_dist"] },
+    { "id": "q3", "label": "3  sketch", "key": "(0,0) then (10 s, +80)",
+      "points": 20, "zones": ["q3"], "auto": false }
+  ]
+}
