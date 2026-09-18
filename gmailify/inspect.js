@@ -6,6 +6,7 @@
 //   gmailify.check()      which selectors hit, which are dead
 //   gmailify.hooks()      stable attributes present on the page
 //   gmailify.at()         click an element, then call this for its ancestry
+//   gmailify.date()       the open message's date + body container (hashed nodes)
 //   gmailify.tokens()     Fluent CSS variables currently in effect
 
 (() => {
@@ -63,6 +64,11 @@
       for (const a of ['data-app-section', 'role', 'aria-label', 'data-convid', 'aria-selected']) {
         if (n.hasAttribute(a)) bits.push(`[${a}="${n.getAttribute(a)}"]`);
       }
+      // Classes too: a hashed one is a poor hook, but on nodes OWA gives no
+      // attribute at all — the date, the subject box — it is the only one.
+      const cls = (typeof n.className === 'string' ? n.className : '').trim();
+      if (cls) bits.push('.' + cls.split(/\s+/).join('.'));
+      if (n.hasAttribute('title')) bits.push(`  title="${n.getAttribute('title').slice(0, 60)}"`);
       chain.push(bits.join(''));
     }
     console.log(chain.reverse().join('\n  > '));
@@ -138,6 +144,51 @@
     return target;
   };
 
+  // Run this with a message OPEN. Finds the date/time in the message header
+  // and the container the body text is rendered in — the two nodes whose type
+  // is set in section 6 and which no stable attribute names. Prints a
+  // paste-ready selector for each, since both are hashed classes in the end.
+  const date = () => {
+    const pane = document.querySelector('[role="main"][aria-label="Reading Pane"]');
+    if (!pane) return console.warn('open a message first');
+    const DATEISH = /^(?:\w{3},?\s)?(?:\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}|\w{3,9}\s\d{1,2})?[\s,]*(?:\d{1,2}:\d{2}\s?[AP]M)?$/i;
+    const sel = (el) => {
+      const cls = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/)
+        .filter(c => c && !c.startsWith('fui-'));
+      return el.id ? `#${el.id}`
+        : cls.length ? `${el.tagName.toLowerCase()}.${cls[0]}`
+        : el.getAttribute('title') ? `${el.tagName.toLowerCase()}[title]` : el.tagName.toLowerCase();
+    };
+    console.group('date-shaped nodes in the message header');
+    for (const el of pane.querySelectorAll('span, div, time')) {
+      if (el.children.length) continue;
+      const t = el.textContent.trim();
+      if (!t || t.length > 32 || !/\d/.test(t) || !DATEISH.test(t)) continue;
+      const cs = getComputedStyle(el);
+      console.log(`${JSON.stringify(t)}  fs=${cs.fontSize} lh=${cs.lineHeight} ` +
+        `color=${cs.color} title=${JSON.stringify(el.getAttribute('title'))}\n  selector: ` +
+        `[aria-label="Email message"] ${sel(el)}`);
+    }
+    console.groupEnd();
+
+    console.group('message body containers');
+    const BODY = ['[id^="UniqueMessageBody"]', '[aria-label="Message body"]',
+                  '.allowTextSelection', '.PlainText', '[class*="rps_"]'];
+    for (const s of BODY) {
+      const hits = pane.querySelectorAll(s);
+      console.log(`${hits.length ? '✔' : '✘'} ${String(hits.length).padStart(3)}  ${s}` +
+        (hits.length ? `  → fs=${getComputedStyle(hits[0]).fontSize} ` +
+          `ff=${getComputedStyle(hits[0]).fontFamily.split(',')[0]}` : ''));
+    }
+    // Whatever actually holds the text, in case none of the above matched.
+    const longest = [...pane.querySelectorAll('div')]
+      .filter(el => el.textContent.trim().length > 200)
+      .sort((a, b) => a.getElementsByTagName('*').length - b.getElementsByTagName('*').length)[0];
+    if (longest) console.log('deepest node holding the letter:', sel(longest),
+      `fs=${getComputedStyle(longest).fontSize} ff=${getComputedStyle(longest).fontFamily.split(',')[0]}`);
+    console.groupEnd();
+  };
+
   // What is covering the background image: every element bigger than a quarter
   // of the viewport that paints an opaque colour or an image of its own.
   const opaque = () => {
@@ -197,6 +248,6 @@
     return found;
   };
 
-  window.gmailify = { check, hooks, at, tokens, rail, row, opaque, panes, toast };
-  console.log('gmailify: try gmailify.check(), gmailify.hooks(), gmailify.at(), gmailify.rail(), gmailify.row(), gmailify.opaque(), gmailify.panes(), gmailify.toast(), gmailify.tokens()');
+  window.gmailify = { check, hooks, at, tokens, rail, row, date, opaque, panes, toast };
+  console.log('gmailify: try gmailify.check(), gmailify.hooks(), gmailify.at(), gmailify.rail(), gmailify.row(), gmailify.date(), gmailify.opaque(), gmailify.panes(), gmailify.toast(), gmailify.tokens()');
 })();

@@ -1,7 +1,7 @@
 /* ==UserStyle==
 @name           gmailify — Outlook as Gmail
 @namespace      github.com/sgnoohc/monet
-@version        2.14.0
+@version        2.16.0
 @description    Reskins outlook.cloud.microsoft to look like Gmail.
 @author         sgnoohc
 @license        MIT
@@ -45,7 +45,7 @@
     font-display: block;
     src: url(data:font/woff2;base64,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) format('woff2');
   }
-  /* @version 2.14.0 */
+  /* @version 2.16.0 */
 
   /* Fonts are Gmail's real typefaces — Google Sans for chrome, Roboto for
      message text — embedded as data URIs by fonts.sh into fonts.css, which
@@ -172,6 +172,21 @@
     /* Gmail uses Google Sans for chrome and Roboto for message text. */
     --gm-font:      "Google Sans", Roboto, RobotoDraft, Helvetica, Arial, sans-serif;
     --gm-font-text: "Google Sans Text", "Google Sans", Roboto, Arial, sans-serif;
+    /* The letter itself is NOT Roboto in Gmail. Gmail's own stylesheet sets
+       "body, td, input, textarea { font-family: Arial, Helvetica, sans-serif }"
+       and the message body inherits it, which is why a plain mail in Gmail reads
+       as Arial while the chrome around it is Google Sans. Applied in section 6,
+       on the body container only, so a sender's own font-family still wins the
+       way it does in Gmail. */
+    --gm-font-body: Arial, Helvetica, sans-serif;
+    --gm-body-line: 1.5;          /* Gmail's "font: small/1.5" */
+
+    /* The date on an open message. Gmail sets the whole right-hand metadata
+       line — "at 10:23 AM (2 hours ago)" — at 12px in the secondary grey,
+       against a 14px sender name; Outlook renders it at the header's base size,
+       so it competes with the sender. */
+    --gm-read-date-font: 12px;
+    --gm-read-date-line: 16px;
   }
 
   /* -- 1. fluent design tokens ----------------------------------------------- */
@@ -926,9 +941,15 @@
     padding: 16px 24px !important;
   }
 
-  /* Subject line: Gmail's 22px regular, not Outlook's bold 20px. */
-  [data-app-section="ConversationContainer"] [role="heading"],
-  #ReadingPaneContainerId [role="heading"] {
+  /* Subject line: Gmail's 22px regular, not Outlook's bold 20px.
+
+     [role="heading"] is NOT just the subject in the reading pane. Outlook also
+     marks the message's date as a level-3 heading, so this rule was blowing the
+     date up to 22px — the excluded node below. If something else in the pane
+     turns up oversized, suspect this rule first and check the element for
+     role="heading" before adding anything new. */
+  [data-app-section="ConversationContainer"] [role="heading"]:not([data-testid="SentReceivedSavedTime"]),
+  #ReadingPaneContainerId [role="heading"]:not([data-testid="SentReceivedSavedTime"]) {
     color: var(--gm-text) !important;
     font-size: 22px !important;
     font-weight: 400 !important;
@@ -1020,6 +1041,57 @@
      surface variable — see the FluentProvider note in section 2. */
   [role="main"][aria-label="Reading Pane"] [aria-label="Email message"] [class*="fui-FluentProvider"] {
     --neutralPrimarySurface: var(--gm-message-bg);
+  }
+
+  /* The date/time in an open message's header, down to Gmail's 12px grey.
+     Gmail's own header is a 14px bold sender name with the date as quiet 12px
+     metadata on the right; Outlook gives both the same size — and worse, marks
+     the date as a heading, so the subject rule above was scaling it to 22px.
+
+     Verified from the live DOM:
+       <div data-testid="SentReceivedSavedTime" role="heading" aria-level="3"
+            id="MSG_QAEIJBK8QAA_DATETIME">Thu 9/17/2026 2:52 PM</div>
+     data-testid is the hook — a real attribute, not a hash. The id is the
+     fallback: per-message, but it always ends in _DATETIME. The three classes
+     on the node (AL_OM RV8_A I1wdR) are build hashes and deliberately unused.
+
+     This has to outrank the heading rule, which carries !important: both hooks
+     are attribute selectors under the pane landmark, so they already do, and
+     the heading rule excludes this node as well. */
+  [role="main"][aria-label="Reading Pane"] [data-testid="SentReceivedSavedTime"],
+  [role="main"][aria-label="Reading Pane"] [id$="_DATETIME"] {
+    color: var(--gm-text-secondary) !important;
+    font-size: var(--gm-read-date-font) !important;
+    font-weight: 400 !important;
+    line-height: var(--gm-read-date-line) !important;
+  }
+
+  /* The letter's text: Arial, not the chrome font. This is the one place the
+     Google Sans / Roboto stack is wrong — Gmail's message body inherits
+     "Arial, Helvetica, sans-serif" from its body rule, so a mail with no font
+     of its own reads as Arial while the app around it does not.
+
+     Deliberately NOT a descendant sweep: the font goes on the body container
+     and inherits down, so any font-family the sender's own HTML carries still
+     wins, exactly as it does in Gmail. A "* { font-family: … !important }"
+     inside the body would flatten every mail to one typeface and would also
+     break the private-use glyphs OWA renders inside message content.
+
+     The hooks, most to least specific:
+       [id^="UniqueMessageBody"]   OWA's wrapper around the rendered mail — a
+                                   real id, not a hash, and stable for years
+       [aria-label="Message body"] the same node in newer builds, and the
+                                   compose editor
+       .allowTextSelection         OWA's unhashed class on selectable mail text
+       .PlainText                  plain-text mails, which get no wrapper
+     All four are listed rather than picked because only one of them may exist
+     in a given build; matching none of them costs nothing. */
+  [id^="UniqueMessageBody"],
+  [aria-label="Message body"],
+  [role="main"][aria-label="Reading Pane"] .allowTextSelection,
+  [role="main"][aria-label="Reading Pane"] .PlainText {
+    font-family: var(--gm-font-body) !important;
+    line-height: var(--gm-body-line);
   }
 
   /* The Reply / Reply all / Forward toolbar across the message header. The

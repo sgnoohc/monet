@@ -1,4 +1,4 @@
-/* @version 2.14.0 */
+/* @version 2.16.0 */
 
 /* Fonts are Gmail's real typefaces — Google Sans for chrome, Roboto for
    message text — embedded as data URIs by fonts.sh into fonts.css, which
@@ -125,6 +125,21 @@
   /* Gmail uses Google Sans for chrome and Roboto for message text. */
   --gm-font:      "Google Sans", Roboto, RobotoDraft, Helvetica, Arial, sans-serif;
   --gm-font-text: "Google Sans Text", "Google Sans", Roboto, Arial, sans-serif;
+  /* The letter itself is NOT Roboto in Gmail. Gmail's own stylesheet sets
+     "body, td, input, textarea { font-family: Arial, Helvetica, sans-serif }"
+     and the message body inherits it, which is why a plain mail in Gmail reads
+     as Arial while the chrome around it is Google Sans. Applied in section 6,
+     on the body container only, so a sender's own font-family still wins the
+     way it does in Gmail. */
+  --gm-font-body: Arial, Helvetica, sans-serif;
+  --gm-body-line: 1.5;          /* Gmail's "font: small/1.5" */
+
+  /* The date on an open message. Gmail sets the whole right-hand metadata
+     line — "at 10:23 AM (2 hours ago)" — at 12px in the secondary grey,
+     against a 14px sender name; Outlook renders it at the header's base size,
+     so it competes with the sender. */
+  --gm-read-date-font: 12px;
+  --gm-read-date-line: 16px;
 }
 
 /* -- 1. fluent design tokens ----------------------------------------------- */
@@ -879,9 +894,15 @@ div[role="option"][aria-label*="Unread"] span.ASFJj {
   padding: 16px 24px !important;
 }
 
-/* Subject line: Gmail's 22px regular, not Outlook's bold 20px. */
-[data-app-section="ConversationContainer"] [role="heading"],
-#ReadingPaneContainerId [role="heading"] {
+/* Subject line: Gmail's 22px regular, not Outlook's bold 20px.
+
+   [role="heading"] is NOT just the subject in the reading pane. Outlook also
+   marks the message's date as a level-3 heading, so this rule was blowing the
+   date up to 22px — the excluded node below. If something else in the pane
+   turns up oversized, suspect this rule first and check the element for
+   role="heading" before adding anything new. */
+[data-app-section="ConversationContainer"] [role="heading"]:not([data-testid="SentReceivedSavedTime"]),
+#ReadingPaneContainerId [role="heading"]:not([data-testid="SentReceivedSavedTime"]) {
   color: var(--gm-text) !important;
   font-size: 22px !important;
   font-weight: 400 !important;
@@ -973,6 +994,57 @@ button[title="Forward"] {
    surface variable — see the FluentProvider note in section 2. */
 [role="main"][aria-label="Reading Pane"] [aria-label="Email message"] [class*="fui-FluentProvider"] {
   --neutralPrimarySurface: var(--gm-message-bg);
+}
+
+/* The date/time in an open message's header, down to Gmail's 12px grey.
+   Gmail's own header is a 14px bold sender name with the date as quiet 12px
+   metadata on the right; Outlook gives both the same size — and worse, marks
+   the date as a heading, so the subject rule above was scaling it to 22px.
+
+   Verified from the live DOM:
+     <div data-testid="SentReceivedSavedTime" role="heading" aria-level="3"
+          id="MSG_QAEIJBK8QAA_DATETIME">Thu 9/17/2026 2:52 PM</div>
+   data-testid is the hook — a real attribute, not a hash. The id is the
+   fallback: per-message, but it always ends in _DATETIME. The three classes
+   on the node (AL_OM RV8_A I1wdR) are build hashes and deliberately unused.
+
+   This has to outrank the heading rule, which carries !important: both hooks
+   are attribute selectors under the pane landmark, so they already do, and
+   the heading rule excludes this node as well. */
+[role="main"][aria-label="Reading Pane"] [data-testid="SentReceivedSavedTime"],
+[role="main"][aria-label="Reading Pane"] [id$="_DATETIME"] {
+  color: var(--gm-text-secondary) !important;
+  font-size: var(--gm-read-date-font) !important;
+  font-weight: 400 !important;
+  line-height: var(--gm-read-date-line) !important;
+}
+
+/* The letter's text: Arial, not the chrome font. This is the one place the
+   Google Sans / Roboto stack is wrong — Gmail's message body inherits
+   "Arial, Helvetica, sans-serif" from its body rule, so a mail with no font
+   of its own reads as Arial while the app around it does not.
+
+   Deliberately NOT a descendant sweep: the font goes on the body container
+   and inherits down, so any font-family the sender's own HTML carries still
+   wins, exactly as it does in Gmail. A "* { font-family: … !important }"
+   inside the body would flatten every mail to one typeface and would also
+   break the private-use glyphs OWA renders inside message content.
+
+   The hooks, most to least specific:
+     [id^="UniqueMessageBody"]   OWA's wrapper around the rendered mail — a
+                                 real id, not a hash, and stable for years
+     [aria-label="Message body"] the same node in newer builds, and the
+                                 compose editor
+     .allowTextSelection         OWA's unhashed class on selectable mail text
+     .PlainText                  plain-text mails, which get no wrapper
+   All four are listed rather than picked because only one of them may exist
+   in a given build; matching none of them costs nothing. */
+[id^="UniqueMessageBody"],
+[aria-label="Message body"],
+[role="main"][aria-label="Reading Pane"] .allowTextSelection,
+[role="main"][aria-label="Reading Pane"] .PlainText {
+  font-family: var(--gm-font-body) !important;
+  line-height: var(--gm-body-line);
 }
 
 /* The Reply / Reply all / Forward toolbar across the message header. The

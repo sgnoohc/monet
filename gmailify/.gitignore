@@ -1,4 +1,15 @@
 # Personal-machine assets — see README "Making it look exactly like the screenshots".
 background.css
+# Drop-in background photo: background.jpg / .png / .heic / …
+background.jpg
+background.jpeg
+background.png
+background.heic
+background.heif
+background.webp
+background.tif
+background.tiff
+background.gif
+background.bmp
 fonts.local.css
 gmailify.local.user.css

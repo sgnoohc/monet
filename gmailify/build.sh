@@ -10,6 +10,18 @@ OUT=${2:-gmailify.user.css}
 VERSION=$(sed -n 's|^/\* @version \(.*\) \*/|\1|p' "$SRC" | head -1)
 VERSION=${VERSION:-0.1.0}
 
+# Drop-in background: an image named background.jpg / .png / .heic / … sitting
+# in this directory is embedded automatically, and re-embedded whenever it is
+# newer than the background.css generated from it. Only the LOCAL build carries
+# it — see the note on the embed below.
+DROPPED=$(./background.sh --source 2>/dev/null || true)
+if [ -n "$DROPPED" ] && [ "${LOCAL:-0}" = "1" ]; then
+  if [ ! -f background.css ] || [ "$DROPPED" -nt background.css ]; then
+    echo "background: embedding $DROPPED"
+    ./background.sh
+  fi
+fi
+
 {
   cat <<HEADER
 /* ==UserStyle==
@@ -47,3 +59,8 @@ HEADER
 } > "$OUT"
 
 echo "built $OUT (v${VERSION}, $(wc -l < "$OUT") lines)"
+
+if [ -n "$DROPPED" ] && [ "${LOCAL:-0}" != "1" ]; then
+  echo "note: $DROPPED is ignored by this build — it only goes into the local one:"
+  echo "      LOCAL=1 ./build.sh gmailify.css gmailify.local.user.css"
+fi
