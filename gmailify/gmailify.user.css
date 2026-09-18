@@ -1,7 +1,7 @@
 /* ==UserStyle==
 @name           gmailify — Outlook as Gmail
 @namespace      github.com/sgnoohc/monet
-@version        2.9.0
+@version        2.14.0
 @description    Reskins outlook.cloud.microsoft to look like Gmail.
 @author         sgnoohc
 @license        MIT
@@ -45,7 +45,7 @@
     font-display: block;
     src: url(data:font/woff2;base64,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) format('woff2');
   }
-  /* @version 2.9.0 */
+  /* @version 2.14.0 */
 
   /* Fonts are Gmail's real typefaces — Google Sans for chrome, Roboto for
      message text — embedded as data URIs by fonts.sh into fonts.css, which
@@ -120,9 +120,12 @@
        so they show it at full strength, and read rows are knocked back with a
        9% BLACK overlay — not a weaker white one. Hover changes no background at
        all, only the shadow. */
-    --gm-pane:        rgba(255, 255, 255, .52);   /* Gmail's own is .8; lower
+    --gm-pane:        rgba(255, 255, 255, .64);   /* Gmail's own is .8; lower
                                                      because Outlook stacks more
                                                      surfaces inside the pane */
+    --gm-list-pane:   rgba(255, 255, 255, .76);   /* message list, on its own so
+                                                     it can sit more solid than
+                                                     the reading pane */
     --gm-nav-veil:    transparent;                /* folder pane — fully clear */
     --gm-nav-text:    #ffffff;                    /* folder pane label colour */
     --gm-nav-shadow:  0 1px 2px rgba(0, 0, 0, .45);
@@ -130,6 +133,8 @@
     --gm-row-unread:  transparent;                /* .zE        */
     --gm-row-select:  #c2dbff;                    /* .x7        */
     --gm-row-divider: rgba(100, 121, 143, .12);   /* .zA shadow */
+    --gm-row-flagged: rgba(255, 214, 92, .42);    /* flagged rows */
+    --gm-flag-bar:    #f4b400;                    /* Gmail's star yellow */
 
     /* lines */
     --gm-border:          #dadce0;
@@ -141,18 +146,19 @@
                                      line up with the message list's. Eyeballed —
                                      gmailify.panes() prints the exact value. */
     --gm-title-bg:        transparent;  /* the subject box's own fill */
+    --gm-message-bg:      #ffffff;      /* each letter in a thread */
+    --gm-message-gap:     8px;
+    --gm-toast-min-height: 96px;  /* new-mail toast floor */
     --gm-radius-sm:       8px;
-    --gm-row-height:      28px;   /* 20 + 4 + 4 */
+    --gm-row-height:      46px;   /* Outlook's own is 40px; +15% */
 
     /* Message list density. Measured off a Gmail inbox: rows sit on a 25px
        pitch — 14px text on 20px leading with 2px of padding. Outlook's default
        single-line row is ~43px, and almost all of that difference is padding
        and internal margins rather than text. */
-    --gm-row-font:        14px;   /* Gmail's own .875rem. Raising this changes
-                                     row height, which the windowed list has to
-                                     agree with — go up in small steps. */
-    --gm-row-line:        20px;   /* .xY height */
-    --gm-row-pad-y:       4px;    /* .zA padding */
+    --gm-row-font:        16px;   /* Gmail's own is 14px (.875rem); +15% */
+    --gm-row-line:        23px;   /* Gmail .xY is 20px; +15% */
+    --gm-row-pad-y:       5px;    /* Gmail .zA is 4px; +15% */
 
     /* Search field. --gm-search-offset shifts its left edge; 0 lines it up with
        the end of the header's branding block, which is where the message list
@@ -339,28 +345,23 @@
 
   /* Inside a row, only the row itself carries colour — its cells and spans stay
      clear so the row's alpha is the only veil between you and the background. */
-  div[role="row"] *,
-  div[role="option"] *,
+  div[role="option"] *:not([class*="fui-Tag"]),
   [role="gridcell"],
-  [role="gridcell"] * {
+  [role="gridcell"] *:not([class*="fui-Tag"]) {
     background-color: transparent !important;
   }
 
-  /* Category chips (UFL / CERN …) carry their colour in a style attribute, and
-     they only started to show once the row behind them went translucent — they
-     were always opaque, just camouflaged against a white pane. Gmail's
-     equivalent is grey text with no fill. */
-  div[role="row"] [style*="background"],
-  div[role="option"] [style*="background"],
-  [role="gridcell"] [style*="background"],
-  [class*="categor" i],
-  [class*="categor" i] * {
+  /* Inline-styled fills inside a row are cleared — EXCEPT the category tags.
+     Those are fui-Tag elements that colour themselves from --category-* custom
+     properties in a style attribute, and they are meant to be solid: the label
+     colour is the information. Everything else that paints itself inline goes,
+     so the row's own alpha stays the only veil. */
+  div[role="option"] [style*="background"]:not([class*="fui-Tag"]),
+  [role="gridcell"] [style*="background"]:not([class*="fui-Tag"]) {
     background: transparent !important;
     background-color: transparent !important;
     background-image: none !important;
-    border-color: transparent !important;
     box-shadow: none !important;
-    color: var(--gm-text-secondary) !important;
   }
 
   /* One flat canvas. OWA stacks several differently-shaded containers and can
@@ -400,6 +401,13 @@
      [role="complementary"] catches it whatever it turns out to be called. */
   [role="main"][aria-label="Reading Pane"] {
     margin-top: var(--gm-read-top) !important;
+  }
+
+  /* The message list carries its own alpha — text density is higher here, so it
+     wants a more solid ground than the reading pane, whose letters are opaque
+     cards anyway. */
+  [role="complementary"][aria-label="Message list"] {
+    background: var(--gm-list-pane) !important;
   }
 
   [role="complementary"],
@@ -713,22 +721,21 @@
        Outlook's defaults are nearly Gmail's already: firstRowHeight 20px and
        firstRowVerticalPadding 4px are exactly Gmail's .xY height and .zA
        padding. Only the 40px minimum needs moving. */
-    /* ROW HEIGHT IS LEFT ALONE — and this is deliberate.
-       Setting --condensedRowMinHeight to 28px did change the row height, but it
-       also changed how many rows the virtualiser renders: 42 rows in a snapshot
-       before, 57 after, at the same window size. The scroller estimates its
-       content height from the row height it expects; when the rendered height
-       disagrees it corrects, re-renders, and measures again — rows blink in and
-       out. No JS row-height constant is visible in the shipped bundles, so this
-       could not be proven from the source, only from that row count.
-       Outlook's own Settings -> Mail -> Layout -> Message spacing changes the
-       height on BOTH sides at once, which CSS cannot do. Use that.
+    /* Row geometry, +15%. This goes through OWA's own variables, never through
+       height or padding on the row itself — the list is windowed and measures
+       rows to decide how many fit, so a size it does not know about makes it
+       render, measure, disagree and re-render.
 
+       Setting these caused flickering once before. The evidence since is that it
+       was NOT the cause: reverting them in 1.9.0 did not stop it, and un-hiding
+       the message-list toolbar in 2.0.0 did. If the flicker comes back, these
+       four lines are still the first thing to comment out — and Outlook's
+       Settings -> Mail -> Layout -> Message spacing changes the height on both
+       sides at once, which CSS cannot. */
     --condensedRowMinHeight: var(--gm-row-height);
     --firstRowHeight: var(--gm-row-line);
     --firstRowVerticalPadding: var(--gm-row-pad-y);
     --condensedRowPaddingBottom: var(--gm-row-pad-y);
-    */
 
     --fontFamilyBase: var(--gm-font-text);
     --fontSizeBase100: var(--gm-row-font);
@@ -815,6 +822,20 @@
     z-index: 2 !important;
   }
 
+  /* Flagged rows get a yellow wash and a bar down the left edge. The row
+     announces it: aria-label begins "Flagged …" (and reads "Flagged Pinned …"
+     when it is both), so no class hash is involved.
+
+     This comes before the unread rule deliberately — an unread flagged message
+     should still read as unread, so the unread rule below wins on the background
+     and this contributes the bar. */
+  div[role="option"][aria-label^="Flagged"],
+  div[role="option"][aria-label*="Flagged"] {
+    background: var(--gm-row-flagged) !important;
+    box-shadow: inset 3px 0 0 0 var(--gm-flag-bar),
+                inset 0 -1px 0 0 var(--gm-row-divider) !important;
+  }
+
   /* Unread rows: white ground, black bold text — Gmail's core list signal. */
   /* Unread rows announce themselves: aria-label starts with "Unread". The
      previous :has([class*="unread"]) form re-ran on every row mutation for no
@@ -825,6 +846,12 @@
     box-shadow: inset 0 -1px 0 0 var(--gm-row-divider) !important;
     color: var(--gm-text) !important;
     font-weight: 700 !important;
+  }
+
+  /* Unread AND flagged: keep the yellow bar, take the unread ground. */
+  div[role="option"][aria-label*="Unread"][aria-label*="Flagged"] {
+    box-shadow: inset 3px 0 0 0 var(--gm-flag-bar),
+                inset 0 -1px 0 0 var(--gm-row-divider) !important;
   }
 
   div[role="option"][aria-label*="Unread"] span {
@@ -880,14 +907,10 @@
 
   /* Category tags (UFL / CERN …) — Gmail's equivalent chip is small and grey,
      not a coloured badge competing with the subject. */
-  [class*="categor" i] [class*="pill" i],
-  [aria-label*="category" i],
-  [data-app-section="CategoryTag"] {
-    background: transparent !important;
-    border: none !important;
-    color: var(--gm-text-secondary) !important;
+  /* Category tags keep Outlook's own solid colours — no restyling here. Only
+     the type is nudged to match the row. */
+  [class*="fui-Tag"] {
     font-size: 12px !important;
-    font-weight: 400 !important;
   }
 
   /* Gmail has no per-row pill/card chrome. */
@@ -975,11 +998,28 @@
     box-shadow: none !important;
   }
 
-  [role="main"][aria-label="Reading Pane"] [id="focused"],
-  [data-app-section="ConversationContainer"] [id="focused"] {
+  /* Each letter in a thread is its own solid white card, the way Gmail separates
+     the messages of a conversation. [aria-label="Email message"] is the per-message
+     hook — the focused one also carries id="focused", but every message in the
+     thread has the label, so the card style applies to all of them rather than
+     only the open one.
+
+     The white is opaque on purpose: it is the reading surface, and letting the
+     background photo through behind body text is what made it hard to read.
+     Everything around the cards — the pane, the subject — stays translucent. */
+  [role="main"][aria-label="Reading Pane"] [aria-label="Email message"] {
+    background: var(--gm-message-bg) !important;
     border: none !important;
-    border-radius: 0 !important;
+    border-radius: var(--gm-radius-sm) !important;
     box-shadow: none !important;
+    margin-bottom: var(--gm-message-gap) !important;
+    overflow: hidden !important;
+  }
+
+  /* Their Fluent providers must not repaint the card with the pane's cleared
+     surface variable — see the FluentProvider note in section 2. */
+  [role="main"][aria-label="Reading Pane"] [aria-label="Email message"] [class*="fui-FluentProvider"] {
+    --neutralPrimarySurface: var(--gm-message-bg);
   }
 
   /* The Reply / Reply all / Forward toolbar across the message header. The
@@ -1043,22 +1083,84 @@
 
   /* New-mail toast. Outlook sizes it for Segoe UI; Google Sans sits taller, so
      the text overflows a box with a fixed height and the card reads as clipped.
-     Letting it size to its content fixes it without touching the type.
-     UNVERIFIED: no saved page captured a toast, so this is written against the
-     NotificationPane section alone — if it is still clipped, save a page while
-     one is on screen and it can be targeted exactly. */
+
+     The earlier version of this rule only reached NotificationPane and its first
+     two levels of children, which was not enough — whatever carries the height is
+     deeper, or the toast is portalled elsewhere entirely. So: every element in
+     the subtree is allowed to size to its content, and Fluent's own Toast classes
+     are matched as well in case it is rendered outside the section. Images and
+     icons are excluded, since height:auto would stretch them.
+
+     --gm-toast-min-height is a floor, for the case where the clipping comes from
+     a parent that measures rather than from the text overflowing.
+
+     STILL UNVERIFIED: no saved page has captured a toast. gmailify.toast() in
+     inspect.js prints the real chain while one is on screen. */
   [data-app-section="NotificationPane"],
-  [data-app-section="NotificationPane"] > div,
-  [data-app-section="NotificationPane"] > div > div {
+  [data-app-section="NotificationPane"] *:not(img):not(svg):not(i):not(canvas),
+  [class*="fui-Toast"],
+  [class*="fui-Toast"] *:not(img):not(svg):not(i):not(canvas) {
     height: auto !important;
     max-height: none !important;
     min-height: 0 !important;
     overflow: visible !important;
   }
 
-  [data-app-section="NotificationPane"] [class*="fui-FluentProvider"] {
+  [data-app-section="NotificationPane"] > div,
+  [class*="fui-Toast"] {
+    min-height: var(--gm-toast-min-height) !important;
+  }
+
+  [data-app-section="NotificationPane"] [class*="fui-FluentProvider"],
+  [class*="fui-Toast"] {
     --neutralPrimarySurface: var(--gm-surface);   /* a toast floats over the app,
                                                      so it stays opaque */
+  }
+
+  /* Popups stay opaque. Search suggestions, recipient pickers, menus and dialogs
+     are text on a small floating surface — the translucency that suits a full
+     pane makes them unreadable against whatever is behind them.
+
+     Most of them portal into Fabric's layer host, div.ms-Layer with
+     data-portal-element="true", so restoring the surface variables there covers
+     the ones whose markup we have never seen. The role-based rules below catch
+     any that render in place instead.
+
+     [role="listbox"] is deliberately qualified: the ONLY listbox in Outlook is
+     the message list itself (aria-label "Message list …"), so an unqualified
+     rule would turn the inbox solid white. */
+  [data-portal-element="true"],
+  [data-portal-element="true"] [class*="fui-FluentProvider"] {
+    --neutralPrimarySurface: var(--gm-surface);
+    --neutralSecondarySurface: var(--gm-surface);
+    --colorNeutralBackground1: var(--gm-surface);
+    --whiteTranslucent40: var(--gm-surface);
+    --whiteTranslucent50: var(--gm-surface);
+    --whiteTranslucent65: var(--gm-surface);
+    --whiteTranslucent70: var(--gm-surface);
+  }
+
+  [data-portal-element="true"] [class*="Callout"],
+  [data-portal-element="true"] [class*="Suggestions"],
+  [class*="fui-PopoverSurface"],
+  [class*="fui-MenuPopover"],
+  [class*="fui-Dropdown__listbox"],
+  [class*="fui-Combobox__listbox"],
+  [role="listbox"]:not([aria-label^="Message list"]),
+  [role="menu"],
+  [role="dialog"] {
+    backdrop-filter: none !important;
+    background-color: var(--gm-surface) !important;
+    box-shadow: 0 1px 3px rgba(60, 64, 67, .3), 0 4px 8px rgba(60, 64, 67, .15) !important;
+    color: var(--gm-text) !important;
+  }
+
+  /* The search suggestion list hangs inside the header, where section 3 clears
+     every background at zero specificity — it needs its own opaque rule. */
+  #OwaTitleBar [role="listbox"]:not([aria-label^="Message list"]),
+  #OwaTitleBar [class*="Callout"],
+  #OwaTitleBar [class*="Suggestions"] {
+    background-color: var(--gm-surface) !important;
   }
 
   /* -- 8. declutter ---------------------------------------------------------- */

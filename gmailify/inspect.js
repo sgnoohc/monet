@@ -177,6 +177,26 @@
     return Math.round(a.top - b.top);
   };
 
-  window.gmailify = { check, hooks, at, tokens, rail, row, opaque, panes };
-  console.log('gmailify: try gmailify.check(), gmailify.hooks(), gmailify.at(), gmailify.rail(), gmailify.row(), gmailify.opaque(), gmailify.panes(), gmailify.tokens()');
+  // Run this WHILE a new-mail toast is on screen. Prints what the toast
+  // actually is and which ancestor is constraining its height.
+  const toast = () => {
+    const found = document.querySelector(
+      '[data-app-section="NotificationPane"], [class*="fui-Toast"], [role="alert"]');
+    if (!found) return console.warn('no toast on screen — trigger one and re-run');
+    console.log('matched:', found.tagName.toLowerCase(),
+      found.getAttribute('data-app-section') || found.className);
+    for (let el = found; el && el !== document.body; el = el.parentElement) {
+      const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+      const clipped = el.scrollHeight > Math.ceil(r.height) + 1;
+      console.log(
+        `${clipped ? 'CLIPPED ' : '        '}<${el.tagName.toLowerCase()}` +
+        `${el.id ? '#' + el.id : ''} ${(typeof el.className === 'string' ? el.className : '').slice(0, 40)}> ` +
+        `h=${Math.round(r.height)} scrollH=${el.scrollHeight} ` +
+        `css-height=${cs.height} max=${cs.maxHeight} overflow=${cs.overflow} lh=${cs.lineHeight}`);
+    }
+    return found;
+  };
+
+  window.gmailify = { check, hooks, at, tokens, rail, row, opaque, panes, toast };
+  console.log('gmailify: try gmailify.check(), gmailify.hooks(), gmailify.at(), gmailify.rail(), gmailify.row(), gmailify.opaque(), gmailify.panes(), gmailify.toast(), gmailify.tokens()');
 })();
