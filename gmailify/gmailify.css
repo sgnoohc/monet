@@ -1,4 +1,4 @@
-/* @version 2.14.0 */
+/* @version 2.14.1 */
 
 /* Fonts are Gmail's real typefaces — Google Sans for chrome, Roboto for
    message text — embedded as data URIs by fonts.sh into fonts.css, which
@@ -726,11 +726,21 @@ div[role="option"],
    If you want them gone, do it in Outlook — the column headers come off with
    a right-click on the header strip — not with display:none here. */
 
-/* Nor the briefing / "what's new in your email" banner above the list. */
+/* Nor the briefing / "what's new in your email" banner above the list.
+
+   There used to be an [aria-label*="briefing" i] here as a catch-all. It ate
+   real mail: a message row's aria-label is its whole rendered content — sender,
+   subject and the preview snippet — so any message with "briefing" anywhere in
+   it matched and was display:none'd out of the list. A daily briefing mailed to
+   yourself vanished with it. Substring aria-label matches must never be able to
+   reach a row; name the banner by data-app-section instead.
+
+   Only UpsellBannerSection is verified against a saved page; the other three
+   are guesses kept because they cost nothing — they are exact section names,
+   so the worst they can do is match nothing. */
 [data-app-section="UpsellBannerSection"],   /* verified */
 [data-app-section="BriefingBanner"],
 [data-app-section="MessageListBanner"],
-[aria-label*="briefing" i],
 [data-app-section="TipBanner"] {
   display: none !important;
 }

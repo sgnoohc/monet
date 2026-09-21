@@ -47,7 +47,7 @@ like Gmail. Read this before installing it, changing it, or debugging it.
 block). Never edit `gmailify.user.css` or `fonts.css` by hand — both are
 generated. After a change the user must reinstall from the same URL and reload.
 
-Five rules, each of which was learned by breaking the app:
+Six rules, each of which was learned by breaking the app:
 
 1. **Fix the variable, never sweep the tree.** OWA paints through its own
    variables — `--neutralPrimarySurface` (291 references), `--whiteTranslucent65`
@@ -77,6 +77,13 @@ Five rules, each of which was learned by breaking the app:
 
 5. **`display: none` on a container the list measures brings the flicker back.**
    The message-list toolbar is deliberately left visible and styled to blend.
+
+6. **Never match a row on an aria-label *substring*.** A row's `aria-label` is
+   its entire rendered content — sender, subject and preview snippet — so a
+   selector like `[aria-label*="briefing" i]`, meant for a banner, also matched
+   a message whose subject was "Daily Briefing" and hid it from the list. Only
+   `^=` on the status words OWA puts first (`Unread`, `Flagged`) is safe; for
+   anything else, name the element by `data-app-section` or `role`.
 
 ## Where the facts come from
 
