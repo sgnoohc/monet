@@ -36,9 +36,14 @@ redistribute Google's assets:
 
 ```sh
 ./fonts.sh --google-sans                              # Google Sans + Google Sans Text
-./background.sh ~/Pictures/bg.jpg                     # a background photo
+cp ~/Pictures/bg.jpg background.jpg                   # a background photo
 LOCAL=1 ./build.sh gmailify.css gmailify.local.user.css
 ```
+
+Any image dropped into this directory as `background.<ext>` — `.jpg`, `.jpeg`,
+`.png`, `.heic`, `.heif`, `.webp`, `.tif`, `.tiff`, `.gif`, `.bmp` — is picked
+up by the `LOCAL=1` build, downscaled, and embedded. Replace the file and
+rebuild and it re-embeds itself; the drop-in names are gitignored too.
 
 Install `gmailify.local.user.css` instead. It, `fonts.local.css` and
 `background.css` are gitignored, and the two builds use separate font files so a
@@ -64,7 +69,8 @@ app from flickering or losing its icons.
 | `CLAUDE.md` | agent-facing notes: install, hooks, and the rules not to break |
 | `build.sh` | regenerates `gmailify.user.css` (fonts.css + gmailify.css) |
 | `fonts.sh` | re-downloads the latin subsets and rebuilds `fonts.css` |
-| `background.css` | generated: background photo as a data URI (`./background.sh img.jpg`) |
+| `background.<ext>` | gitignored, optional — drop a photo in and the local build embeds it |
+| `background.css` | generated: background photo as a data URI (`./background.sh`) |
 | `background.sh` | downscales an image and embeds it as `--gm-bg-image` |
 | `inspect.js` | DevTools helper for finding/repairing selectors |
 
@@ -86,6 +92,14 @@ Knobs added for list density and search shape:
 | `--gm-nav-width` | folder pane width; aligns the search field's left edge to the list |
 | `--gm-search-height` / `--gm-search-radius` | search pill size and roundness |
 
+Reading pane type:
+
+| variable | does |
+| --- | --- |
+| `--gm-font-body` | the open letter's typeface — Arial, which is what Gmail renders mail in, not the Google Sans of the chrome |
+| `--gm-body-line` | body leading (Gmail's `font: small/1.5`) |
+| `--gm-read-date-font` / `--gm-read-date-line` | the date beside the sender on an open message; Gmail keeps it at 12px against a 14px name |
+
 Background and translucency:
 
 | variable | does |
@@ -94,12 +108,18 @@ Background and translucency:
 | `--gm-pane` | list / reading pane veil — lower alpha shows more background |
 | `--gm-row-read` / `--gm-row-unread` | row translucency, read vs unread |
 
-To use your own photo:
+To use your own photo, drop it in named `background.<ext>` and build:
 
 ```sh
-./background.sh ~/Pictures/photo.jpg   # downscales, embeds, rewrites background.css
-./build.sh
+cp ~/Pictures/photo.jpg background.jpg
+LOCAL=1 ./build.sh gmailify.css gmailify.local.user.css
 ```
+
+`build.sh` runs `background.sh` for you whenever the dropped-in image is newer
+than the `background.css` generated from it. An explicit path still works —
+`./background.sh ~/Pictures/photo.jpg [width]` — and only the `LOCAL=1` build
+embeds the photo, so a plain `./build.sh` never bakes it into the committed
+`gmailify.user.css`.
 
 A web page cannot load `file://` images, which is why it has to be inlined
 rather than referenced.
@@ -117,6 +137,9 @@ itself, then let this stylesheet handle the look.
 
 Font is swapped through Fluent's `--fontFamilyBase`, never through element
 selectors — see the warning comment in §2 before adding any `font-family` rule.
+The message body is the one exception: Gmail's mail text is Arial, not Roboto,
+so §6 sets `--gm-font-body` on the body container alone and lets it inherit,
+which keeps a sender's own `font-family` winning the way it does in Gmail.
 
 The single highest-leverage block is **§1 fluent**: OWA is built on Fluent UI v9,
 so remapping `--colorNeutralBackground1`, `--colorBrandBackground` and friends
@@ -139,6 +162,13 @@ To repair: open Outlook, paste `inspect.js` into the DevTools console, then
 * `gmailify.rail()` — locates the left app rail and prints selectors for it
 * `gmailify.row()` — full skeleton of one message-list row: roles, heights,
   padding, line-height, so density work stops being guesswork
+* `gmailify.date()` — with a message open: every date-shaped node in the header
+  with its computed size and a paste-ready selector, plus which of the message
+  body hooks this build actually has
+
+`data-testid` is worth grepping too — Outlook leaves descriptive test ids on a
+few nodes that carry no other attribute, and it is how the message date
+(`[data-testid="SentReceivedSavedTime"]`) was pinned.
 * `gmailify.tokens()` — the Fluent variables this build actually reads
 
 Prefer a new attribute-based selector over a hashed class, even a clumsy one.
