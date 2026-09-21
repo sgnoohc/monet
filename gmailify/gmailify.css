@@ -1,4 +1,4 @@
-/* @version 2.16.0 */
+/* @version 2.31.0 */
 
 /* Fonts are Gmail's real typefaces — Google Sans for chrome, Roboto for
    message text — embedded as data URIs by fonts.sh into fonts.css, which
@@ -102,6 +102,9 @@
   --gm-message-bg:      #ffffff;      /* each letter in a thread */
   --gm-message-gap:     8px;
   --gm-toast-min-height: 96px;  /* new-mail toast floor */
+  --gm-toast-width:      420px; /* and its width floor — Outlook sizes both for
+                                   Segoe UI, which is narrower than Google Sans */
+  --gm-reminder-width:   480px; /* the reminders flyout */
   --gm-radius-sm:       8px;
   --gm-row-height:      46px;   /* Outlook's own is 40px; +15% */
 
@@ -140,6 +143,18 @@
      so it competes with the sender. */
   --gm-read-date-font: 12px;
   --gm-read-date-line: 16px;
+
+  /* The subject FIELD in compose is not the subject LINE of a read message:
+     Gmail types it at body size, not as a 22px heading. */
+  --gm-compose-subject-font: 14px;
+  --gm-compose-subject-line: 20px;
+
+  /* Attachment chip. Gmail's is ~230px; this is the cap, and a chip with a
+     short filename sizes below it. The box lives HERE, on the chip, and
+     nowhere above it — see section 6. */
+  --gm-attach-width: 300px;
+  --gm-attach-bg:     #ffffff;
+  --gm-attach-border: var(--gm-border);
 }
 
 /* -- 1. fluent design tokens ----------------------------------------------- */
@@ -896,17 +911,57 @@ div[role="option"][aria-label*="Unread"] span.ASFJj {
 
 /* Subject line: Gmail's 22px regular, not Outlook's bold 20px.
 
-   [role="heading"] is NOT just the subject in the reading pane. Outlook also
-   marks the message's date as a level-3 heading, so this rule was blowing the
-   date up to 22px — the excluded node below. If something else in the pane
-   turns up oversized, suspect this rule first and check the element for
-   role="heading" before adding anything new. */
-[data-app-section="ConversationContainer"] [role="heading"]:not([data-testid="SentReceivedSavedTime"]),
-#ReadingPaneContainerId [role="heading"]:not([data-testid="SentReceivedSavedTime"]) {
+   [role="heading"] is NOT the subject in the reading pane — it is a whole
+   family. Outlook marks every piece of a message's metadata as a LEVEL-3
+   heading, one element per field, ids following MSG_<convid>_<FIELD>:
+
+     MSG_…_FROM      the sender line
+     MSG_…_DATETIME  the date
+     MSG_…_SUBJECT   the subject — the only one this rule wants
+
+   Sizing all of them scaled the date to 22px, and then the From line, where
+   the damage was odder: the sender chips inside it carry their own size, so
+   only the bare "on behalf of" text node between them inherited the 22px and
+   the line came out half-giant.
+
+   So the subject is named, not inferred: aria-level 3 is excluded wholesale —
+   that is the metadata family, and new fields join it rather than breaking
+   this — and the subject is picked up by its id suffix regardless of level, in
+   case Outlook files it at level 3 too. Anything else in the pane that turns
+   up oversized is this rule: check the element for role="heading" before
+   writing a new one. */
+[data-app-section="ConversationContainer"] [role="heading"]:not([aria-level="3"]),
+#ReadingPaneContainerId [role="heading"]:not([aria-level="3"]),
+[role="main"][aria-label="Reading Pane"] [id$="_SUBJECT"]:not(input):not(textarea):not([role="textbox"]):not([contenteditable]) {
   color: var(--gm-text) !important;
   font-size: 22px !important;
   font-weight: 400 !important;
   line-height: 28px !important;
+}
+
+/* The subject FIELD in compose, back to body size. Two things could have
+   inflated it, so both are handled:
+
+     - the read-subject rule above. Compose lives in the same region, and its
+       field's id ends in _SUBJECT the same way the read subject's does, so the
+       22px rule reached it. That rule now excludes editable nodes.
+     - Outlook's own sizing, in a popped-out compose that is a dialog rather
+       than part of the reading pane.
+
+   Both forms of the field are named — an <input>, and the role="textbox" that
+   newer builds use — under each of the two places compose appears. The
+   selectors are deliberately at least as specific as the read-subject rule so
+   this wins wherever they overlap. */
+[role="main"][aria-label="Reading Pane"] input[aria-label="Subject"],
+[role="main"][aria-label="Reading Pane"] [role="textbox"][aria-label="Subject"],
+[role="main"][aria-label="Reading Pane"] [aria-label="Subject"][id$="_SUBJECT"],
+[role="dialog"] input[aria-label="Subject"],
+[role="dialog"] [role="textbox"][aria-label="Subject"],
+[data-app-section="MailReadCompose"] input[aria-label="Subject"],
+[data-app-section="MailReadCompose"] [role="textbox"][aria-label="Subject"] {
+  font-size: var(--gm-compose-subject-font) !important;
+  font-weight: 400 !important;
+  line-height: var(--gm-compose-subject-line) !important;
 }
 
 /* Message bodies sit flush; Gmail draws a hairline between messages. */
@@ -1075,6 +1130,143 @@ button[title="Forward"] {
   display: none !important;
 }
 
+/* Attachments, the other way round: the CHIP carries the box and nothing above
+   it does. Outlook draws a full-width card around the whole well and nothing
+   around the attachment; Gmail draws a rectangle around the attachment and
+   nothing around the well. Four rounds of clearing fills one level at a time
+   never got there, because two of the things drawing that card are not fills
+   at all:
+
+     <span class="hWTnS"><span></span></span>
+
+   an empty span beside the listbox inside _ATTACHMENTS. An empty span holding
+   another empty span is a drawn element, not content — and a background reset
+   does nothing to an element painting a border or a shadow of its own. The
+   pseudo-elements on the wrappers are the same story. Both are removed
+   outright below rather than cleared.
+
+   Order matters here: the tile is NOT in the reset list any more — it is the
+   one thing that gets a box. */
+
+/* 1. Everything above the tile: no fill, no rule, no shadow. Bounded to the
+      well and its immediate wrapper now that the real culprit is known: the
+      version before this swept every ancestor in the pane with *:has(),
+      pseudo-elements and all, to compensate for a box §8 was drawing on the
+      listbox itself. That scaffolding is gone. */
+[role="listbox"][aria-label="file attachments"],
+[role="listbox"][aria-label="file attachments"] > div,
+[role="listbox"][aria-label="file attachments"] .av-container,
+[role="main"][aria-label="Reading Pane"] [id$="_ATTACHMENTS"],
+[role="main"][aria-label="Reading Pane"] div:not([aria-label="Email message"]):has(> [id$="_ATTACHMENTS"]) {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  filter: none !important;
+  outline: none !important;
+}
+
+/* The well's own padding and height — the card was over twice the chip's
+   height. Only this node, never a shared ancestor: up there the padding is
+   the letter's own margin. */
+[role="main"][aria-label="Reading Pane"] [id$="_ATTACHMENTS"] {
+  margin: 0 0 8px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+}
+
+/* 3. Layout: a wrapping row of chips, each as wide as its own contents.
+      min-width: 0 is load-bearing — a flex item's default min-width is auto,
+      which floors it at its content width and makes fit-content a no-op.
+      The attachment well is not virtualised, so sizing it from outside is
+      safe and rule 2 does not apply. */
+[role="listbox"][aria-label="file attachments"] {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+
+[role="listbox"][aria-label="file attachments"] > div,
+[role="listbox"][aria-label="file attachments"] .av-container,
+[role="listbox"][aria-label="file attachments"] [role="option"],
+[role="listbox"][aria-label="file attachments"] [role="option"] > div,
+[role="listbox"][aria-label="file attachments"] [role="option"] > div > div {
+  flex: 0 0 auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  width: fit-content !important;
+}
+
+/* 4. The chip. This is the only box in the well: a hairline rectangle around
+      the icon, the name, the size and the menu, capped so a long filename
+      shortens instead of stretching the chip across the pane. */
+[role="listbox"][aria-label="file attachments"] [role="option"] {
+  background: var(--gm-attach-bg) !important;
+  border: 1px solid var(--gm-attach-border) !important;
+  border-radius: var(--gm-radius-sm) !important;
+  box-shadow: none !important;
+  max-width: var(--gm-attach-width) !important;
+  overflow: hidden !important;
+  padding: 4px 8px !important;
+}
+
+/* Outranks div[role="option"]:hover in §5, which would otherwise put the
+   message-row hover shadow on the chip. */
+[role="listbox"][aria-label="file attachments"] [role="option"]:hover {
+  background: var(--gm-hover) !important;
+  border-color: var(--gm-text-disabled) !important;
+  box-shadow: none !important;
+  z-index: auto !important;
+}
+
+/* 5. Inside the chip: no rules, no shadows — including the divider before the
+      chevron. Borders and shadows only; backgrounds are already transparent
+      from §5 and font-family is left alone so the chevron keeps its glyph. */
+[role="listbox"][aria-label="file attachments"] [role="option"] * {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+[role="listbox"][aria-label="file attachments"] [role="option"] [title] {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* The grey "You don't often get email from … Learn why this is important"
+   strip. This one is NOT an OWA info bar and the .infoBarDivClass rule above
+   never touched it: Exchange Online injects it into the MESSAGE HTML itself,
+   as a table prepended to the body, so by the time it reaches the browser it
+   is indistinguishable from the sender's own markup — bgcolor="#EAEAEA", a
+   wall of inline "revert !important" from OWA's sanitiser, no attribute of
+   Outlook's own anywhere on it.
+
+   Except the link. Microsoft's first-contact tip always points at
+   aka.ms/LearnAboutSenderIdentification, which nothing else does, and that
+   is the hook.
+
+   The child combinators inside :has() are load-bearing. A bare
+   table:has(a[href*=…]) also matches every table the tip is nested in — in a
+   newsletter laid out as nested tables, that is the whole email, and the
+   message vanishes. Requiring the link to sit at > tbody > tr > td means only
+   the innermost table, the tip's own, can match. The td rule is the fallback
+   for a build that nests it differently; it collapses the row instead.
+
+   Note what goes with it: this is a real anti-phishing signal, the one that
+   flags a sender you have never corresponded with. Outlook's OTHER warnings —
+   external senders, blocked attachments, verified phishing — are separate bars
+   and still come through, but if you want the first-contact notice back, this
+   is the rule to remove. */
+[role="main"][aria-label="Reading Pane"] table:has(> tbody > tr > td > div > a[href*="LearnAboutSenderIdentification"]),
+[role="main"][aria-label="Reading Pane"] table:has(> tbody > tr > td > a[href*="LearnAboutSenderIdentification"]),
+[role="main"][aria-label="Reading Pane"] table:has(> tr > td > div > a[href*="LearnAboutSenderIdentification"]) {
+  display: none !important;
+}
+
+[role="main"][aria-label="Reading Pane"] td:has(> div > a[href*="LearnAboutSenderIdentification"]) {
+  display: none !important;
+}
+
 /* -- 7. ribbon ------------------------------------------------------------- */
 /* Gmail has no ribbon — actions live in a thin toolbar. Collapse it. */
 
@@ -1133,6 +1325,12 @@ div[role="toolbar"] button:hover {
 
 [data-app-section="NotificationPane"] > div,
 [class*="fui-Toast"] {
+  /* Width is the same story as the height above: the card is sized for Segoe
+     UI, and Google Sans runs wider, so the subject wraps early and the card
+     reads as cramped. A floor rather than a fixed width, capped at the
+     viewport so it cannot run off a narrow window. */
+  max-width: 92vw !important;
+  min-width: var(--gm-toast-width) !important;
   min-height: var(--gm-toast-min-height) !important;
 }
 
@@ -1140,6 +1338,52 @@ div[role="toolbar"] button:hover {
 [class*="fui-Toast"] {
   --neutralPrimarySurface: var(--gm-surface);   /* a toast floats over the app,
                                                    so it stays opaque */
+}
+
+/* The reminders flyout — the list of upcoming events with Snooze and Dismiss.
+   Outlook sizes it tightly and the event titles truncate almost immediately.
+
+   UNVERIFIED: no saved page has captured one. The label match is the direct
+   hook; the :has() forms are the fallback, keyed on the two buttons a
+   reminders window always carries, and scoped to a dialog so a mere button
+   labelled "Reminders" in a toolbar cannot match and come out 480px wide.
+   If it does not widen, open one and run gmailify.at() on it. */
+[role="dialog"][aria-label*="reminder" i],
+[role="alertdialog"][aria-label*="reminder" i],
+[role="dialog"]:has(button[aria-label*="Snooze" i]),
+[role="dialog"]:has(button[aria-label*="Dismiss all" i]),
+[role="alertdialog"]:has(button[aria-label*="Snooze" i]) {
+  max-width: 92vw !important;
+  min-width: var(--gm-reminder-width) !important;
+  overflow: hidden !important;
+  width: auto !important;
+}
+
+/* The location line ran out past the right edge. Widening the dialog does not
+   widen what is inside it: the rows are flex, and a flex item's default
+   min-width is auto, which floors it at the width of its own text and lets a
+   long location push straight out of the box rather than shrink. min-width: 0
+   is what allows the shrink — the same fix as the attachment chips in §6, and
+   the same trap.
+
+   max-width: 100% stops anything with a width of its own from overhanging,
+   and the text truncates rather than wrapping to a second line, which is what
+   Outlook intends for these rows. Images and icons keep their own sizing. */
+[role="dialog"][aria-label*="reminder" i] *:not(img):not(svg):not(i),
+[role="alertdialog"][aria-label*="reminder" i] *:not(img):not(svg):not(i),
+[role="dialog"]:has(button[aria-label*="Snooze" i]) *:not(img):not(svg):not(i),
+[role="alertdialog"]:has(button[aria-label*="Snooze" i]) *:not(img):not(svg):not(i) {
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+[role="dialog"][aria-label*="reminder" i] [title],
+[role="alertdialog"][aria-label*="reminder" i] [title],
+[role="dialog"]:has(button[aria-label*="Snooze" i]) [title],
+[role="alertdialog"]:has(button[aria-label*="Snooze" i]) [title] {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 /* Popups stay opaque. Search suggestions, recipient pickers, menus and dialogs
@@ -1171,7 +1415,12 @@ div[role="toolbar"] button:hover {
 [class*="fui-MenuPopover"],
 [class*="fui-Dropdown__listbox"],
 [class*="fui-Combobox__listbox"],
-[role="listbox"]:not([aria-label^="Message list"]),
+/* role="listbox" is not only a popup. The attachment well inside a message is
+   one too, so this rule was painting it --gm-surface opaque white with a drop
+   shadow — the wide rectangle behind the attachment chip. It had the same
+   specificity as §6's reset and sits later in the file, so it won every time,
+   while §6 went on clearing the fill off one ancestor after another. */
+[role="listbox"]:not([aria-label^="Message list"]):not([aria-label="file attachments"]),
 [role="menu"],
 [role="dialog"] {
   backdrop-filter: none !important;

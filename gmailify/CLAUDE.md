@@ -55,7 +55,7 @@ like Gmail. Read this before installing it, changing it, or debugging it.
 block). Never edit `gmailify.user.css` or `fonts.css` by hand — both are
 generated. After a change the user must reinstall from the same URL and reload.
 
-Five rules, each of which was learned by breaking the app:
+Eight rules, each of which was learned by breaking the app:
 
 1. **Fix the variable, never sweep the tree.** OWA paints through its own
    variables — `--neutralPrimarySurface` (291 references), `--whiteTranslucent65`
@@ -90,6 +90,35 @@ Five rules, each of which was learned by breaking the app:
 5. **`display: none` on a container the list measures brings the flicker back.**
    The message-list toolbar is deliberately left visible and styled to blend.
 
+6. **Some of Outlook's chrome is not chrome.** The "You don't often get email
+   from …" tip is injected by Exchange into the message HTML before it is
+   sent, so it arrives as part of the mail — a `bgcolor="#EAEAEA"` table under
+   `.infoBarDivClass`'s reach, wearing OWA's `revert !important` sanitiser
+   styles and no Outlook attribute at all. Hooks for that class of thing come
+   from the content: here, the `aka.ms/LearnAboutSenderIdentification` link.
+   And keep `:has()` on such a rule anchored with child combinators —
+   `table:has(a[href*=…])` matches every table the target is nested inside,
+   which in a newsletter is the entire email.
+
+7. **Suspect your own stylesheet before Outlook's.** The wide white rectangle
+   with a shadow behind an attachment was §8's popup rule:
+   `[role="listbox"]:not([aria-label^="Message list"])` paints every listbox
+   `--gm-surface` with a drop shadow, to make menus opaque — and the
+   attachment well is a `role="listbox"`. Same specificity as §6's reset and
+   later in the file, so it won, and eight versions went into clearing fills
+   off ancestors that were never drawing anything. When a reset with
+   `!important` appears to do nothing, grep the file for other rules matching
+   that element before reaching for a broader selector; the roles OWA reuses
+   — `listbox`, `option`, `heading` — are where §5, §6 and §8 collide.
+
+8. **`role="option"` is not only a message row.** Attachment tiles carry it
+   too, so every unscoped `div[role="option"]` rule in §5 reaches them —
+   `div[role="option"]:hover` was painting Gmail's row hover shadow onto each
+   attachment, which was half of the box §6 now clears. Check the role before
+   adding an unscoped rule there. And the tile is full-width, not a chip sized
+   to its contents, so it gets no fill on hover, focus or selection either — a
+   background there is a rounded slab across the whole pane.
+
 ## Where the facts come from
 
 Nothing here is guessed; both sides were read from saved pages
@@ -119,8 +148,10 @@ Verified hooks:
 | header | `#OwaTitleBar`; search `#searchBoxColumnContainerId`, `#topSearchInput` |
 | reply bars | `[aria-label="Email message"] [class*="fui-Toolbar"]`, `[aria-label="Quick actions"]` |
 | message body | `[id^="UniqueMessageBody"]`, `[aria-label="Message body"]`, `.allowTextSelection` (only one may exist per build) |
-| message date | `[data-testid="SentReceivedSavedTime"]`, or `[id$="_DATETIME"]` |
+| message metadata | level-3 headings, ids `MSG_<convid>_FROM` / `_DATETIME` / `_SUBJECT`; the date also has `[data-testid="SentReceivedSavedTime"]` |
 | info bars | `.infoBarDivClass`; retention is the `InfoFilled` one |
+| first-contact tip | injected into the message HTML, not an info bar — only hook is `a[href*="LearnAboutSenderIdentification"]` |
+| attachment tile | `[role="listbox"][aria-label="file attachments"] [role="option"]` — same role as a message row |
 
 Real `data-app-section` values, complete: `MessageList`, `NavigationPane`,
 `Ribbon`, `NotificationPane`, `UpsellBannerSection`, `CopilotDabRibbon`, and
@@ -144,17 +175,35 @@ only rules keyed to a hash are the subject box (`.NTPm6`), the subject pill
 (`.MshDW`, `.mBy5m`) and the list preview text (`.ASFJj`); each says so in a
 comment.
 
-**`[role="heading"]` in the reading pane is not only the subject.** Outlook
-marks the message's date as a level-3 heading:
+**`[role="heading"]` in the reading pane is not the subject — it is a whole
+family.** Every field of a message's metadata is its own **level-3** heading,
+with an id of the form `MSG_<convid>_<FIELD>`:
 
 ```html
 <div data-testid="SentReceivedSavedTime" role="heading" aria-level="3"
      id="MSG_QAEIJBK8QAA_DATETIME">Thu 9/17/2026 2:52 PM</div>
+<span class="Q84Kk YzEel s5zQy" role="heading" aria-level="3"
+      id="MSG_QAEIJBdKwAA_FROM">… on behalf of …</span>
+<div role="heading" aria-level="3" id="MSG_QAD/KIb6QAA_ATTACHMENTS">…</div>
 ```
 
-so the §6 subject rule — `font-size: 22px` on `[role="heading"]` — was scaling
-the date to 22px as well. The rule now excludes it by `data-testid`, and the
-date has its own 12px rule. If anything else in the pane turns up oversized,
-check it for `role="heading"` before writing a new rule; `data-testid` is
-Outlook's one genuinely descriptive attribute and is worth grepping for when
-`aria-label` and `data-app-section` come up empty.
+**That id family is the best hook in the reading pane.** `_FROM`,
+`_DATETIME`, `_SUBJECT`, `_ATTACHMENTS` — every metadata block has one, and
+they survive builds where the classes do not. Reach for `[id$="_FIELD"]`
+before `:has()` or a structural guess: the white card around the attachment
+well was found by `:has()` twice, wrongly, when it was simply
+`[id$="_ATTACHMENTS"]`, the listbox's own parent.
+
+§6's subject rule — `font-size: 22px` on `[role="heading"]` — was sizing all
+of them. It cost two rounds to find, because each field broke differently: the
+date simply went 22px, while on the From line the sender chips set their own
+size and only the bare `on behalf of` text node between them inherited it, so
+one fragment of the line was giant.
+
+The rule now excludes `[aria-level="3"]` wholesale and names the subject by
+`[id$="_SUBJECT"]`, so a metadata field Outlook adds later joins the excluded
+family instead of breaking. Suspect this rule for anything oversized in the
+pane, and check the element for `role="heading"` before writing a new one.
+
+`data-testid` is Outlook's one genuinely descriptive attribute — worth
+grepping when `aria-label` and `data-app-section` come up empty.

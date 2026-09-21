@@ -7,6 +7,7 @@
 //   gmailify.hooks()      stable attributes present on the page
 //   gmailify.at()         click an element, then call this for its ancestry
 //   gmailify.date()       the open message's date + body container (hashed nodes)
+//   gmailify.attach()     the attachment well's layout, node by node
 //   gmailify.tokens()     Fluent CSS variables currently in effect
 
 (() => {
@@ -189,6 +190,32 @@
     console.groupEnd();
   };
 
+  // Run this with a message that HAS an attachment open. Walks the attachment
+  // well from the listbox down to the chevron and prints what each node is
+  // doing dimensionally — width, display, flex, min-width, the lot — because
+  // the thing that holds the tile at full width is a hashed div with no
+  // attribute on it, and only the computed values say which one.
+  const attach = () => {
+    const box = document.querySelector('[role="listbox"][aria-label="file attachments"]');
+    if (!box) return console.warn('open a message with an attachment first');
+    const walk = (el, depth) => {
+      const cs = getComputedStyle(el);
+      const cls = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/)
+        .filter(c => c && !c.startsWith('fui-') && !c.startsWith('ms-')).join('.');
+      console.log(
+        `${'  '.repeat(depth)}<${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}` +
+        `${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}> ` +
+        `w=${Math.round(el.getBoundingClientRect().width)} css-w=${cs.width} ` +
+        `max=${cs.maxWidth} min=${cs.minWidth} display=${cs.display} ` +
+        `flex=${cs.flexGrow}/${cs.flexShrink}/${cs.flexBasis} justify=${cs.justifyContent}`);
+      if (depth < 6) for (const kid of el.children) walk(kid, depth + 1);
+    };
+    console.log(`well width ${Math.round(box.getBoundingClientRect().width)}px, ` +
+      `pane width ${Math.round((document.querySelector('[role="main"][aria-label="Reading Pane"]') || box).getBoundingClientRect().width)}px`);
+    walk(box, 0);
+    return box;
+  };
+
   // What is covering the background image: every element bigger than a quarter
   // of the viewport that paints an opaque colour or an image of its own.
   const opaque = () => {
@@ -248,6 +275,6 @@
     return found;
   };
 
-  window.gmailify = { check, hooks, at, tokens, rail, row, date, opaque, panes, toast };
-  console.log('gmailify: try gmailify.check(), gmailify.hooks(), gmailify.at(), gmailify.rail(), gmailify.row(), gmailify.date(), gmailify.opaque(), gmailify.panes(), gmailify.toast(), gmailify.tokens()');
+  window.gmailify = { check, hooks, at, tokens, rail, row, date, attach, opaque, panes, toast };
+  console.log('gmailify: try gmailify.check(), gmailify.hooks(), gmailify.at(), gmailify.rail(), gmailify.row(), gmailify.date(), gmailify.attach(), gmailify.opaque(), gmailify.panes(), gmailify.toast(), gmailify.tokens()');
 })();
