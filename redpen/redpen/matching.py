@@ -10,6 +10,10 @@ import csv, difflib, re, unicodedata
 
 SKIP = {"points possible", "student", "name", "students", "student name"}
 
+# Canvas gradebook exports carry the identity columns an upload has to echo
+# back.  Captured when present, absent without complaint from a plain list.
+CANVAS_COLS = {"sis user id": "sis_id", "sis login id": "login", "section": "section"}
+
 
 def fold(s):
     """Accent-free ASCII, so 'Renée' and 'Renee' agree and filenames stay portable."""
@@ -20,21 +24,30 @@ def fold(s):
 def load_roster(path, name_col=0, id_col=1, drop_test=True):
     out = []
     with open(path, newline="") as f:
-        for row in csv.reader(f):
-            if not row or len(row) <= name_col:
-                continue
-            raw = row[name_col].strip()
-            if not raw or raw.lower() in SKIP:
-                continue
-            if drop_test and re.fullmatch(r"student,\s*test", raw, re.I):
-                continue
-            last, sep, first = raw.partition(",")
-            if not sep:                       # "First Last" in the roster
-                bits = raw.split()
-                first, last = " ".join(bits[:-1]), bits[-1] if bits else raw
-            sid = row[id_col].strip() if id_col is not None and len(row) > id_col else ""
-            out.append({"display": raw, "first": first.strip(), "last": last.strip(),
-                        "id": sid, "key": file_key(first, last)})
+        rows = list(csv.reader(f))
+    extra = {}
+    for i, h in enumerate(rows[0] if rows else []):
+        k = CANVAS_COLS.get(h.strip().lower())
+        if k:
+            extra[k] = i
+    for row in rows:
+        if not row or len(row) <= name_col:
+            continue
+        raw = row[name_col].strip()
+        if not raw or raw.lower() in SKIP:
+            continue
+        if drop_test and re.fullmatch(r"student,\s*test", raw, re.I):
+            continue
+        last, sep, first = raw.partition(",")
+        if not sep:                       # "First Last" in the roster
+            bits = raw.split()
+            first, last = " ".join(bits[:-1]), bits[-1] if bits else raw
+        sid = row[id_col].strip() if id_col is not None and len(row) > id_col else ""
+        rec = {"display": raw, "first": first.strip(), "last": last.strip(),
+               "id": sid, "key": file_key(first, last)}
+        for k, i in extra.items():
+            rec[k] = row[i].strip() if len(row) > i else ""
+        out.append(rec)
     return out
 
 

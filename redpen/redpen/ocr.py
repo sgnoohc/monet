@@ -22,6 +22,11 @@ def _ensure_binary(log=None):
     if os.path.exists(SWIFT_BIN):
         if os.path.getmtime(SWIFT_BIN) >= os.path.getmtime(SWIFT_SRC):
             return True
+        # Inside the packaged app there is no compiler and the shipped binary
+        # is the only one there will be; a stale mtime is not a reason to fall
+        # back to something much worse at handwriting.
+        if not shutil.which("swiftc"):
+            return True
     if not shutil.which("swiftc"):
         return False
     if log:

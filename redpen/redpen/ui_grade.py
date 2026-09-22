@@ -282,6 +282,79 @@ function exportCSV(){
   a.download=STORE+'_grades.csv';document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),4000);
 }
+/* ---- Canvas upload ------------------------------------------------------
+   Canvas matches a row by its own ID, so every identity column is copied from
+   the roster and only the score comes from this page.  A sheet whose student
+   cannot be placed on the roster is left out rather than guessed at. */
+const cfold=s=>(s||'').normalize('NFKD').replace(/[^A-Za-z]/g,'').toLowerCase();
+function canvasIndex(){
+  const byId={},byName={};
+  CANVAS.roster.forEach(r=>{
+    [r.i,r.s,r.l].forEach(k=>{k=(k||'').trim().toLowerCase();
+                              if(k&&!(k in byId))byId[k]=r;});
+    const c=r.n.indexOf(',');
+    const forms=[r.n];
+    if(c>0)forms.push(r.n.slice(c+1)+' '+r.n.slice(0,c));   // "First Last" too
+    forms.forEach(f=>{const k=cfold(f);if(k&&!(k in byName))byName[k]=r;});
+  });
+  return {byId,byName};
+}
+// The paper's total is whatever the points-per-part boxes currently say, so a
+// rubric tweak rescales with it rather than going stale.
+const ctarget=()=>CANVAS.outOf==null?maxTotal():CANVAS.outOf;
+function cscale(v){
+  const paper=maxTotal(),t=ctarget();
+  if(!paper||t===paper)return v;
+  let x=v*t/paper;
+  if(CANVAS.step)x=Math.round(x/CANVAS.step)*CANVAS.step;
+  return Math.round(x*1e4)/1e4;
+}
+function exportCanvas(){
+  if(!CANVAS.roster.length)
+    return alert('No roster was loaded with this page, so there are no Canvas '
+                +'ids to upload against. Rebuild with: redpen grade');
+  const ix=canvasIndex(),rows=[],lost=[],twice=[],claimed={};
+  DATA.forEach(s=>{
+    const id=(S.sid[s.k]||'').trim().toLowerCase();
+    const r=(id&&ix.byId[id])||ix.byName[cfold(S.name[s.k])];
+    if(!r)return lost.push((S.name[s.k]||s.k)+'  (sheet '+s.sheet+')');
+    const key=r.i||r.s||r.n;
+    if(claimed[key])return twice.push(r.n+'  (sheet '+s.sheet+')');
+    claimed[key]=1;
+    rows.push([r.n,r.i,r.s,r.l,r.sec,cscale(total(s.k))]);
+  });
+  const warn=[];
+  if(lost.length)warn.push(lost.length+' sheet(s) are not on the roster and will be '
+                          +'left out:\n  '+lost.join('\n  '));
+  if(twice.length)warn.push(twice.length+' student(s) already had a sheet; the later '
+                           +'one is left out — settle this first:\n  '+twice.join('\n  '));
+  const un=DATA.filter(s=>!touched(s.k)).length;
+  if(un)warn.push(un+' sheet(s) are not reviewed yet and would upload at their '
+                 +'suggested marks.');
+  // No (id) on the column means Canvas has no such assignment and would make a
+  // second one rather than filling the one you meant.
+  if(!CANVAS.existing)
+    warn.push('Canvas has no assignment called "'+CANVAS.column+'" as of the '
+             +'roster export, so importing this would CREATE one.\n  If it '
+             +'exists now, export the gradebook from Canvas again and rebuild '
+             +'the page:\n    redpen grade <config>');
+  if(ctarget()!==maxTotal())
+    warn.unshift('Marks are scaled from '+maxTotal()+' to '+ctarget()
+                +(CANVAS.step?', to the nearest '+CANVAS.step:'')+'.');
+  if(!rows.length)return alert('Nothing to upload.\n\n'+warn.join('\n\n'));
+  if(warn.length&&!confirm(warn.join('\n\n')+'\n\nExport the remaining '+rows.length
+                          +' rows for '+CANVAS.column+'?'))return;
+  const q=v=>{const s=String(v==null?'':v);
+              return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;};
+  const out=[['Student','ID','SIS User ID','SIS Login ID','Section',CANVAS.column],
+             ['Points Possible','','','','',ctarget()]].concat(rows)
+            .map(r=>r.map(q).join(','));
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([out.join('\n')+'\n'],{type:'text/csv'}));
+  a.download=STORE+'_canvas.csv';document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+  $('#saved').textContent=rows.length+' rows for Canvas';
+}
 function filt(){
   const m=$('#filt').value;
   DATA.forEach(s=>{
@@ -300,6 +373,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   PARTS.forEach(p=>$('#mx_'+p.id).addEventListener('change',applyMax));
   $('#filt').addEventListener('change',filt);
   $('#exp').addEventListener('click',exportCSV);
+  $('#expcanvas').addEventListener('click',exportCanvas);
   $('#savef').addEventListener('click',saveFile);
   $('#loadf').addEventListener('change',loadFile);
   $('#resetAll').addEventListener('click',()=>{

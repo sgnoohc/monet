@@ -1,0 +1,281 @@
+{
+  "title": "PHY2060 Quiz 1 — Constant Acceleration",
+  "course": "PHY2060",
+  "pages": 2,
+  "note": "Use #ieq(\"g equals 10 meters per second squared\", $bold(g = 10 thin \"m/s\"^2)$) and neglect air resistance throughout. *Include units on every answer.*",
+  "preamble": "// The v(t) sketch for 3(d), drawn to fill the answer box.  Three straight\n// segments: powered ascent (slope +8.0), coast to the apex and the fall\n// (both slope -10).\n#let vt-graph(w, h) = {\n  let pad-l = 0.42cm\n  let pad-t = 0.55cm\n  let plot-w = w - pad-l - 0.20cm\n  let plot-h = h - pad-t - 0.50cm\n  let t-max = 30.0\n  let v-top = 80.0\n  let v-bot = -120.0\n  let px(t) = pad-l + plot-w * (t / t-max)\n  let py(v) = pad-t + plot-h * ((v-top - v) / (v-top - v-bot))\n  let seg(t1, v1, t2, v2, ..a) = place(top + left,\n    line(start: (px(t1), py(v1)), end: (px(t2), py(v2)), ..a))\n  let lbl(t, v, dx, dy, body) = place(top + left,\n    dx: px(t) + dx, dy: py(v) + dy, text(size: 6.5pt, fill: key-red, body))\n  box(width: w, height: h, {\n    place(top + left, line(start: (px(0), py(0)), end: (w - 0.08cm, py(0)),\n      stroke: 0.5pt + luma(130)))\n    place(top + left, line(start: (px(0), pad-t - 0.12cm),\n      end: (px(0), h - 0.10cm), stroke: 0.5pt + luma(130)))\n    place(top + left, dx: px(0) + 0.08cm, dy: pad-t - 0.30cm,\n      text(size: 6.5pt, fill: luma(90))[$v$ (m/s)])\n    place(top + left, dx: w - 0.70cm, dy: py(0) + 0.06cm,\n      text(size: 6.5pt, fill: luma(90))[$t$ (s)])\n    seg(0, 0, 10, 80, stroke: 1.1pt + key-red)\n    seg(10, 80, 18, 0, stroke: 1.1pt + key-red)\n    seg(18, 0, 30, -120, stroke: 1.1pt + key-red)\n    let dot(t, v) = place(top + left, dx: px(t) - 0.05cm, dy: py(v) - 0.05cm,\n      circle(radius: 0.05cm, fill: key-red, stroke: none))\n    dot(0, 0); dot(10, 80); dot(18, 0); dot(30, -120)\n    lbl(0, 0, 0.08cm, 0.06cm)[liftoff (0 s, 0)]\n    lbl(10, 80, -0.30cm, -0.36cm)[cut-off (10 s, #sym.plus\\80 m/s)]\n    lbl(18, 0, -0.10cm, -0.48cm)[highest (18.0 s, 0)]\n    lbl(30, -120, -2.45cm, 0.02cm)[impact (30.0 s, #sym.minus\\120 m/s)]\n    lbl(4, 22, 0.00cm, 0.00cm)[slope #sym.plus\\8.0]\n    lbl(24, -60, -1.40cm, -0.10cm)[slope #sym.minus\\10]\n  })\n}",
+  "problems": [
+    {
+      "title": "Braking train",
+      "points": 25.0,
+      "page": 1,
+      "stem": "A train moving at 30 m/s brakes uniformly at 2.0 #mss until it stops.",
+      "parts": [
+        {
+          "question": "Find the time it takes to stop.",
+          "boxes": [
+            {
+              "label": "time",
+              "answer": "15.0 s",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "Direction of travel positive, so #ieq(\"a equals minus 2.0 meters per second squared\", $a = -2.0 thin \"m/s\"^2$), and the train stops when #ieq(\"v equals 0\", $v = 0$).",
+            "#ieq(\"v equals v naught plus a t, so 0 equals 30 minus 2.0 t, giving t equals 15.0 seconds\", $v = v_0 + a t: quad 0 = 30 - 2.0 t quad ==> quad t = 30/2.0 = 15.0 thin \"s\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "Find the stopping distance.",
+          "boxes": [
+            {
+              "label": "distance",
+              "answer": "225 m",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "No time needed — use the equation without it:",
+            "#ieq(\"v squared equals v naught squared plus 2 a d, so d equals 900 over 4 equals 225 meters\", $v^2 = v_0^2 + 2 a d: quad 0 = 30^2 - 2(2.0) d quad ==> quad d = 900/4 = 225 thin \"m\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "If the train had instead entered the brake at _twice_ that speed, by what factor would the stopping distance change?",
+          "boxes": [
+            {
+              "label": "factor",
+              "answer": "$times 4$",
+              "key": "4",
+              "alt": [
+                "x4",
+                "4 times"
+              ],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "#ieq(\"d equals v naught squared over 2 times the magnitude of a\", $d = v_0^2 / (2 abs(a)) prop v_0^2$), and nothing else in it changes, so doubling #ieq(\"v naught\", $v_0$) multiplies the distance by #ieq(\"2 squared equals 4\", $2^2 = 4$): *4 times as far*, 900 m. (The stopping _time_ only doubles.)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        }
+      ],
+      "direct": false
+    },
+    {
+      "title": "One car catches another",
+      "points": 35.0,
+      "page": 1,
+      "stem": "Car A passes stationary car B at a constant 18 m/s. At that same instant B starts from rest and accelerates uniformly at 3.0 #mss along the same straight road.",
+      "parts": [
+        {
+          "question": "How long does B take to catch A, and how far have they gone by then?",
+          "boxes": [
+            {
+              "label": "time",
+              "answer": "12.0 s",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            },
+            {
+              "label": "distance",
+              "answer": "216 m",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "Origin where they are level, direction of travel positive, #ieq(\"t\", $t$) from that instant:",
+            "#ieq(\"x sub A equals 18 t, and x sub B equals 1.5 t squared\", $x_A = 18 t, quad x_B = 1/2 (3.0) t^2 = 1.5 t^2$)",
+            "Catch-up is #ieq(\"x sub A equals x sub B\", $x_A = x_B$): #ieq(\"1.5 t squared equals 18 t, giving t equals 12.0 seconds\", $1.5 t^2 = 18 t ==> t(1.5 t - 18) = 0 ==> t = 12.0 thin \"s\"$)",
+            "#ieq(\"x equals 18 times 12.0 equals 216 meters\", $x = 18(12.0) = 216 thin \"m\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "B is _behind_ A for the whole chase, yet the gap does not grow the entire time. Find the instant at which the gap is largest, and find that largest gap.",
+          "boxes": [
+            {
+              "label": "time",
+              "answer": "6.0 s",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            },
+            {
+              "label": "largest gap",
+              "answer": "54.0 m",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "Gap #ieq(\"s of t equals 18 t minus 1.5 t squared\", $s(t) = x_A - x_B = 18 t - 1.5 t^2$). It stops growing when the relative velocity is zero, i.e. when the speeds match:",
+            "#ieq(\"3.0 t equals 18, so t equals 6.0 seconds\", $3.0 t = 18 quad ==> quad t = 6.0 thin \"s\"$) — exactly half the catch-up time.",
+            "#ieq(\"s equals 108 minus 54 equals 54.0 meters\", $s = 18(6.0) - 1.5(6.0)^2 = 108 - 54 = 54.0 thin \"m\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "Find B's speed at the moment it catches A.",
+          "boxes": [
+            {
+              "label": "speed",
+              "answer": "36.0 m/s",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "#ieq(\"v sub B equals 3.0 times 12.0 equals 36.0 meters per second\", $v_B = 3.0(12.0) = 36.0 thin \"m/s\"$) — exactly twice A's 18 m/s, and not by accident: same distance in the same time means the same _average_ velocity, and B's average is #ieq(\"the quantity 0 plus v sub B over 2\", $(0 + v_B)\\/2$)."
+          ],
+          "raw": "",
+          "gap": 1.0
+        }
+      ],
+      "direct": false
+    },
+    {
+      "title": "Rocket with engine cut-off",
+      "points": 40.0,
+      "page": 2,
+      "stem": "A rocket lifts off from rest at ground level and accelerates straight upward at 8.0 #mss for 10 s, at which point the engine cuts out. After cut-off the rocket is in free fall, and it eventually falls back to the ground.",
+      "parts": [
+        {
+          "question": "Find the rocket's speed and altitude at the instant of cut-off.",
+          "boxes": [
+            {
+              "label": "speed",
+              "answer": "80.0 m/s",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            },
+            {
+              "label": "altitude",
+              "answer": "400 m",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "Up positive, origin at the ground. Three stages: powered ascent (#ieq(\"a equals plus 8.0\", $a = +8.0$) #mss), then coasting ascent and fall (both #ieq(\"a equals minus 10\", $a = -10$) #mss).",
+            "From rest for 10 s: #ieq(\"v 1 equals 80.0 meters per second\", $v_1 = (8.0)(10) = 80.0 thin \"m/s\"$), #ieq(\"y 1 equals 400 meters\", $y_1 = 1/2 (8.0)(10)^2 = 400 thin \"m\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "Find the maximum altitude it reaches.",
+          "boxes": [
+            {
+              "label": "max altitude",
+              "answer": "720 m",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "At cut-off it is still moving up at 80.0 m/s, so it keeps climbing until gravity brings that to zero:",
+            "#ieq(\"delta y equals 320 meters\", $Delta y = v_1^2/(2 g) = (80.0)^2/(2(10)) = 320 thin \"m\"$), #ieq(\"y max equals 720 meters\", $y_\"max\" = 400 + 320 = 720 thin \"m\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "Find the total time from liftoff until it returns to the ground.",
+          "boxes": [
+            {
+              "label": "total time",
+              "answer": "30.0 s",
+              "key": "",
+              "alt": [],
+              "kind": "answer",
+              "points": "",
+              "w": "3.4cm",
+              "h": "1.9em"
+            }
+          ],
+          "solution": [
+            "Stage by stage — powered ascent 10.0 s; coast to the apex #ieq(\"t equals 8.0 seconds\", $t = v_1\\/g = 80.0/10 = 8.0 thin \"s\"$); fall from rest through the full 720 m #ieq(\"t equals 12.0 seconds\", $t = sqrt(2 y_\"max\"\\/g) = sqrt(144) = 12.0 thin \"s\"$):",
+            "#ieq(\"t total equals 30.0 seconds\", $t_\"total\" = 10.0 + 8.0 + 12.0 = 30.0 thin \"s\"$)"
+          ],
+          "raw": "",
+          "gap": 1.0
+        },
+        {
+          "question": "Sketch #ieq(\"v of t\", $v(t)$) for the entire flight. Mark *liftoff*, *cut-off*, the *highest point* and *impact with the ground*, labelling each with its time and its velocity.",
+          "boxes": [
+            {
+              "label": "sketch",
+              "answer": "",
+              "key": "",
+              "alt": [],
+              "kind": "sketch",
+              "points": "",
+              "w": "6.6cm",
+              "h": "4.6cm",
+              "raw": "#vt-graph(6.6cm, 4.6cm)"
+            }
+          ],
+          "solution": [
+            "Three straight segments, since #ieq(\"a\", $a$) is piecewise constant: slope #ieq(\"plus 8.0\", $+8.0$) #mss while the engine burns, then #ieq(\"minus 10\", $-10$) #mss all the way down. The four marked points are",
+            "*liftoff* #ieq(\"0 seconds, 0\", $(0 thin \"s\", 0)$); *cut-off* #ieq(\"10 seconds, plus 80\", $(10 thin \"s\", +80 thin \"m/s\")$); *highest point* #ieq(\"18.0 seconds, 0\", $(18.0 thin \"s\", 0)$); *impact* #ieq(\"30.0 seconds, minus 120\", $(30.0 thin \"s\", -120 thin \"m/s\")$)."
+          ],
+          "raw": "",
+          "gap": 1.0
+        }
+      ],
+      "direct": false
+    }
+  ]
+}

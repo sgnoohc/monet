@@ -8,6 +8,13 @@ autograde.json
 *_grading.html
 *_progress.json
 
+# The packaged app, and what PyInstaller leaves behind
+mac/dist/
+mac/build/
+mac/*.spec
+mac/icon.iconset/
+mac/icon-1024.png
+
 # Build + cache artefacts
 .redpen_cache/
 # compiled from the .swift source on first use
@@ -18,3 +25,4 @@ __pycache__/
 build/
 dist/
 .DS_Store
+.venv/

@@ -16,6 +16,10 @@ DEFAULTS = {
     "roster_name_column": 0,
     "roster_id_column": 1,
     "name_zone": None,         # id of the zone holding the student's name
+    "canvas_assignment": "",   # Canvas assignment column to upload into (default: title)
+    "canvas_gradebook": "",    # gradebook export holding that column (default: roster)
+    "canvas_out_of": None,     # scale scores to this Canvas total (default: the paper's)
+    "canvas_round": 0,         # snap scaled scores to this step (0.5 = half marks)
     "zones": [],               # {id, page, rect, kind: name|answer}
     "parts": [],               # {id, label, key, points, zones: [...]}
     "review_gap": 0.10,        # assignment margin below which a sheet is reviewed

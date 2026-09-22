@@ -6,6 +6,9 @@ framework reads the handwritten names on-device, the zone editor is served only
 on 127.0.0.1, and the grading page is a local HTML file.  No student work is
 uploaded anywhere and no language model is involved.
 
+  redpen new   quiz.src.json                 start a quiz
+  redpen compose quiz.src.json               write it in a form, live preview
+  redpen build quiz.src.json                 -> quiz.pdf, key.pdf, zones, rubric
   redpen init  quiz.json --template key.pdf --roster roster.csv
   redpen zones quiz.json                     draw zones + set the rubric
   redpen run   quiz.json --scan bulk.pdf     split, OCR, match, crop
@@ -14,11 +17,13 @@ uploaded anywhere and no language model is involved.
   redpen autograde quiz.json                 preliminary right/wrong
   redpen recrop quiz.json                    re-cut zones after a tweak
   redpen grade quiz.json                     build the grading page
+  redpen canvas quiz.json grades.csv         CSV for the Canvas gradebook
 """
 import argparse, os, subprocess, sys
 
-from . import (answerkey, autograde, config, gradepage, matching, ocr, render,
-               reviewpage, split, stats, zoneeditor)
+from . import (answerkey, autograde, canvas, composer, config, gradepage, matching,
+               ocr, quizdoc, render, reviewpage, split, stats, typstbuild, zoneeditor)
+from . import app as appmod
 
 
 def _load(path):
@@ -225,6 +230,118 @@ def cmd_stats(a):
             subprocess.run(["open", a.html], check=False)
 
 
+def cmd_canvas(a):
+    cfg = _load(a.config)
+    roster, src = canvas.gradebook(cfg, config.path_of, a.gradebook)
+    if not roster or not os.path.exists(roster):
+        sys.exit(f"error: gradebook export not found{': '+roster if roster else ''}"
+                 f"\n(from {src} — pass --gradebook to point at a fresh "
+                 "Canvas gradebook export)")
+
+    if a.list:
+        cols = canvas.assignments(roster)
+        print(f"{os.path.basename(roster)}  (from {src})"
+              f" — {len(cols)} assignment columns\n")
+        for c in cols:
+            print(f"  {c['id']:>9}  {c['points'] or '?':>6}  {c['name']}")
+        if not cols:
+            print("  none — no assignment columns at all, so this is either not a\n"
+                  "  Canvas gradebook export or was taken before any assignment\n"
+                  "  existed.  Export the gradebook again from Canvas.")
+        else:
+            print("\nupload into one with:  redpen canvas ... --assignment NAME")
+        return
+    if not a.grades:
+        sys.exit("error: which grades CSV? (or pass --list to see the assignments)")
+
+    try:
+        rows, out_of, unreviewed = canvas.read_grades(a.grades,
+                                                      only_reviewed=a.only_reviewed)
+        header, existing = canvas.column(
+            roster, a.assignment or cfg.get("canvas_assignment") or cfg["title"])
+    except (OSError, canvas.CanvasError) as err:
+        sys.exit(f"error: {err}")
+    if not existing and not a.new:
+        cols = canvas.assignments(roster)
+        print(f"error: {os.path.basename(roster)} has no assignment called "
+              f"{header!r} —")
+        print("importing this would create a second assignment rather than "
+              "filling the\none you mean.  Most likely that export simply "
+              "predates the assignment:")
+        print("\n  · make the assignment in Canvas, export the gradebook, and "
+              "point at it:\n"
+              "      redpen canvas ... --gradebook ~/Downloads/<newer export>.csv\n"
+              "    then keep it, so the page's button uses it too:\n"
+              f'      "canvas_gradebook": "<newer export>.csv"   in '
+              f'{os.path.basename(cfg["_path"])}')
+        print("  · or name a column that is already there — " +
+              (", ".join(repr(c["name"]) for c in cols[:5]) +
+               (", ..." if len(cols) > 5 else "") if cols else "it has none")
+              + "\n    (redpen canvas ... --list)")
+        sys.exit("  · or pass --new, if a brand-new assignment really is what "
+                 "you want")
+
+    entries = matching.load_roster(roster, cfg["roster_name_column"],
+                                   cfg["roster_id_column"])
+    pairs, unmatched, clashes = canvas.match_roster(rows, entries)
+    if clashes:
+        print("error: more than one sheet graded for the same student —")
+        for group in clashes:
+            print(f"    {group[0][1]['display']}: sheets "
+                  + ", ".join(r["sheet"] or "?" for r, _ in group))
+        sys.exit("settle these in 'redpen verify' before uploading")
+    if unmatched:
+        print(f"error: {len(unmatched)} graded sheets are not on the roster —")
+        for r in unmatched:
+            print(f"    sheet {r['sheet'] or '?':>3}  {r['name']!r} id={r['id'] or '—'}")
+        sys.exit("fix the names in the grading page, re-export, and try again")
+
+    missing = canvas.ungraded(pairs, entries)
+    zeros = missing if a.missing == "zero" else []
+    was = canvas.points_of(roster, header)
+    target = a.out_of if a.out_of is not None else cfg.get("canvas_out_of")
+    if target is None and was and float(was) != out_of:
+        sys.exit(f"error: the sheets are marked out of {canvas._num(out_of)} but "
+                 f"Canvas has {header} out of {was} —\n"
+                 f"  · scale the marks across:   --out-of {canvas._num(was)}\n"
+                 f"  · or keep them raw and move Canvas to "
+                 f"{canvas._num(out_of)}:   --out-of {canvas._num(out_of)}")
+    target = out_of if target is None else float(target)
+    step = a.round if a.round is not None else (cfg.get("canvas_round") or 0)
+    table = canvas.rows_for(pairs, header, target, zeros=zeros,
+                            paper=out_of, step=step)
+    dest = a.out or os.path.join(os.path.dirname(os.path.abspath(a.grades)),
+                                 os.path.splitext(os.path.basename(a.grades))[0]
+                                 + "_canvas.csv")
+    canvas.write(table, dest)
+
+    print(f"wrote {dest}")
+    print(f"  assignment   {header}"
+          + ("" if existing else "   (NEW — Canvas will create it)"))
+    if target != out_of:
+        lo = canvas.scale(min(float(r["total"]) for r, _ in pairs), out_of, target, step)
+        hi = canvas.scale(max(float(r["total"]) for r, _ in pairs), out_of, target, step)
+        print(f"  out of       {canvas._num(target)}   (scaled from "
+              f"{canvas._num(out_of)}: \u00d7{target/out_of:.4g}"
+              + (f", to the nearest {canvas._num(step)}" if step else "") + ")")
+        print(f"  marks        {canvas._num(lo)} \u2013 {canvas._num(hi)}")
+    else:
+        print(f"  out of       {canvas._num(target)}"
+              + (f"   (Canvas currently has {was} — the upload changes it)"
+                 if was and canvas._num(was) != canvas._num(target) else ""))
+    print(f"  rows         {len(pairs)} graded"
+          + (f" + {len(zeros)} zeros" if zeros else ""))
+    if unreviewed:
+        print(f"  unreviewed   {unreviewed}"
+              + (" (left out)" if a.only_reviewed else " (INCLUDED — still at full marks?)"))
+    if missing and not zeros:
+        print(f"  no sheet     {len(missing)}, left untouched in Canvas:")
+        for m in missing:
+            print(f"                 {m['display']}")
+    print("\nupload with Grades -> Import in the Canvas course, and check the "
+          "preview before confirming")
+
+
 def cmd_check(a):
     cfg = _load(a.config)
     tpl = config.path_of(cfg, "template")
@@ -242,10 +359,77 @@ def cmd_check(a):
         print(f"roster     {len(matching.load_roster(r, cfg['roster_name_column'], cfg['roster_id_column']))} students")
     else:
         print(f"roster     {'missing: '+r if r else '-- not set --'}")
+    book, src = canvas.gradebook(cfg, config.path_of)
+    if book and os.path.exists(book):
+        try:
+            col, existing = canvas.column(book, cfg.get("canvas_assignment") or cfg["title"])
+            print(f"canvas     {col}"
+                  + ("" if existing else "   (NOT in " + os.path.basename(book)
+                     + " — would create it)"))
+            if src == "roster":
+                print("           codes come from the roster; set canvas_gradebook "
+                      "to a newer export")
+        except canvas.CanvasError as err:
+            print(f"canvas     ambiguous — {err}")
     print(f"ocr        {ocr.engine_name()}")
     for p in cfg["parts"]:
         print(f"  {p['id']:<10} {gradepage._num(p['points']):>5} pts  "
               f"[{', '.join(p['zones'])}]  {p['label']}")
+
+
+def cmd_new(a):
+    out = os.path.abspath(a.source)
+    if os.path.exists(out) and not a.force:
+        sys.exit(f"error: {out} exists (use --force)")
+    doc = quizdoc.new(a.title or os.path.splitext(os.path.basename(out))[0],
+                      pages=a.pages)
+    doc["problems"] = [{
+        "title": "First problem", "points": 100, "page": 1,
+        "stem": "Say what the situation is.",
+        "parts": [{"question": "Ask for something.",
+                   "boxes": [{"label": "answer", "answer": ""}],
+                   "solution": []}],
+    }]
+    doc["_path"], doc["_dir"] = out, os.path.dirname(out)
+    quizdoc.save(doc, out)
+    print(f"wrote {out}")
+    print(f"\nnext:  redpen build {os.path.basename(out)}")
+
+
+def cmd_app(a):
+    appmod.serve(open_browser=not a.no_browser, port=a.port)
+
+
+def cmd_compose(a):
+    try:
+        doc = quizdoc.load(a.source)
+    except (OSError, ValueError, quizdoc.QuizError) as err:
+        sys.exit(f"error: {err}")
+    if not typstbuild.have_typst():
+        sys.exit("error: typst is not installed — brew install typst")
+    composer.serve(doc, open_browser=not a.no_browser)
+
+
+def cmd_build(a):
+    try:
+        doc = quizdoc.load(a.source)
+    except (OSError, ValueError, quizdoc.QuizError) as err:
+        sys.exit(f"error: {err}")
+    outdir = os.path.abspath(a.out) if a.out else doc["_dir"]
+    print(f"building {doc['title']}")
+    try:
+        r = typstbuild.build(doc, outdir=outdir, log=print, config_path=a.config)
+    except (typstbuild.BuildError, config.ConfigError) as err:
+        sys.exit(f"error: {err}")
+    cfg = r["cfg"]
+    named = [z for z in cfg["zones"] if z["kind"] == "name"]
+    print(f"\n{len(cfg['zones']) - len(named)} answer zones over {r['pages']} pages"
+          f"{', name zone found' if named else ', NO NAME ZONE'}")
+    print(f"{len(cfg['parts'])} graded parts, {config.total_points(cfg):g} points")
+    print(f"\nwrote {os.path.relpath(r['config'], outdir)}  "
+          f"{os.path.relpath(r['quiz_pdf'], outdir)}  "
+          f"{os.path.relpath(r['key_pdf'], outdir)}")
+    print(f"next:   redpen run {os.path.basename(r['config'])} --scan bulk.pdf")
 
 
 def cmd_clean(a):
@@ -310,6 +494,47 @@ def main():
     p.add_argument("--html", help="also write an HTML report")
     p.add_argument("--no-open", action="store_true")
     p.set_defaults(fn=cmd_stats)
+
+    p = sub.add_parser("canvas", help="build a CSV for the Canvas gradebook import")
+    p.add_argument("config")
+    p.add_argument("grades", nargs="?", help="CSV exported by the grading page")
+    p.add_argument("--assignment", help="Canvas assignment column (default: the quiz title)")
+    p.add_argument("--list", action="store_true",
+                   help="list the roster's assignment columns and their Canvas ids")
+    p.add_argument("--new", action="store_true",
+                   help="allow creating an assignment Canvas does not have yet")
+    p.add_argument("--gradebook", help="Canvas gradebook export holding the assignment "
+                   "column (default: canvas_gradebook, else the roster)")
+    p.add_argument("--out-of", type=float, dest="out_of",
+                   help="scale every mark to this Canvas total (default: the paper's)")
+    p.add_argument("--round", type=float,
+                   help="snap scaled marks to this step (0.5 = half marks)")
+    p.add_argument("--missing", choices=("skip", "zero"), default="skip",
+                   help="students with no graded sheet (default: skip)")
+    p.add_argument("--only-reviewed", action="store_true",
+                   help="leave out sheets not yet marked reviewed")
+    p.add_argument("-o", "--out", help="where to write the CSV")
+    p.set_defaults(fn=cmd_canvas)
+
+    p = sub.add_parser("new", help="start a quiz source file")
+    p.add_argument("source", help="quiz.src.json to create")
+    p.add_argument("--title"); p.add_argument("--pages", type=int, default=2)
+    p.add_argument("--force", action="store_true"); p.set_defaults(fn=cmd_new)
+
+    p = sub.add_parser("app", help="the whole workflow in one window")
+    p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--port", type=int, help="serve on this port instead of the first free one")
+    p.set_defaults(fn=cmd_app)
+
+    p = sub.add_parser("compose", help="write the quiz in a form (local browser UI)")
+    p.add_argument("source", help="quiz.src.json")
+    p.add_argument("--no-browser", action="store_true"); p.set_defaults(fn=cmd_compose)
+
+    p = sub.add_parser("build", help="compile a quiz source into the quiz, key and config")
+    p.add_argument("source", help="quiz.src.json")
+    p.add_argument("--out", help="where to write (default: beside the source)")
+    p.add_argument("--config", help="grading config to write (default: <stem>.json)")
+    p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("check", help="summarise the config")
     p.add_argument("config"); p.set_defaults(fn=cmd_check)

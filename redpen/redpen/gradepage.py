@@ -6,7 +6,7 @@ the students/ folder it was built from.
 """
 import csv, hashlib, html, json, os
 
-from . import config, matching
+from . import canvas, config, matching
 
 e = html.escape
 
@@ -31,6 +31,28 @@ def load_auto(out_dir):
         return json.load(f)
 
 
+def _canvas(cfg, roster):
+    """What the page needs to write a Canvas gradebook upload.
+
+    The identity columns come from the roster rather than the sheets, because
+    Canvas matches on its own ids; the page only supplies the score.
+    """
+    want = cfg.get("canvas_assignment") or cfg["title"]
+    existing = False
+    book, _ = canvas.gradebook(cfg, config.path_of)
+    try:
+        col, existing = canvas.column(book, want)
+    except (OSError, canvas.CanvasError):
+        col = want
+    out_of = cfg.get("canvas_out_of")
+    return {"column": col, "existing": existing,
+            "outOf": None if out_of is None else float(out_of),
+            "step": float(cfg.get("canvas_round") or 0),
+            "roster": [{"n": r["display"], "i": r.get("id", ""),
+                        "s": r.get("sis_id", ""), "l": r.get("login", ""),
+                        "sec": r.get("section", "")} for r in roster]}
+
+
 def build(cfg, out_dir, dest=None, log=print):
     rows = read_report(out_dir)
     auto = load_auto(out_dir)
@@ -40,6 +62,7 @@ def build(cfg, out_dir, dest=None, log=print):
     roster = matching.load_roster(config.path_of(cfg, "roster"),
                                  cfg["roster_name_column"], cfg["roster_id_column"])
     per = cfg["pages_per_student"]
+    canvas_data = _canvas(cfg, roster)
 
     students, cards, navs = [], [], []
     for r in rows:
@@ -140,6 +163,7 @@ def build(cfg, out_dir, dest=None, log=print):
  <label class="muted" style="cursor:pointer">Load progress
   <input type="file" id="loadf" accept="application/json" style="display:none"></label>
  <button class="pri" id="exp">Export CSV</button>
+ <button class="pri" id="expcanvas">Canvas CSV</button>
  <span class="stat" id="saved"></span></div></div>
 <div class="layout">
  <nav class="nav"><ol>{''.join(navs)}</ol></nav>
@@ -172,6 +196,7 @@ const AUTO={json.dumps({s["stem"]: auto.get(s["stem"], {}) for s in students})};
 const AUTO_STAMP={json.dumps(stamp)};
 const PARTS={json.dumps([{'id':p['id'],'label':p['label'],'points':p['points']} for p in parts])};
 const STORE={json.dumps(store)};
+const CANVAS={json.dumps(canvas_data)};
 {JS}</script></body></html>"""
 
     dest = dest or os.path.join(out_dir, f"{store}_grading.html")
