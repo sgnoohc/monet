@@ -11,8 +11,8 @@ working on exactly the same files.
 import json, mimetypes, os, socket, subprocess, threading, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (canvas, composer, config, gradepage, library, quizdoc, render,
-               reviewpage, split, typstbuild, zoneeditor)
+from . import (autograde, canvas, composer, config, gradepage, library, matching, quizdoc,
+               render, reviewpage, split, typstbuild, zoneeditor)
 from .ui_app import CSS, JS
 
 _docs = {}          # qid -> the loaded quiz source, kept between requests
@@ -44,6 +44,7 @@ def page():
     <button data-t="zones" data-need="cfg">Zones</button>
     <button data-t="scan" data-need="cfg">Scan</button>
     <button data-t="verify" data-need="cfg">Verify</button>
+    <button data-t="autograde" data-need="cfg">Autograde</button>
     <button data-t="grade" data-need="cfg">Grade</button>
     <button data-t="canvas" data-need="cfg">Canvas</button>
    </div>
@@ -58,7 +59,7 @@ def page():
       where they are — nothing is copied, and the command line goes on working
       on the same paths.</p>
      <div class="row"><input type="text" class="path" id="folderpath"
-        placeholder="/Users/you/OneDrive/…/Quizzes"><button class="pri" id="addfolder">Add</button></div>
+        placeholder="/Users/you/OneDrive/…/Quizzes"><button class="pri" id="addfolder">Add</button><button class="nat" id="browsefolder">Browse…</button></div>
      <div class="sug hint" id="sug"></div>
      <ul class="flist" id="flist"></ul>
     </div>
@@ -99,6 +100,13 @@ def page():
 <script>{JS}</script></body></html>"""
 
 
+def _notice(head, body):
+    return ("<!doctype html><meta charset=utf-8>"
+            "<style>body{font:14px -apple-system;padding:26px;color:#444;max-width:520px}"
+            "h3{margin:0 0 6px}</style>"
+            f"<h3>{head}</h3><p>{body}</p>")
+
+
 def _doc(q):
     """The quiz source, loaded once and kept so edits accumulate in memory."""
     d = _docs.get(q["id"])
@@ -130,6 +138,36 @@ def _spawn(q, kind):
     return _sub[key]
 
 
+def set_roster(q, body):
+    """Point the grading config at the class list.
+
+    Read before it is stored, so a wrong file is refused here rather than
+    failing later inside the split with a scan already half-processed.
+    """
+    given = (body.get("path") or "").strip()
+    if not q["config"]:
+        return {"ok": False, "error": "no grading config yet — build the quiz first"}
+    if not given:
+        return {"ok": False, "error": "choose the roster CSV"}
+    path = os.path.realpath(os.path.expanduser(given))
+    if not os.path.isfile(path):
+        return {"ok": False, "error": f"no such file: {given}"}
+    cfg = config.load(q["config"])
+    try:
+        roster = matching.load_roster(path, cfg["roster_name_column"], cfg["roster_id_column"])
+    except Exception as err:
+        return {"ok": False, "error": f"could not read that as a roster: {err}"}
+    if not roster:
+        return {"ok": False, "error": "no students in that file"}
+    # Relative to the config when it is nearby, as build does for the PDFs, so
+    # the course folder can move as a whole; absolute when it is somewhere else.
+    rel = os.path.relpath(path, os.path.realpath(cfg["_dir"]))
+    climbs = len([s for s in rel.split(os.sep) if s == os.pardir])
+    cfg["roster"] = rel if climbs <= 3 else path
+    config.save(cfg)
+    return {"ok": True, "roster": cfg["roster"], "students": len(roster)}
+
+
 def run_step(q, name, body):
     """One step of the workflow.  Returns {log: [...]} and maybe a url."""
     log = []
@@ -158,7 +196,7 @@ def run_step(q, name, body):
         if not cfg.get("name_zone"):
             return {"log": ["no name zone — build or draw the zones first"]}
         if not config.path_of(cfg, "roster"):
-            return {"log": [f"no roster set in {os.path.basename(q['config'])}"]}
+            return {"log": ["no roster set — choose the class list above, then Split"]}
         sheets, roster = split.gather(cfg, scans, log=log.append)
         sheets = split.resolve(cfg, sheets, roster, log=log.append)
         rows = split.write_outputs(cfg, sheets, cfg["_dir"], log=log.append)
@@ -166,6 +204,25 @@ def run_step(q, name, body):
         log.append(f"{len(rows)} sheets written")
         if flagged:
             log.append(f"warning: {len(flagged)} need review — open Verify")
+        return {"log": log}
+
+    if name == "autograde":
+        # The same pass the CLI runs: OCR every answer box against its key and
+        # mark it green / red / amber.  Suggestions only; the grading page
+        # shows the text each verdict came from and every mark stays yours.
+        if not os.path.exists(os.path.join(cfg["_dir"], "split_report.csv")):
+            return {"log": ["nothing split yet — run Scan first"]}
+        missing = [p["id"] for p in cfg["parts"] if p.get("auto", True) and not p.get("key")]
+        if missing:
+            log.append(f"warning: no answer key for {', '.join(missing)} — "
+                       "those parts will read as unsure")
+        dest, tally = autograde.run(cfg, cfg["_dir"], log=log.append)
+        total = sum(tally.values()) or 1
+        log.append(f"wrote {os.path.basename(dest)}")
+        for k in ("correct", "wrong", "unsure", "skip"):
+            if tally.get(k):
+                log.append(f"  {k:<8} {tally[k]:>5}  ({100 * tally[k] / total:.0f}%)")
+        log.append("suggestions only — the grading page shows the text each came from")
         return {"log": log}
 
     if name == "grade":
@@ -251,6 +308,38 @@ class _H(BaseHTTPRequestHandler):
         if not q:
             return self._send(404, "no such quiz")
         what = parts[2]
+        if what == "grading":
+            # Built fresh on every visit -- it is cheap, and the page holds no
+            # state of its own: progress lives in the browser and in the
+            # progress file.  Served from under /files/ so the page's relative
+            # image paths (students/<name>/1a.png) resolve to the quiz folder.
+            if not q["config"]:
+                return self._send(404, "no grading config yet — build the quiz first")
+            cfg = config.load(q["config"])
+            if not os.path.exists(os.path.join(cfg["_dir"], "split_report.csv")):
+                return self._send(200, _notice("Nothing split yet",
+                                  "Run <b>Scan</b> first; the grading page is built "
+                                  "from the sheets it cuts out."))
+            if not cfg["parts"]:
+                return self._send(200, _notice("No graded parts",
+                                  "Build the quiz, or set the parts in <b>Zones</b>."))
+            dest, _n = gradepage.build(cfg, cfg["_dir"], log=lambda *a: None)
+            rel = os.path.relpath(dest, cfg["_dir"]).replace(os.sep, "/")
+            # HTTP/1.1 keep-alive: without a Content-Length the client waits
+            # for a body that never comes.
+            self.send_response(302)
+            self.send_header("Location", f"/q/{q['id']}/files/{rel}")
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        if what == "files":
+            # Anything in the quiz folder, and only the quiz folder.
+            root = os.path.realpath(q["dir"])
+            target = os.path.realpath(os.path.join(root, *parts[3:]))
+            if not target.startswith(root + os.sep) or not os.path.isfile(target):
+                return self._send(404, "not found")
+            return self._file(target)
         if what == "compose":
             if not q["src"]:
                 return self._send(404, "this quiz has no source")
@@ -288,7 +377,7 @@ class _H(BaseHTTPRequestHandler):
         if p == "/api/folders":
             s = library.load_settings()
             if body.get("add"):
-                d = os.path.abspath(os.path.expanduser(body["add"]))
+                d = os.path.realpath(os.path.expanduser(body["add"]))
                 if not os.path.isdir(d):
                     return self._json({"ok": False, "error": f"no such folder: {d}"})
                 if d not in s["folders"]:
@@ -334,6 +423,8 @@ class _H(BaseHTTPRequestHandler):
         what = parts[2]
         if what in ("preview", "build") and q["src"]:
             return self._json(composer.post(_doc(q), body, preview=what == "preview"))
+        if what == "roster":
+            return self._json(set_roster(q, body))
         if what == "step":
             try:
                 return self._json({"ok": True, **run_step(q, parts[3], body)})

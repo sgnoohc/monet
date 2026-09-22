@@ -16,8 +16,11 @@ ROOT=$(pwd)
 VENV=${VENV:-$ROOT/.venv}
 PY=$VENV/bin/python
 APP=$ROOT/mac/dist/redpen.app
-VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
-VERSION=${VERSION:-0.1.0}
+# redpen/__init__.py is the one place the version lives; pyproject reads the
+# same attribute, and this becomes the bundle's CFBundleShortVersionString,
+# which is what the About box shows.
+VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' redpen/__init__.py | head -1)
+[ -n "$VERSION" ] || { echo "no __version__ in redpen/__init__.py"; exit 1; }
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 

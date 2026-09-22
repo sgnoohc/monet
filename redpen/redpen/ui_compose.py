@@ -5,8 +5,13 @@ CSS = TOKENS + """
 .bar{position:sticky;top:0;z-index:30;display:flex;gap:10px;align-items:center;
  flex-wrap:wrap;padding:9px 14px;background:var(--card);border-bottom:1px solid var(--line)}
 .bar input[type=number]{width:60px}
-.main{display:grid;grid-template-columns:230px minmax(0,1fr) minmax(0,46vw);
+.main{display:grid;grid-template-columns:230px minmax(0,1fr) 6px var(--prevw,46vw);
  height:calc(100vh - 47px)}
+.split{cursor:col-resize;background:var(--line);transition:background .15s}
+.split:hover,.main.dragging .split{background:var(--acc)}
+/* The paper is a PDF plug-in, which eats mouse events; ignore it mid-drag. */
+.main.dragging .pane,.main.dragging iframe,.main.dragging embed{pointer-events:none}
+.main.dragging{user-select:none}
 .col{overflow:auto;padding:12px 14px}
 .left{border-right:1px solid var(--line);background:var(--card)}
 .prev{border-left:1px solid var(--line);background:var(--card);padding:0;
@@ -494,6 +499,24 @@ $("#build").addEventListener("click",async()=>{
 $$("[data-doc]").forEach(el=>el.addEventListener("input",()=>{
   if(el.dataset.doc==="pages") render();
 }));
+
+// Drag the divider to give the paper more or less room.  The width is kept
+// in localStorage, so it survives a reload on the same origin.
+(function(){
+  const main=$(".main"), sp=$("#split"); if(!main||!sp) return;
+  const KEY="redpen.compose.prevw";
+  const apply=px=>main.style.setProperty("--prevw",Math.round(px)+"px");
+  try{ const v=+localStorage.getItem(KEY); if(v>=260) apply(v); }catch(e){}
+  sp.addEventListener("mousedown",e=>{
+    e.preventDefault(); main.classList.add("dragging");
+    const move=ev=>{ const r=main.getBoundingClientRect();
+      apply(Math.min(r.width*.7, Math.max(260, r.right-ev.clientX))); };
+    const up=()=>{ document.removeEventListener("mousemove",move);
+      document.removeEventListener("mouseup",up); main.classList.remove("dragging");
+      try{ localStorage.setItem(KEY, parseInt(main.style.getPropertyValue("--prevw"))||""); }catch(e){} };
+    document.addEventListener("mousemove",move); document.addEventListener("mouseup",up);
+  });
+})();
 
 window.addEventListener("beforeunload",e=>{if(dirty&&$("#msg").textContent!=="saved")
   {e.preventDefault();e.returnValue="";}});

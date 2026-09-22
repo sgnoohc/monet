@@ -56,6 +56,8 @@ def build_page(doc, base=""):
 
  <div class="col" id="form"></div>
 
+ <div class="split" id="split" title="drag to resize the paper"></div>
+
  <div class="prev">
   <div class="tabs">
    <button data-v="quiz" class="on">Quiz</button>

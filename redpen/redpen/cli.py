@@ -21,6 +21,7 @@ uploaded anywhere and no language model is involved.
 """
 import argparse, os, subprocess, sys
 
+from . import __version__
 from . import (answerkey, autograde, canvas, composer, config, gradepage, matching,
                ocr, quizdoc, render, reviewpage, split, stats, typstbuild, zoneeditor)
 from . import app as appmod
@@ -445,6 +446,7 @@ def cmd_clean(a):
 def main():
     ap = argparse.ArgumentParser(prog="redpen", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"redpen {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init", help="create a config from a template PDF")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "redpen"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Define answer zones on a quiz, split bulk scans by student, grade in the browser — entirely on your own machine."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -16,6 +16,12 @@ redpen = "redpen.cli:main"
 
 [tool.setuptools]
 packages = ["redpen"]
+
+# One source for the version: redpen/__init__.py.  Package metadata is
+# not carried into the frozen app, so the attribute is what both the
+# CLI and mac/build_app.sh read.
+[tool.setuptools.dynamic]
+version = { attr = "redpen.__version__" }
 
 [tool.setuptools.package-data]
 redpen = ["vision/*.swift"]

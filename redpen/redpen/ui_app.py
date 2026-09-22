@@ -40,6 +40,8 @@ html,body{height:100%}
 .card h3{margin:0 0 4px;font-size:14.5px}
 .card p{margin:4px 0 12px;color:var(--mut);font-size:13px;line-height:1.5}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nat{display:none}
+body.native .nat{display:inline-block}
 .log{background:var(--bg);border:1px solid var(--line2);border-radius:9px;
  padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
  font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;
@@ -71,6 +73,18 @@ const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelecto
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let LIB={folders:[],quizzes:[],suggestions:[]}, CUR=null, TAB="compose";
+
+// The packaged Mac app installs a "redpen" message handler that opens a real
+// NSOpenPanel; a page served to an ordinary browser has no such thing.  The
+// Browse buttons are revealed only when it is there, so nothing is offered
+// that cannot work.
+const NATIVE=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.redpen);
+if(NATIVE) document.body.classList.add("native");
+async function pick(op,opts){
+  if(!NATIVE) return [];
+  try{ return (await window.webkit.messageHandlers.redpen.postMessage({op,...opts}))||[]; }
+  catch(err){ console.error("picker:",err); return []; }
+}
 
 const api=async(p,body)=>{
   const r=await fetch(p, body?{method:"POST",headers:{"Content-Type":"application/json"},
@@ -124,6 +138,7 @@ function show(what, q){
   $$(".panel").forEach(p=>p.classList.add("hide"));
   const frame=$("#frame");
   if(what==="compose"&&q){ frame.src=`/q/${q.id}/compose`; frame.style.display="block"; return; }
+  if(what==="grade"&&q&&q.config){ frame.src=`/q/${q.id}/grading`; frame.style.display="block"; return; }
   frame.style.display="none"; frame.removeAttribute("src");
   const own=["folders","none","new"].includes(what);
   const el=$("#panel-"+(own?what:"step"));
@@ -156,6 +171,7 @@ const STEPS={
  zones:{h:"Zones",p:"Drag the answer rectangles on the template. Written quizzes get these from the build and do not need it.",b:"Open the zone editor"},
  scan:{h:"Split a scan",p:"Cut a bulk scan into one PDF per student, read the names on device and match them to the roster.",b:"Split"},
  verify:{h:"Verify names",p:"Confirm or correct who each sheet belongs to.",b:"Open the verifier"},
+ autograde:{h:"Autograde",p:"Read every answer box on device and mark it right, wrong or unsure against the key. Suggestions for the grading page — nothing is final.",b:"Autograde"},
  grade:{h:"Grade",p:"Build the grading page and open it.",b:"Open the grading page"},
  canvas:{h:"Canvas",p:"Turn a graded export into a CSV the Canvas gradebook will import.",b:"Write the CSV"},
 };
@@ -165,9 +181,15 @@ function paintStep(name,q){
   $("#step-h").textContent=s.h; $("#step-p").textContent=s.p;
   $("#step-go").textContent=s.b; $("#step-go").dataset.step=name;
   $("#step-extra").innerHTML = name==="scan"
-    ? `<label class="hint">Scan PDFs, one path per line — drag the files in from Finder
+    ? `<div class="hint">Roster — the Canvas gradebook export with the class list
+       <div class="row" style="margin-top:4px"><input type="text" class="path" id="roster" style="flex:1"
+        value="${esc(q&&q.roster||"")}" placeholder="../StudentWork/…/2026-09-10T1638_Grades-PHY2060.csv">
+        <button id="rostersave">Set</button><button class="nat" id="rosterbrowse">Browse…</button></div>
+       <div id="rosternote" style="margin-top:3px;white-space:pre-wrap"></div></div>
+       <label class="hint" style="display:block;margin-top:14px">Scan PDFs, one path per line — drag the files in from Finder
        <textarea id="scans" rows="3" style="width:100%;margin-top:4px"
-        placeholder="/path/to/bulk-scan.pdf"></textarea></label>` : "";
+        placeholder="/path/to/bulk-scan.pdf"></textarea></label>
+       <button class="nat" id="browsescans">Browse…</button>` : "";
   $("#step-log").innerHTML="";
 }
 
@@ -181,6 +203,37 @@ document.addEventListener("click",async e=>{
   if(add){ await api("/api/folders",{add:add.dataset.add}); loadLib(CUR); return; }
   const drop=e.target.closest("[data-drop]");
   if(drop){ await api("/api/folders",{remove:drop.dataset.drop}); loadLib(CUR); return; }
+  if(e.target.id==="browsefolder"){
+    const paths=await pick("folder",{message:"Choose a folder of quizzes"});
+    if(!paths.length) return;                       // cancelled
+    const j=await api("/api/folders",{add:paths[0]});
+    if(!j.ok) alert(j.error); else { $("#folderpath").value=""; loadLib(CUR); }
+    return;
+  }
+  if(e.target.id==="rosterbrowse"||e.target.id==="rostersave"){
+    let p=$("#roster").value.trim();
+    if(e.target.id==="rosterbrowse"){
+      const paths=await pick("files",{exts:["csv"],message:"Choose the Canvas gradebook export"});
+      if(!paths.length) return; p=paths[0]; $("#roster").value=p;
+    }
+    const q=LIB.quizzes.find(x=>x.id===CUR); if(!q) return;
+    const j=await api(`/q/${q.id}/roster`,{path:p});
+    $("#rosternote").innerHTML=j.ok
+      ? `<span class="g">${j.students} students — saved as <code>${esc(j.roster)}</code></span>`
+      : `<span class="w">${esc(j.error)}</span>`;
+    // Updated in place rather than reloading the library, which would repaint
+    // this step and wipe the confirmation just shown.
+    if(j.ok){ q.roster=j.roster; $("#roster").value=j.roster; }
+    return;
+  }
+  if(e.target.id==="browsescans"){
+    const paths=await pick("files",{exts:["pdf"],message:"Choose the scan PDFs"});
+    if(!paths.length) return;
+    const ta=$("#scans"), cur=ta.value.trim();
+    // Appended, not replaced: a scan often arrives as several files.
+    ta.value=(cur?cur+"\n":"")+paths.join("\n");
+    return;
+  }
   if(e.target.id==="addfolder"){
     const p=$("#folderpath").value.trim(); if(!p) return;
     const j=await api("/api/folders",{add:p});

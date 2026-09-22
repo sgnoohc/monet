@@ -31,7 +31,16 @@ def load_settings():
             s.update(json.load(f))
     except (OSError, ValueError):
         pass
-    s["folders"] = [f for f in s["folders"] if isinstance(f, str)]
+    # Canonical and de-duplicated: two spellings of one folder are one folder.
+    seen, folders = set(), []
+    for f in s["folders"]:
+        if not isinstance(f, str):
+            continue
+        r = os.path.realpath(os.path.expanduser(f))
+        if r not in seen:
+            seen.add(r)
+            folders.append(r)
+    s["folders"] = folders
     return s
 
 
@@ -46,8 +55,13 @@ def save_settings(s):
 
 
 def quiz_id(path):
-    """Stable across runs, and safe in a URL."""
-    return hashlib.sha1(os.path.abspath(path).encode()).hexdigest()[:12]
+    """Stable across runs, and safe in a URL.
+
+    Resolved through symlinks: ~/OneDrive - … is a link to
+    ~/Library/CloudStorage/OneDrive-…, and the same quiz reached by both
+    must not be listed twice.
+    """
+    return hashlib.sha1(os.path.realpath(path).encode()).hexdigest()[:12]
 
 
 def _is_config(path):
@@ -76,7 +90,7 @@ def scan_folder(folder):
     the composer has both, one whose zones were drawn by hand has only the
     config, and both belong in the list.
     """
-    folder = os.path.abspath(os.path.expanduser(folder))
+    folder = os.path.realpath(os.path.expanduser(folder))
     found = {}
     if not os.path.isdir(folder):
         return []
@@ -108,6 +122,7 @@ def scan_folder(folder):
                              if not q.get("off")]),
             "parts": len(parts),
             "points": round(sum(float(p.get("points", 0)) for p in parts), 2),
+            "roster": cmeta.get("roster") or "",
             "graded": os.path.isdir(os.path.join(folder, "students")),
             "authored": bool(src),
             "mtime": max([os.path.getmtime(p) for p in (src, cfg) if p] or [0]),
