@@ -20,6 +20,12 @@ func freePort() -> UInt16 {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     if fd < 0 { return fallback }
     defer { close(fd) }
+    // A port left in TIME_WAIT by the last launch is free to reuse -- the
+    // backend's own server sets SO_REUSEADDR -- but without this the probe
+    // calls it taken, and a quick relaunch lands on a random port with the
+    // grading progress seemingly gone.
+    var one: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
     var addr = sockaddr_in()
     addr.sin_family = sa_family_t(AF_INET)
     addr.sin_port = want.bigEndian
@@ -158,13 +164,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDe
         done(panel.runModal() == .OK ? panel.urls : nil)
     }
 
-    // A link meant for a new window -- the grading page, a spawned editor --
-    // opens in the same view rather than vanishing.
+    // A link meant for a new window -- a sheet's PDF from the grading page or
+    // the verifier -- gets a window of its own.  Loading it over the main view
+    // instead left the sidebar and tabs behind with no way back but the
+    // context menu; closing this window (Cmd-W) is the way back now.
+    var popups: [NSWindow] = []
     func webView(_ w: WKWebView, createWebViewWith cfg: WKWebViewConfiguration,
                  for action: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let u = action.request.url { w.load(URLRequest(url: u)) }
-        return nil
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 820),
+                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                           backing: .buffered, defer: false)
+        win.title = action.request.url?.lastPathComponent ?? "redpen"
+        win.isReleasedWhenClosed = false
+        let v = WKWebView(frame: win.contentView!.bounds, configuration: cfg)
+        v.autoresizingMask = [.width, .height]
+        v.navigationDelegate = self
+        v.uiDelegate = self
+        win.contentView = v
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        popups.append(win)
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification,
+                                               object: win, queue: .main) { [weak self] _ in
+            self?.popups.removeAll { $0 === win }
+        }
+        return v
+    }
+
+    // A page's own window.close() -- honoured for the windows made above.
+    func webViewDidClose(_ w: WKWebView) {
+        if w !== web { w.window?.close() }
+    }
+
+    func webView(_ w: WKWebView, didFinish nav: WKNavigation!) {
+        if w !== web, let t = w.title, !t.isEmpty { w.window?.title = t }
     }
 
     // MARK: - Downloads
@@ -193,7 +227,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDe
         panel.nameFieldStringValue = name
         panel.canCreateDirectories = true
         panel.beginSheetModal(for: window) { resp in
-            completionHandler(resp == .OK ? panel.url : nil)
+            guard resp == .OK, let url = panel.url else { completionHandler(nil); return }
+            // WKDownload refuses a destination that already exists: without
+            // this, choosing Replace in the panel failed the download and left
+            // the old file in place -- an earlier export, unscaled, that looked
+            // like the new one.  The panel has already asked about replacing.
+            if FileManager.default.fileExists(atPath: url.path) {
+                do { try FileManager.default.removeItem(at: url) }
+                catch { self.show("Could not replace \(url.lastPathComponent): \(error.localizedDescription)")
+                        completionHandler(nil); return }
+            }
+            completionHandler(url)
         }
     }
     func download(_ d: WKDownload, didFailWithError e: Error, resumeData: Data?) {
@@ -270,6 +314,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDe
                         action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
+        // Window menu: Cmd-W closes a PDF window and leaves the app.
+        let winItem = NSMenuItem()
+        let winMenu = NSMenu(title: "Window")
+        winMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)),
+                        keyEquivalent: "w")
+        winMenu.addItem(withTitle: "Minimize",
+                        action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        winItem.submenu = winMenu
+
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: "Edit")
@@ -279,11 +332,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDe
             edit.addItem(withTitle: t, action: NSSelectorFromString(s), keyEquivalent: k)
         }
         editItem.submenu = edit
+        main.addItem(winItem)
+        NSApp.windowsMenu = winMenu
         NSApp.mainMenu = main
     }
 
-    @objc func reload() { web.reload() }
-    @objc func goBack() { web.goBack() }
+    // Whichever window is in front, so Back and Reload act on what you see.
+    var front: WKWebView { (NSApp.keyWindow?.contentView as? WKWebView) ?? web }
+    @objc func reload() { front.reload() }
+    @objc func goBack() { front.goBack() }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ a: NSApplication) -> Bool { true }
     func applicationWillTerminate(_ note: Notification) { backend?.terminate() }

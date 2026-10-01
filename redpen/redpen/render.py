@@ -1,5 +1,5 @@
 """PDF -> page PNGs -> zone crops, via poppler.  All local."""
-import base64, io, os, re, subprocess
+import base64, io, os, re, subprocess, threading
 from PIL import Image
 
 CACHE = ".redpen_cache"
@@ -29,8 +29,13 @@ def render_page(pdf, page, dpi, outdir, force=False):
     """Render one 1-based page.  Returns the PNG path (cached)."""
     stem = re.sub(r"\W+", "_", os.path.splitext(os.path.basename(pdf))[0])
     dest = os.path.join(outdir, f"{stem}_{dpi}_{page:05d}.png")
-    if force or not os.path.exists(dest):
-        prefix = os.path.join(outdir, f"_tmp{os.getpid()}")
+    # The cache is keyed by file name, so a scan rebuilt under the same name
+    # (re-cropped, re-ordered) must not be served from its predecessor's pages.
+    stale = os.path.exists(dest) and os.path.getmtime(dest) < os.path.getmtime(pdf)
+    if force or stale or not os.path.exists(dest):
+        # One prefix per thread and page: the preview asks for every page at
+        # once, and a shared prefix let one request pick up another's file.
+        prefix = os.path.join(outdir, f"_tmp{os.getpid()}_{threading.get_ident()}_{page}")
         run(["pdftoppm", "-r", str(dpi), "-png", "-f", str(page), "-l", str(page),
              pdf, prefix])
         made = [f for f in os.listdir(outdir) if f.startswith(os.path.basename(prefix))]

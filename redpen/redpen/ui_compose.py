@@ -15,7 +15,7 @@ CSS = TOKENS + """
 .col{overflow:auto;padding:12px 14px}
 .left{border-right:1px solid var(--line);background:var(--card)}
 .prev{border-left:1px solid var(--line);background:var(--card);padding:0;
- display:flex;flex-direction:column}
+ display:flex;flex-direction:column;min-height:0;overflow:hidden}
 h3{display:flex;align-items:baseline;gap:8px;font-size:11.5px;text-transform:uppercase;
  letter-spacing:.05em;color:var(--mut);margin:16px 0 8px;
  border-bottom:1px solid var(--line2);padding-bottom:5px}
@@ -97,6 +97,8 @@ textarea:focus,input:focus{outline:2px solid var(--acc);outline-offset:-1px}
 .sketch td.dim{width:78px}
 .sol{margin-top:2px}
 
+input.need:placeholder-shown{border-color:var(--bl,#b7791f);background:var(--blbg,#fbf3dc)}
+input.need::placeholder{color:var(--bl,#b7791f)}
 /* ---- preview ---- */
 .tabs{display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);
  align-items:center}
@@ -201,6 +203,34 @@ function partPoints(p){
 const onPaper=()=>DOC.problems.filter(p=>!p.off);
 const totalPoints=()=>onPaper().reduce((a,p)=>a+(Number(p.points)||0),0);
 
+// Mirrors quizdoc.plain_key: what a blank "OCR reads" falls back to -- the
+// printed answer with simple Typst math ($, "upright", ^powers) flattened.
+const TYPST_WORD=/[#{}_\\]|\b(times|dot|frac|sqrt|approx|degree|pi|theta|mu|Delta)\b/;
+function plainKey(a){
+  a=String(a==null?"":a).trim();
+  if(!a.includes("$")) return a;
+  let s=a.replace(/\$/g," ");
+  if(TYPST_WORD.test(s)) return a;
+  return s.replace(/"/g," ").replace(/\s*\^\s*/g,"^").replace(/\s*\/\s*/g,"/")
+          .replace(/\s+/g," ").trim();
+}
+// The greyed hint in a blank "OCR reads": what autograde will compare
+// against, or a warning when the answer has no plain spelling.
+function ocrHint(ans){
+  const k=plainKey(ans);
+  if(!k) return {ph:"same as the answer", need:false, tip:""};
+  if(/[$#]/.test(k)) return {ph:"type it plainly, e.g. 2 m/s^2", need:true,
+    tip:"the answer uses Typst markup, which handwriting can never match — "
+       +"until this is filled in, this box is not autograded"};
+  return {ph:k, need:false, tip:"blank: autograde compares against this"};
+}
+const ocrAttrs=ans=>{const h=ocrHint(ans);
+  return `${h.need?'class="need" ':""}placeholder="${esc(h.ph)}" title="${esc(h.tip)}"`;};
+function refreshHint(path){          // path of an .answer field
+  const f=$(`[data-path="${path.replace(/\.answer$/,".key")}"]`); if(!f) return;
+  const h=ocrHint(get(path)); f.placeholder=h.ph; f.title=h.tip; f.classList.toggle("need",h.need);
+}
+
 // ---- the form ----------------------------------------------------
 function boxRow(bp,b,pi,qi,bi,nb,pts){
   const sk=b.kind==="sketch";
@@ -209,7 +239,7 @@ function boxRow(bp,b,pi,qi,bi,nb,pts){
    <td><input type="text" class="mono" data-path="${bp}.answer" value="${esc(b.answer)}"
         placeholder="printed on the key"></td>
    <td><input type="text" data-path="${bp}.key" value="${esc(b.key||"")}"
-        placeholder="${esc(b.answer||"same")}"></td>
+        ${ocrAttrs(b.answer)}></td>
    <td><input type="text" data-list="${bp}.alt" value="${esc((b.alt||[]).join(" | "))}"
         placeholder="a | b"></td>
    <td><select data-path="${bp}.kind">
@@ -279,7 +309,11 @@ function render(){
     for(let i=1;i<=DOC.pages;i++) s+=`<option value="${i}"${n===i?" selected":""}>p${i}</option>`;
     return s;};
   let num=0;
-  $("#form").innerHTML=DOC.problems.map((p,pi)=>{
+  // Where the form was scrolled.  Rebuilding it -- and grow() shrinking every
+  // textarea to measure it -- collapses the column for a moment, and the
+  // browser clamps the scroll position while it is short.
+  const form=$("#form"), top=form.scrollTop;
+  form.innerHTML=DOC.problems.map((p,pi)=>{
     // Archived: it keeps its place in the form so it can be found and put
     // back, but collapses to its title -- an off problem that still filled
     // the column would be the same clutter as deleting it was meant to avoid.
@@ -330,8 +364,33 @@ function render(){
   outline();
   if(keep){
     const el=$(`[data-path="${keep}"],[data-list="${keep}"],[data-join="${keep}"]`);
-    if(el){el.focus(); if(s0!=null){try{el.setSelectionRange(s0,s1);}catch(_){}}}
+    if(el){el.focus({preventScroll:true}); if(s0!=null){try{el.setSelectionRange(s0,s1);}catch(_){}}}
   }
+  form.scrollTop=top;
+}
+
+// After a button adds or moves something: scroll only as far as needed to
+// show it, and put the caret in its first field when it is new.
+function reveal(sel, focus){
+  const el=$(sel); if(!el) return;
+  (el.closest(".part, tr, section")||el).scrollIntoView({block:"nearest"});
+  if(focus) el.focus({preventScroll:true});
+}
+
+// The greyed-out shares in blank marks fields, recomputed without touching
+// any field that has a value (or the caret) in it.
+function refreshPoints(){
+  DOC.problems.forEach((p,pi)=>{
+    if(p.off) return;
+    const pts=partPoints(p);
+    p.parts.forEach((q,qi)=>{
+      const qp=`problems.${pi}.parts.${qi}`;
+      const qi_=$(`[data-path="${qp}.points"]`); if(qi_) qi_.placeholder=pts[qi];
+      const each=boxPoints(q,pts[qi]);
+      q.boxes.forEach((b,bi)=>{const bi_=$(`[data-path="${qp}.boxes.${bi}.points"]`);
+        if(bi_) bi_.placeholder=each[bi];});
+    });
+  });
 }
 
 function outline(){
@@ -376,7 +435,8 @@ function grow(t){t.style.height="auto";t.style.height=(t.scrollHeight+2)+"px";}
 document.addEventListener("input",e=>{
   const t=e.target;
   if(t.tagName==="TEXTAREA") grow(t);
-  if(t.id==="target"){outline();return;}
+  // saved in the quiz source with everything else, so it is there next time
+  if(t.id==="target"){DOC.target=Number(t.value)||0; outline(); touch(); return;}
   if(t.dataset.path){
     let v=t.value;
     if(t.type==="number") v = v===""?"":Number(v);
@@ -392,7 +452,13 @@ document.addEventListener("input",e=>{
   } else return;
   // A label shows up only in the outline, which is redrawn either way — so it
   // does not earn a full rebuild of the form.
-  if(t.dataset.path&&/\.(kind|points|direct)$/.test(t.dataset.path)) render();
+  // Marks are typed a digit at a time into a number field, and a number
+  // field cannot report or restore its caret -- rebuilding the form under it
+  // selected the whole value after the first digit.  So marks only refresh
+  // the shares shown beside them, in place.
+  if(t.dataset.path&&/\.answer$/.test(t.dataset.path)){ refreshHint(t.dataset.path); outline(); }
+  else if(t.dataset.path&&/\.points$/.test(t.dataset.path)){ refreshPoints(); outline(); }
+  else if(t.dataset.path&&/\.(kind|direct)$/.test(t.dataset.path)) render();
   else outline();
   touch();
 });
@@ -426,6 +492,16 @@ document.addEventListener("click",e=>{
   else if(a==="delbox") P[pi].parts[qi].boxes.splice(bi,1);
   else return;
   render(); touch();
+  const qp=q=>`problems.${pi}.parts.${q}`, clamp=(i,n)=>Math.max(0,Math.min(n-1,i));
+  if(a==="addprob") reveal(`[data-path="problems.${P.length-1}.title"]`, true);
+  else if(a==="addpart"){const n=P[pi].parts.length-1;
+    reveal(`[data-path="${qp(n)}.question"]`, true);}
+  else if(a==="addbox"){const n=P[pi].parts[qi].boxes.length-1;
+    reveal(`[data-path="${qp(qi)}.boxes.${n}.label"]`, true);}
+  else if(a==="upp"||a==="dnp") reveal(`#prob${clamp(pi+(a==="upp"?-1:1),P.length)}`);
+  else if(a==="upq"||a==="dnq"){const n=clamp(qi+(a==="upq"?-1:1),P[pi].parts.length);
+    reveal(`[data-path="${qp(n)}.points"]`);}
+  else if(a==="onoff") reveal(`#prob${pi}`);
 });
 
 // ---- preview -----------------------------------------------------
@@ -460,24 +536,37 @@ async function preview(){
   if(again) preview();
 }
 
+// Pages are drawn as images rather than the browser's PDF viewer, because a
+// fresh viewer always opens at page 1 -- every rebuild threw away where you
+// were reading.  The new pages load off-screen and are swapped in whole, at
+// the same scroll position, so the preview never flashes or jumps.
+let PAINT=0;
 function paint(){
-  const pane=$("#pane");
-  if(VIEW==="zones"){
-    let h="";
-    for(let p=1;p<=PAGES;p++){
-      h+=`<div class="pg"><img src="${BASE}/png/${p}?v=${VER}">`;
-      ZONES.filter(z=>z.page===p).forEach(z=>{
-        h+=`<div class="zn ${z.kind==="name"?"name":""}" style="left:${z.x*100}%;
-          top:${z.y*100}%;width:${z.w*100}%;height:${z.h*100}%"><i>${esc(z.id)}</i></div>`;
-      });
-      h+="</div>";
-    }
-    pane.innerHTML=h;
-  } else {
-    // An iframe rather than an embed: the same built-in PDF viewer, but it
-    // also renders inside a WKWebView, which the Mac app will be.
-    pane.innerHTML=`<iframe src="${BASE}/pdf/${VIEW}?v=${VER}#toolbar=0&view=FitH"></iframe>`;
+  const pane=$("#pane"), which=VIEW==="key"?"key":"quiz", mine=++PAINT;
+  $("#openpdf").href=`${BASE}/pdf/${which}?v=${VER}`;
+  const box=document.createElement("div");
+  const imgs=[];
+  for(let p=1;p<=PAGES;p++){
+    const pg=document.createElement("div"); pg.className="pg";
+    const im=new Image(); im.src=`${BASE}/png/${which}/${p}?v=${VER}`; im.alt=`page ${p}`;
+    pg.appendChild(im); imgs.push(im);
+    if(VIEW==="zones") ZONES.filter(z=>z.page===p).forEach(z=>{
+      const d=document.createElement("div"); d.className="zn"+(z.kind==="name"?" name":"");
+      d.style.cssText=`left:${z.x*100}%;top:${z.y*100}%;width:${z.w*100}%;height:${z.h*100}%`;
+      d.innerHTML=`<i>${esc(z.id)}</i>`; pg.appendChild(d);
+    });
+    box.appendChild(pg);
   }
+  // Plain load/error events: decode() can sit unresolved on an image that
+  // is not in the document yet.  A page that fails still swaps in (as a
+  // broken image) rather than holding the preview back.
+  const ready=im=>im.complete?Promise.resolve():new Promise(ok=>{im.onload=im.onerror=ok;});
+  Promise.all(imgs.map(ready)).then(()=>{
+    if(mine!==PAINT) return;                 // a newer build already painted
+    const top=pane.scrollTop;
+    pane.replaceChildren(...box.childNodes);
+    pane.scrollTop=top;
+  });
 }
 
 $$(".tabs button").forEach(b=>b.classList.toggle("on", b.dataset.v===VIEW));

@@ -46,6 +46,16 @@ body.native .nat{display:inline-block}
  padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
  font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word;
  max-height:46vh;overflow:auto;margin-top:12px}
+.prog{margin-top:12px}
+.prog:empty{display:none}
+.prog .bar{height:6px;border-radius:3px;background:var(--line2);overflow:hidden}
+.prog .bar i{display:block;height:100%;background:var(--acc);border-radius:3px;
+ transition:width .25s ease}
+.prog .bar.ind i{width:30%;animation:ind 1.1s ease-in-out infinite}
+@keyframes ind{0%{margin-left:-30%}100%{margin-left:100%}}
+.prog .pt{display:flex;justify-content:space-between;gap:10px;margin-top:5px;
+ font-size:12px;color:var(--mut)}
+.prog .pt b{font-weight:500;color:var(--ink)}
 .log .w{color:var(--no)}
 .log .g{color:var(--ok)}
 .empty{max-width:520px;margin:12vh auto;text-align:center;color:var(--mut)}
@@ -73,6 +83,15 @@ const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelecto
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let LIB={folders:[],quizzes:[],suggestions:[]}, CUR=null, TAB="compose";
+// The zone editor and the verifier are separate servers; once opened they are
+// shown in the frame, under the same tabs, so the way back is the sidebar and
+// not the browser's Back.  Keyed by quiz and step, so returning to the tab
+// finds the editor where it was left.
+const OPENED={};
+// Steps run in the background on the server; RUN holds the latest state of
+// each, by quiz and step, so leaving the tab and coming back finds it still
+// counting rather than blank.
+const RUN={};
 
 // The packaged Mac app installs a "redpen" message handler that opens a real
 // NSOpenPanel; a page served to an ordinary browser has no such thing.  The
@@ -139,6 +158,13 @@ function show(what, q){
   const frame=$("#frame");
   if(what==="compose"&&q){ frame.src=`/q/${q.id}/compose`; frame.style.display="block"; return; }
   if(what==="grade"&&q&&q.config){ frame.src=`/q/${q.id}/grading`; frame.style.display="block"; return; }
+  const sub=q&&OPENED[q.id+":"+what];
+  if(sub){
+    // Only when it changed: reassigning the same src would reload the editor
+    // and throw away whatever was being dragged.
+    if(frame.getAttribute("src")!==sub) frame.src=sub;
+    frame.style.display="block"; return;
+  }
   frame.style.display="none"; frame.removeAttribute("src");
   const own=["folders","none","new"].includes(what);
   const el=$("#panel-"+(own?what:"step"));
@@ -191,6 +217,29 @@ function paintStep(name,q){
         placeholder="/path/to/bulk-scan.pdf"></textarea></label>
        <button class="nat" id="browsescans">Browse…</button>` : "";
   $("#step-log").innerHTML="";
+  $("#step-prog").innerHTML="";
+  $("#step-go").disabled=false;
+  const r=q&&RUN[q.id+":"+name];
+  if(r) paintRun(r);
+}
+
+function paintRun(r){
+  $("#step-go").disabled=!r.done;
+  const lines=r.log||[];
+  const shown=lines.length?lines:(r.done?[r.error||"no output"]:[]);
+  $("#step-log").innerHTML=shown.map(l=>
+    `<span class="${/warning|error/i.test(l)?"w":"g"}">${esc(l)}</span>`).join("\n");
+  $("#step-log").style.display=shown.length?"":"none";
+  const el=$("#step-prog");
+  if(r.done){ el.innerHTML=""; return; }
+  const p=r.progress, secs=Math.round(r.elapsed||0)+"s";
+  el.innerHTML=p
+    ? `<div class="bar"><i style="width:${Math.max(2,100*p.n/p.total)}%"></i></div>
+       <div class="pt"><b>${esc(p.text.replace(/^\s*\d+\/\d+\s*/,"")||"working")}</b>
+        <span>${p.n} of ${p.total} · ${secs}</span></div>`
+    : `<div class="bar ind"><i></i></div>
+       <div class="pt"><b>working…</b><span>${secs}</span></div>`;
+  const lg=$("#step-log"); lg.scrollTop=lg.scrollHeight;
 }
 
 // ---- events ------------------------------------------------------
@@ -261,23 +310,29 @@ document.addEventListener("click",async e=>{
 
 async function runStep(name){
   const q=LIB.quizzes.find(x=>x.id===CUR); if(!q) return;
-  const log=$("#step-log"); const go=$("#step-go");
+  const key=q.id+":"+name;
   const body={};
   if(name==="scan") body.scans=$("#scans").value.split("\n").map(s=>s.trim()).filter(Boolean);
-  go.disabled=true; log.innerHTML='<span class="spin"></span> working…';
-  let j;
+  const here=()=>CUR===q.id&&TAB===name;
+  let r=RUN[key]={done:false,log:[],elapsed:0};
+  if(here()) paintRun(r);
   try{
-    j=await api(`/q/${q.id}/step/${name}`, body);
+    const start=await api(`/q/${q.id}/step/${name}`, body);
+    if(!start.job) r={done:true,...start};
+    while(!r.done){
+      await new Promise(ok=>setTimeout(ok,350));
+      r=await api(`/api/job/${start.job}`);
+      RUN[key]=r;
+      if(here()) paintRun(r);
+    }
   }catch(err){
-    j={log:["error: "+err]};
-  }finally{
-    // Always: a button left disabled by a failure is indistinguishable from
-    // an app that has died.
-    go.disabled=false;
+    r={done:true,log:[...(r.log||[]),"error: "+err]};
   }
-  if(j.url){ window.open(j.url,"_blank"); }
-  log.innerHTML=(j.log||[j.error||"no output"]).map(l=>
-    `<span class="${/warning|error/i.test(l)?"w":"g"}">${esc(l)}</span>`).join("\n");
+  // Always ends done: a button left disabled by a failure is
+  // indistinguishable from an app that has died.
+  RUN[key]=r;
+  if(here()) paintRun(r);
+  if(r.url){ OPENED[key]=r.url; if(here()) show(name,q); }
   loadLib(CUR);
 }
 

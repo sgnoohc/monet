@@ -1,7 +1,7 @@
 """Split bulk scans into per-student PDFs plus zone PNGs."""
 import csv, os, shutil, subprocess
 
-from . import config, matching, ocr, render
+from . import align, config, matching, ocr, render
 
 
 def sheets_in(pdf, per):
@@ -26,11 +26,14 @@ def gather(cfg, scans, log=print):
     words = matching.custom_words(roster)
     cache = render.cache_dir(cfg["_dir"], "pages")
 
-    sheets = []
-    for pdf in scans:
-        n = sheets_in(pdf, per)
+    counts = [sheets_in(pdf, per) for pdf in scans]
+    for pdf, n in zip(scans, counts):
         log(f"  {os.path.basename(pdf)}: {n} sheets")
+    total = sum(counts)
+    sheets = []
+    for pdf, n in zip(scans, counts):
         for k in range(n):
+            log(f"  {len(sheets) + 1:>3}/{total}  reading names")
             first = k * per + 1
             png = render.render_page(pdf, first + nz["page"] - 1, cfg["ocr_dpi"], cache)
             crop = render.crop_rect(png, nz["rect"], pad=0.004)
@@ -69,9 +72,8 @@ def write_outputs(cfg, sheets, out_dir, log=print):
     review = os.path.join(out_dir, "needs_review")
     for d in (students, review):
         os.makedirs(d, exist_ok=True)
-    cache = render.cache_dir(cfg["_dir"], "pages")
-    zones = cfg["zones"]
-    per = cfg["pages_per_student"]
+    # sheets are numbered afresh, so alignments made for the last split are void
+    align.clear(out_dir)
     rows = []
 
     for n, s in enumerate(sheets, 1):
@@ -87,16 +89,7 @@ def write_outputs(cfg, sheets, out_dir, log=print):
 
         _extract(s["pdf"], s["pages"], pdf_out)
 
-        for p in range(1, per + 1):
-            page_png = render.render_page(s["pdf"], s["first_page"] + p - 1,
-                                            cfg["dpi"], cache)
-            shutil.copy2(page_png, os.path.join(folder, f"page{p}.png"))
-        for z in zones:
-            page_png = render.render_page(s["pdf"], s["first_page"] + z["page"] - 1,
-                                            cfg["dpi"], cache)
-            pad = 0.0 if z.get("kind") == "answer" and z.get("tight") else 0.004
-            render.crop_rect(page_png, z["rect"], pad=pad).save(
-                os.path.join(folder, f"{z['id']}.png"))
+        align.cut_sheet(cfg, s["pdf"], s["first_page"], folder)
 
         rows.append({
             "sheet": n, "source": os.path.basename(s["pdf"]),
@@ -142,8 +135,7 @@ def recrop(cfg, out_dir, log=print):
         raise RuntimeError("split_report.csv not found — run 'redpen run' first")
     with open(report, newline="") as f:
         rows = list(_csv.DictReader(f))
-    cache = render.cache_dir(cfg["_dir"], "pages")
-    per = cfg["pages_per_student"]
+    aligns = align.load(out_dir)
     scans = {}
     for r in rows:
         key, flagged = r["file_key"], bool(r["review"])
@@ -153,13 +145,7 @@ def recrop(cfg, out_dir, log=print):
             log(f"  !! {stem}: folder missing, skipped"); continue
         pdf = scans.setdefault(r["source"], _find_scan(cfg, out_dir, r["source"]))
         first = int(r["pages"].split("-")[0])
-        for p_i in range(1, per + 1):
-            png = render.render_page(pdf, first + p_i - 1, cfg["dpi"], cache)
-            shutil.copy2(png, os.path.join(folder, f"page{p_i}.png"))
-        for z in cfg["zones"]:
-            png = render.render_page(pdf, first + z["page"] - 1, cfg["dpi"], cache)
-            render.crop_rect(png, z["rect"], pad=0.004).save(
-                os.path.join(folder, f"{z['id']}.png"))
+        align.cut_sheet(cfg, pdf, first, folder, aligns.get(str(r["sheet"])))
     log(f"  re-cut {len(cfg['zones'])} zones for {len(rows)} sheets")
     return rows
 

@@ -28,7 +28,7 @@ def build_page(doc, base=""):
 <div class="bar"><strong>Composer</strong>
  <span class="muted">{os.path.basename(doc['_path'])}</span>
  <span class="grow"></span>
- <span class="muted">target</span><input type="number" id="target" min="0" step="5" value="100">
+ <span class="muted">target</span><input type="number" id="target" min="0" step="5" value="{_target(doc)}">
  <button class="pri" id="build" title="write the PDFs and the grading config">Build</button>
  <span id="msg" class="muted"></span></div>
 <div class="main">
@@ -64,6 +64,7 @@ def build_page(doc, base=""):
    <button data-v="key">Key</button>
    <button data-v="zones">Zones</button>
    <span class="grow"></span>
+   <a class="tiny" id="openpdf" target="_blank" title="the real PDF, to zoom or print">PDF &#8599;</a>
    <span class="tiny">updates as you type</span>
   </div>
   <div class="pane" id="pane"></div>
@@ -72,6 +73,14 @@ def build_page(doc, base=""):
 </div>
 <script>const STATE={json.dumps(state)};
 {JS}</script></body></html>"""
+
+
+def _target(doc):
+    try:
+        t = float(doc.get("target", 100))
+    except (TypeError, ValueError):
+        return 100
+    return int(t) if t == int(t) else t
 
 
 def _a(s):
@@ -134,14 +143,18 @@ class _H(BaseHTTPRequestHandler):
         if path == "/pdf/key":
             return self._file(os.path.join(d, f"{stem}-key.pdf"), "application/pdf")
         if path.startswith("/png/"):
+            # /png/<n> is the quiz; /png/quiz/<n> and /png/key/<n> name it.
+            bits = path.strip("/").split("/")
             try:
-                n = int(path.rsplit("/", 1)[1])
+                n = int(bits[-1])
             except ValueError:
                 return self._send(404, "no such page")
-            pdf = os.path.join(d, f"{stem}.pdf")
+            key = len(bits) == 3 and bits[1] == "key"
+            pdf = os.path.join(d, f"{stem}-key.pdf" if key else f"{stem}.pdf")
             if not os.path.exists(pdf):
                 return self._send(404, "not built yet")
-            png = render.render_page(pdf, n, 150, render.cache_dir(d, "png"),
+            png = render.render_page(pdf, n, 150,
+                                     render.cache_dir(d, "png-key" if key else "png"),
                                      force=True)
             return self._file(png, "image/png")
         self._send(404, "not found")

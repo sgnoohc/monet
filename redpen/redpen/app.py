@@ -8,7 +8,7 @@ started on their own loopback ports and shown in a frame, unchanged.
 Everything still runs here.  Nothing is uploaded, and the command line keeps
 working on exactly the same files.
 """
-import json, mimetypes, os, socket, subprocess, threading, webbrowser
+import json, mimetypes, os, re, socket, subprocess, threading, time, uuid, webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (autograde, canvas, composer, config, gradepage, library, matching, quizdoc,
@@ -17,6 +17,8 @@ from .ui_app import CSS, JS
 
 _docs = {}          # qid -> the loaded quiz source, kept between requests
 _sub = {}           # (qid, kind) -> url of a spawned editor
+_mtimes = {}        # qid -> mtime of the source when it was loaded
+_jobs = {}          # job id -> Job, a step running in the background
 
 
 def page():
@@ -91,7 +93,8 @@ def page():
      <h3 id="step-h"></h3><p id="step-p"></p>
      <div id="step-extra"></div>
      <div class="row"><button class="pri" id="step-go"></button></div>
-     <div class="log" id="step-log"></div>
+     <div class="prog" id="step-prog"></div>
+     <div class="log" id="step-log" style="display:none"></div>
     </div>
    </div>
   </div>
@@ -108,12 +111,46 @@ def _notice(head, body):
 
 
 def _doc(q):
-    """The quiz source, loaded once and kept so edits accumulate in memory."""
+    """The quiz source, loaded once and kept so edits accumulate in memory.
+
+    Reloaded when the file on disk has changed since -- edited by hand, by the
+    CLI, or synced in from another Mac -- so a Build never compiles a copy
+    older than the file, and the composer's next save never overwrites it.
+    """
     d = _docs.get(q["id"])
-    if d is None or d.get("_path") != q["src"]:
+    mtime = os.path.getmtime(q["src"])
+    if d is None or d.get("_path") != q["src"] or _mtimes.get(q["id"]) != mtime:
         d = quizdoc.load(q["src"])
         _docs[q["id"]] = d
+        _mtimes[q["id"]] = mtime
     return d
+
+
+def sync_rubric(q, cfg, log):
+    """Bring the config's keys and points up to date with the source.
+
+    Build is what writes the config, but a changed key or a re-weighted part
+    alters nothing on the paper, and grading against the last Build's rubric
+    after editing it in Compose is a silent wrong answer.  So Autograde and
+    Grade take the rubric from the source as it is now.  When the source's
+    parts no longer line up with the zones that were built, only a Build can
+    fix that, and it says so rather than guessing.
+    """
+    if not q["src"]:
+        return cfg                       # drawn by hand: the config is the rubric
+    fresh = typstbuild.parts_of(_doc(q), {z["id"] for z in cfg["zones"]})
+    shape = lambda ps: [(p["id"], p["zones"]) for p in ps]
+    if shape(fresh) != shape(cfg["parts"]):
+        log("warning: the source's parts no longer match the built zones — "
+            "press Build, then run this again")
+        return cfg
+    if fresh != cfg["parts"]:
+        old = sum(p["points"] for p in cfg["parts"])
+        cfg["parts"] = fresh
+        config.save(cfg)
+        log(f"rubric updated from the source ({old:g} → "
+            f"{sum(p['points'] for p in fresh):g} pts)")
+    return cfg
 
 
 def _spawn(q, kind):
@@ -168,9 +205,70 @@ def set_roster(q, body):
     return {"ok": True, "roster": cfg["roster"], "students": len(roster)}
 
 
-def run_step(q, name, body):
+class Job(list):
+    """A running step's log, readable while it is still being written.
+
+    The steps report progress as "  12/40 ..." lines.  Here a run of those
+    collapses into its latest line, and the latest one is kept apart as
+    {n, total, text}, so the page can draw a bar instead of a scroll of
+    counters.
+    """
+    PROGRESS = re.compile(r"\s*(\d+)/(\d+)\b")
+
+    def __init__(self):
+        super().__init__()
+        self.progress, self.result, self.done = None, None, False
+        self.started = time.time()
+        self._counting = False
+
+    def append(self, line):
+        m = self.PROGRESS.match(line)
+        if m:
+            if self._counting:
+                self[-1] = line
+            else:
+                super().append(line)
+            self.progress = {"n": int(m[1]), "total": int(m[2]), "text": line.strip()}
+        else:
+            super().append(line)
+        self._counting = bool(m)
+
+    def state(self):
+        out = {"done": self.done, "log": list(self), "progress": self.progress,
+               "elapsed": round(time.time() - self.started, 1)}
+        if self.done:
+            out.update(self.result)
+            out["log"] = list(self)
+        return out
+
+
+def start_step(q, name, body):
+    """Run one step on a thread and hand back an id to poll it by."""
+    jid = uuid.uuid4().hex[:12]
+    job = _jobs[jid] = Job()
+
+    def work():
+        try:
+            job.result = {"ok": True, **run_step(q, name, body, log=job)}
+        except Exception as err:
+            msg = str(err).strip() or type(err).__name__
+            job.append(f"error: {msg}")
+            job.result = {"ok": False, "error": msg}
+        finally:
+            # The job is the log.  Steps that stop early return a fresh list
+            # ("nothing split yet ...") rather than appending; keep its lines.
+            lines = job.result.pop("log", None)
+            if lines is not None and lines is not job:
+                for line in lines:
+                    job.append(line)
+            job.done = True
+    threading.Thread(target=work, daemon=True).start()
+    return jid
+
+
+def run_step(q, name, body, log=None):
     """One step of the workflow.  Returns {log: [...]} and maybe a url."""
-    log = []
+    log = [] if log is None else log
     if name == "build":
         if not q["src"]:
             return {"log": ["this quiz has no source — its zones were drawn by hand"]}
@@ -205,6 +303,9 @@ def run_step(q, name, body):
         if flagged:
             log.append(f"warning: {len(flagged)} need review — open Verify")
         return {"log": log}
+
+    if name in ("autograde", "grade"):
+        cfg = sync_rubric(q, cfg, log.append)
 
     if name == "autograde":
         # The same pass the CLI runs: OCR every answer box against its key and
@@ -298,6 +399,13 @@ class _H(BaseHTTPRequestHandler):
                                if not quizzes else {},
                                "suggestions": library.suggest_folders()
                                if not s["folders"] else []})
+        if p.startswith("/api/job/"):
+            job = _jobs.get(p.rsplit("/", 1)[-1])
+            if job is None:                 # not `not job`: a Job with no lines yet is empty
+                return self._json({"done": True, "ok": False, "error": "no such job",
+                                   "log": ["error: that step is no longer running — "
+                                           "was the app restarted?"]})
+            return self._json(job.state())
         if p.startswith("/q/"):
             return self._quiz_get(p)
         self._send(404, "not found")
@@ -315,7 +423,7 @@ class _H(BaseHTTPRequestHandler):
             # image paths (students/<name>/1a.png) resolve to the quiz folder.
             if not q["config"]:
                 return self._send(404, "no grading config yet — build the quiz first")
-            cfg = config.load(q["config"])
+            cfg = sync_rubric(q, config.load(q["config"]), lambda *a: None)
             if not os.path.exists(os.path.join(cfg["_dir"], "split_report.csv")):
                 return self._send(200, _notice("Nothing split yet",
                                   "Run <b>Scan</b> first; the grading page is built "
@@ -349,11 +457,14 @@ class _H(BaseHTTPRequestHandler):
             name = f"{q['stem']}.pdf" if parts[3] == "quiz" else f"{q['stem']}-key.pdf"
             return self._file(os.path.join(d, name))
         if what == "png" and d:
-            pdf = os.path.join(d, f"{q['stem']}.pdf")
+            # /png/<n> is the quiz; /png/quiz/<n> and /png/key/<n> name it.
+            key = len(parts) > 4 and parts[3] == "key"
+            pdf = os.path.join(d, f"{q['stem']}-key.pdf" if key else f"{q['stem']}.pdf")
             if not os.path.exists(pdf):
                 return self._send(404, "not built yet")
-            png = render.render_page(pdf, int(parts[3]), 150,
-                                     render.cache_dir(d, "png"), force=True)
+            png = render.render_page(pdf, int(parts[-1]), 150,
+                                     render.cache_dir(d, "png-key" if key else "png"),
+                                     force=True)
             return self._file(png)
         self._send(404, "not found")
 
@@ -426,11 +537,7 @@ class _H(BaseHTTPRequestHandler):
         if what == "roster":
             return self._json(set_roster(q, body))
         if what == "step":
-            try:
-                return self._json({"ok": True, **run_step(q, parts[3], body)})
-            except Exception as err:
-                return self._json({"ok": False, "error": str(err).strip(),
-                                   "log": [f"error: {str(err).strip()}"]})
+            return self._json({"ok": True, "job": start_step(q, parts[3], body)})
         self._json({"ok": False, "error": "not found"})
 
 

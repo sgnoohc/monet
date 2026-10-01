@@ -15,6 +15,7 @@ DEFAULTS = {
     "title": "Quiz",
     "course": "",
     "pages": 2,                # target page count; the layout aims to fill them
+    "target": 100,             # points the paper should add up to (the composer's tally)
     "note": "",                # the boxed instruction at the top
     "preamble": "",            # verbatim Typst, for figures a form cannot express
     "problems": [],
@@ -349,9 +350,36 @@ def part_points(p):
     return out
 
 
+# Typst math that plain_key may flatten: the $ fences, "quoted" upright text
+# and ^ powers.  Anything else -- a subscript (its digit is not part of the
+# answer), times, frac, sqrt, a #function, braces --
+# has no single plain spelling a student would write, so it is left alone and
+# the box stays ungraded until "OCR reads" is filled in by hand.
+_TYPST_WORD = re.compile(r"[#{}_\\]|\b(times|dot|frac|sqrt|approx|degree|pi|theta|mu|Delta)\b")
+
+
+def plain_key(answer):
+    """The printed answer as it would be written on paper, or the answer
+    unchanged when that cannot be said safely.
+
+    '2 $"m/s"^2$' -> '2 m/s^2'.   '$1.2 times 10^3$ N' is left as it is.
+    """
+    a = str(answer or "").strip()
+    if "$" not in a:
+        return a
+    inner = re.sub(r"\$", " ", a)
+    if _TYPST_WORD.search(inner):
+        return a
+    inner = inner.replace('"', " ")
+    inner = re.sub(r"\s*\^\s*", "^", inner)            # "m/s" ^2 -> m/s^2
+    inner = re.sub(r"\s*/\s*", "/", inner)
+    return re.sub(r"\s+", " ", inner).strip()
+
+
 def box_key(b):
-    """What OCR should compare against for one box."""
-    return str(b.get("key") or b.get("answer") or "").strip()
+    """What OCR should compare against for one box: "OCR reads" when set,
+    else the printed answer made plain."""
+    return str(b.get("key") or plain_key(b.get("answer")) or "").strip()
 
 
 def key_string(q):

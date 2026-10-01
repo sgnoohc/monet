@@ -19,6 +19,14 @@ from . import ocr
 NUM = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
 
+# A power in the key is a unit's (m/s^2), not a number the student wrote:
+# their superscript is often lost by OCR, and it must not be required.
+POWER = re.compile(r"\^\s*[-+]?\d+(?:\.\d+)?")
+# ...and on the paper the same power arrives glued to its unit ("m/s2",
+# "m/s^2", "m/s²"), where it would otherwise pass for the answer itself.
+STUDENT_POWER = re.compile(r"(?<=[A-Za-z])\s*(?:\^\s*)?[-+]?\d+|[²³⁰¹⁴-⁹]")
+
+
 def numbers(s):
     out = []
     for m in NUM.finditer((s or "").replace(",", "")):
@@ -94,7 +102,12 @@ def compare_one(student, expected):
 
     sn = numbers(student)
     for alt in alts:
-        en = numbers(alt)
+        en = numbers(POWER.sub("", alt))
+        # Only when the key has a unit power: "x2" means nothing special
+        # otherwise, and a trailing unit letter read as a digit ("15 s" ->
+        # "155") is handled on its own below.
+        if POWER.search(alt):
+            sn = numbers(STUDENT_POWER.sub(" ", student))
         if not en:                                   # non-numeric key: compare words
             if units(alt) and units(alt) <= units(student):
                 return "correct"
@@ -106,7 +119,7 @@ def compare_one(student, expected):
     if not sn:
         return "unsure"
     for alt in alts:
-        en = numbers(alt)
+        en = numbers(POWER.sub("", alt))
         if en and all(_near(sn, e) for e in en):
             return "unsure"
     return "wrong"
@@ -154,8 +167,7 @@ def run(cfg, out_dir, log=print):
             per_part[p["id"]] = {"ocr": " / ".join(texts).strip(" /"),
                                  "verdict": compare_part(p, texts)}
         result[stem] = per_part
-        if n % 5 == 0 or n == len(rows):
-            log(f"  {n}/{len(rows)} sheets read")
+        log(f"  {n}/{len(rows)} sheets read")
     dest = os.path.join(out_dir, "autograde.json")
     with open(dest, "w") as f:
         json.dump(result, f, indent=1)
