@@ -115,7 +115,7 @@ kbd { font-family: var(--f-mono); font-size: 0.78rem; border: 1px solid var(--li
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field.full { grid-column: 1 / -1; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; width: fit-content; }
-.seg button { font-family: var(--f-ui); font-size: 0.9rem; padding: 6px 14px; background: transparent; border: 0; color: var(--muted); cursor: pointer; }
+.seg button { font-family: var(--f-ui); font-size: 0.9rem; padding: 6px 12px; white-space: nowrap; background: transparent; border: 0; color: var(--muted); cursor: pointer; }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
 .seg button:disabled { opacity: .4; cursor: not-allowed; }
 select, textarea { font: inherit; font-size: 0.92rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; width: 100%; }
@@ -190,7 +190,7 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
           <div class="wave-head"><span class="label">Buzz vs. reading</span><span class="note" id="waveNote"></span></div>
           <canvas id="wave" role="img" aria-label="Waveform of the end of the reading and your buzz"></canvas>
           <div class="legend">
-            <span><i style="background:var(--ink);opacity:.55"></i>Reading, drawn from word timing</span>
+            <span><i style="background:var(--ink);opacity:.55"></i><span id="waveReadLegend">Reading</span></span>
             <span><i style="background:var(--buzz)"></i>Your buzzer</span>
             <span><i style="background:var(--buzz);opacity:.18"></i>Overlap (early)</span>
             <span><i style="background:var(--good);opacity:.25"></i>Gap after the last word</span>
@@ -210,7 +210,8 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
           <div class="field">
             <span class="label">Reader</span>
             <div class="seg" role="group" aria-label="Reader">
-              <button type="button" id="modeVoice" aria-pressed="true">Voice</button>
+              <button type="button" id="modeAudio" aria-pressed="true">Recorded</button>
+              <button type="button" id="modeVoice" aria-pressed="false">Browser voice</button>
               <button type="button" id="modeText" aria-pressed="false">Text only</button>
             </div>
           </div>
@@ -235,13 +236,14 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
           <div class="field full">
             <span class="label">Questions</span>
             <div class="seg" role="group" aria-label="Question source">
-              <button type="button" id="srcBuilt" aria-pressed="true">Built-in packet</button>
+              <button type="button" id="srcCivics" aria-pressed="true">Civics Bowl</button>
+              <button type="button" id="srcGeneral" aria-pressed="false">General</button>
               <button type="button" id="srcMine" aria-pressed="false">My questions</button>
             </div>
           </div>
           <div class="field full" id="mineBox" hidden>
             <label class="label" for="mine">One per line: question | answer</label>
-            <textarea id="mine" spellcheck="false" placeholder="This river flows through Cairo and empties into the Mediterranean. For 10 points, name this longest river in Africa. | Nile"></textarea>
+            <textarea id="mine" spellcheck="false" placeholder="Name the longest river in Africa, which flows through Cairo into the Mediterranean. | Nile"></textarea>
             <span class="note" id="mineNote"></span>
           </div>
         </div>
@@ -279,38 +281,89 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
           </div>
         </div>
       </section>
-      <p class="fine">A neg is a buzz before the reading finishes, shown as a negative time (how early you were). With an early buffer set, a buzz that close before the end counts as on time instead, and its bar dips below zero in green. In Voice mode that early time is estimated from the reading pace. In Voice mode the clock starts when your browser reports the speech has finished, which can trail the last syllable by about 50–150 ms. Text-only mode starts the clock the moment the last word appears.</p>
+      <p class="fine"><b>Timing.</b> Recorded mode is the precise one: it plays a recording of each tossup and times you from the last audible sample, adjusted for your audio output delay, so the waveform is the real audio. Bluetooth headphones add delay the browser can't always see; use speakers or wired headphones for the most accurate numbers. Browser voice (used for your own questions) depends on when the browser reports the speech ended, which can be off by 50–150 ms, and its early times are estimates. Text-only mode times from the moment the last word appears.</p>
+      <p class="fine">A neg is a buzz before the reading finishes, shown as a negative time. With an early buffer set, a buzz that close before the end counts as on time instead.</p>
     </aside>
   </div>
 </div>
 
 <script>
-const BANK = [
-  ["This planet's Great Red Spot is a storm larger than Earth. Galileo discovered four of its moons, including Io and Europa. For 10 points, name this largest planet in the solar system.", "Jupiter"],
-  ["This author created the detective Hercule Poirot and wrote And Then There Were None. For 10 points, name this best-selling British mystery writer.", "Agatha Christie"],
-  ["This organelle contains its own DNA and is often called the powerhouse of the cell. For 10 points, name this site of cellular respiration.", "Mitochondrion"],
-  ["This treaty ended the First World War between Germany and the Allies and was signed in the Hall of Mirrors in 1919. For 10 points, name this treaty.", "Treaty of Versailles"],
-  ["This composer wrote nine symphonies, the last of which ends with the Ode to Joy, and kept composing after losing his hearing. For 10 points, name this German composer.", "Ludwig van Beethoven"],
-  ["This river flows across Brazil and empties into the Atlantic, carrying more water than any other river on Earth. For 10 points, name this South American river.", "Amazon River"],
-  ["This quantity equals mass times velocity and is conserved in collisions. For 10 points, name this vector quantity usually written with the letter p.", "Momentum"],
-  ["This Dutch painter cut off part of his own ear and painted The Starry Night while staying at an asylum in Saint-Rémy. For 10 points, name this Post-Impressionist.", "Vincent van Gogh"],
-  ["This document's preamble begins with the words We the People, and it was signed in Philadelphia in 1787. For 10 points, name this founding document of the United States government.", "U.S. Constitution"],
-  ["This gas makes up about 78 percent of Earth's atmosphere and has atomic number 7. For 10 points, name this element.", "Nitrogen"],
-  ["In this Shakespeare play, a prince holds the skull of the jester Yorick and asks whether to be or not to be. For 10 points, name this tragedy set in Denmark.", "Hamlet"],
-  ["This structure was built for the pharaoh Khufu and is the only one of the Seven Wonders of the Ancient World still standing. For 10 points, name this monument at Giza.", "Great Pyramid of Giza"],
-  ["This theorem states that in a right triangle, the square of the hypotenuse equals the sum of the squares of the other two sides. For 10 points, name this theorem named for a Greek mathematician.", "Pythagorean theorem"],
-  ["This country's capital is Canberra, and its outback is home to the sandstone monolith Uluru. For 10 points, name this country whose largest city is Sydney.", "Australia"],
-  ["This scientist developed the theory of natural selection after a voyage on HMS Beagle and wrote On the Origin of Species. For 10 points, name this English naturalist.", "Charles Darwin"],
-  ["In this novel by Harper Lee, Scout Finch watches her father Atticus defend Tom Robinson in a small Alabama town. For 10 points, name this novel.", "To Kill a Mockingbird"],
-  ["This largest ocean on Earth contains the Mariana Trench, the deepest point on the planet. For 10 points, name this ocean between Asia and the Americas.", "Pacific Ocean"],
-  ["This process takes place in chloroplasts and lets plants turn light, water, and carbon dioxide into glucose and oxygen. For 10 points, name this process.", "Photosynthesis"],
-  ["This French military leader crowned himself emperor in 1804 and was finally defeated at the Battle of Waterloo. For 10 points, name this man.", "Napoleon Bonaparte"],
-  ["This Italian artist painted the ceiling of the Sistine Chapel and carved the marble statue David. For 10 points, name this Renaissance master.", "Michelangelo"],
-  ["This constant is the ratio of a circle's circumference to its diameter, roughly 3.14159. For 10 points, name this number denoted by a Greek letter.", "Pi"],
-  ["This peak on the border of Nepal and China rises higher above sea level than any other mountain. For 10 points, name this mountain.", "Mount Everest"],
-  ["This Greek hero spent ten years sailing home to Ithaca after the Trojan War, a journey told in an epic by Homer. For 10 points, name this king.", "Odysseus"],
-  ["This NASA program first landed humans on the Moon in 1969, when its eleventh mission carried Neil Armstrong. For 10 points, name this program.", "Apollo program"]
-];
+// Each built-in tossup has a recording at audio/<packet>-NN.mp3 (made by tools/build-audio.sh from tools/packets.json).
+const PACKETS = {
+  civics: { name: "Civics Bowl", list: [
+    ["Ancient Romans followed written laws such as the Twelve Tables, an early example of the idea that leaders are not above the law. Name this principle.", "Rule of law"],
+    ["Name the idea that citizens should elect representatives to govern, in contrast to rule by a hereditary monarch.", "Republicanism"],
+    ["Which English philosopher taught that legitimate government depends on the consent of the governed?", "John Locke"],
+    ["Which French thinker argued for separating government power, an idea that shaped the three branches of the U.S. government?", "Montesquieu"],
+    ["Which writer attacked monarchy and urged colonists toward independence in the pamphlet Common Sense?", "Thomas Paine"],
+    ["Colonists objected to British soldiers being lodged in their homes. Name this grievance.", "Quartering troops"],
+    ["Colonists believed Britain was taking away an important legal protection when it limited which kind of trial?", "Trial by jury"],
+    ["The king interfered with colonial self-government by dissolving which colonial bodies?", "Colonial legislatures"],
+    ["Name the document written to explain to the world why the colonies were separating from the British Empire.", "Declaration of Independence"],
+    ["The Declaration of Independence calls fundamental rights that government should not take away by what name?", "Unalienable rights"],
+    ["Besides life and liberty, which unalienable right does the Declaration of Independence name?", "The pursuit of happiness"],
+    ["Name the first plan of national government, which had no executive branch, no standing army, and no effective power to tax.", "Articles of Confederation"],
+    ["The Constitution fixed the lack of an executive under the Articles by creating which office?", "The President"],
+    ["Under the Articles the national government could not raise money effectively. Which power did the Constitution give Congress to fix this?", "The power to tax"],
+    ["Name the opening paragraph of the Constitution that lists its goals, beginning with We the People.", "The Preamble"],
+    ["Which Preamble goal means keeping peace and order inside the country?", "Insure domestic Tranquility"],
+    ["Which Preamble goal means protecting the nation from outside threats?", "Provide for the common defense"],
+    ["Which Preamble goal means uniting the states more fully under one effective government?", "Form a more perfect Union"],
+    ["Which Preamble goal means protecting freedom for the people and their posterity?", "Secure the Blessings of Liberty"],
+    ["Which Preamble goal means supporting the well-being of the country and its people?", "Promote the general Welfare"],
+    ["Which Preamble goal means creating a fair system of laws and government?", "Establish Justice"],
+    ["Name the system in which each branch can limit the others so that no branch becomes too powerful.", "Checks and balances"],
+    ["The President may negotiate a treaty, but which chamber of Congress can refuse to ratify it?", "The Senate"],
+    ["In 1974 the Supreme Court ordered a President to turn over Watergate evidence, showing the President is not above the law. Name this case.", "United States v. Nixon"],
+    ["Name the group that supported ratifying the Constitution and wanted a stronger national government.", "Federalists"],
+    ["Name the group that feared a powerful national government and demanded a Bill of Rights.", "Anti-Federalists"],
+    ["Obeying laws, paying taxes, and serving on a jury when summoned are legally required. Are these obligations or responsibilities?", "Obligations"],
+    ["Joining a political party is voluntary civic participation. Is it an obligation or a responsibility?", "A responsibility"],
+    ["Name the legal process by which an immigrant becomes a United States citizen.", "Naturalization"],
+    ["Citizens elect representatives, a constitution limits the government, and individual rights are protected. Name this form of government.", "Constitutional republic"],
+    ["Political power is concentrated in a few hands and individual freedoms are limited. Name this form of government.", "Authoritarian"],
+    ["In Saudi Arabia a king inherits power and appoints officials. Name this form of government.", "Monarchy"],
+    ["Power is shared between the national government and the states, as in the United States. Name this system of government.", "Federal"],
+    ["The central government holds the main authority and local governments receive their power from it. Name this system of government.", "Unitary"],
+    ["Member states hold most of the power and the central government is weak. Name this system of government.", "Confederal"],
+    ["Which branch of government makes federal laws and holds the power to coin money?", "Legislative branch (Congress)"],
+    ["Which official enforces federal laws, can pardon federal crimes, and serves as Commander-in-Chief?", "The President"],
+    ["Which article of the Constitution describes the judicial branch?", "Article III"],
+    ["Powers specifically listed for the national government in the Constitution are called what?", "Enumerated powers"],
+    ["Powers that the Constitution does not give to the national government and that the states keep are called what?", "Reserved powers"],
+    ["Powers shared by the national and state governments, such as collecting taxes, are called what?", "Concurrent powers"],
+    ["Name the 1803 case that established judicial review, the power of courts to strike down unconstitutional laws.", "Marbury v. Madison"],
+    ["Name the 1857 case in which the Supreme Court ruled that enslaved people and their descendants were not citizens.", "Dred Scott v. Sandford"],
+    ["Name the 1896 case that upheld racial segregation under the doctrine of separate but equal.", "Plessy v. Ferguson"],
+    ["Name the 1954 case that ruled segregated public schools unconstitutional.", "Brown v. Board of Education"],
+    ["Name the 1963 case requiring states to provide a lawyer to criminal defendants who cannot afford one.", "Gideon v. Wainwright"],
+    ["Name the 1966 case requiring police to warn suspects of their right to remain silent and to have an attorney.", "Miranda v. Arizona"],
+    ["Name the 1967 case that gave juveniles accused of crimes due process rights such as notice of charges and a lawyer.", "In re Gault"],
+    ["Name the 1988 case allowing school officials to censor school-sponsored student newspapers.", "Hazelwood v. Kuhlmeier"]
+  ] },
+  general: { name: "General", list: [
+    ["This planet's Great Red Spot is a storm larger than Earth, and Galileo discovered four of its moons. Name this largest planet in the solar system.", "Jupiter"],
+    ["Which British author created the detective Hercule Poirot and wrote And Then There Were None?", "Agatha Christie"],
+    ["Name the organelle that contains its own DNA and is the site of cellular respiration.", "Mitochondrion"],
+    ["Name the 1919 treaty, signed in the Hall of Mirrors, that ended the First World War between Germany and the Allies.", "Treaty of Versailles"],
+    ["Which German composer wrote nine symphonies, the last ending with the Ode to Joy, after losing his hearing?", "Ludwig van Beethoven"],
+    ["Which South American river flows across Brazil and carries more water than any other river on Earth?", "Amazon River"],
+    ["Name the quantity equal to mass times velocity that is conserved in collisions.", "Momentum"],
+    ["Which Dutch painter created The Starry Night while staying at an asylum in Saint-Rémy?", "Vincent van Gogh"],
+    ["Which element makes up about 78 percent of Earth's atmosphere?", "Nitrogen"],
+    ["In which Shakespeare tragedy does a Danish prince hold the skull of the jester Yorick?", "Hamlet"],
+    ["Name the only one of the Seven Wonders of the Ancient World still standing, built for the pharaoh Khufu.", "Great Pyramid of Giza"],
+    ["Which country has Canberra as its capital and Uluru in its outback?", "Australia"],
+    ["Which English naturalist developed natural selection after a voyage on HMS Beagle?", "Charles Darwin"],
+    ["Name the Harper Lee novel in which Atticus Finch defends Tom Robinson in Alabama.", "To Kill a Mockingbird"],
+    ["Name the process in which chloroplasts turn light, water, and carbon dioxide into glucose and oxygen.", "Photosynthesis"],
+    ["Which French leader crowned himself emperor in 1804 and was defeated at Waterloo?", "Napoleon Bonaparte"],
+    ["Which Renaissance artist painted the Sistine Chapel ceiling and carved the statue David?", "Michelangelo"],
+    ["Name the mountain on the Nepal and China border that rises higher above sea level than any other.", "Mount Everest"],
+    ["Which Greek hero spent ten years sailing home to Ithaca after the Trojan War?", "Odysseus"],
+    ["Name the NASA program whose eleventh mission landed Neil Armstrong on the Moon.", "Apollo program"]
+  ] }
+};
 
 const $ = id => document.getElementById(id);
 const STORE = "buzzer-drill-v1";
@@ -320,9 +373,15 @@ const TEXT_WPM = 190;     // text-only pace at 1.0×
 const synth = ("speechSynthesis" in window) ? window.speechSynthesis : null;
 let voices = [];
 let voicesChecked = false;
-const effMode = () => (S.mode === "voice" && synth && voices.length) ? "voice" : "text";
+const AC = window.AudioContext || window.webkitAudioContext;
+// The reader actually used for an item: recordings exist only for built-in tossups.
+function effMode(item) {
+  if (S.mode === "audio" && AC && (!item || item.audio)) return "audio";
+  if ((S.mode === "voice" || S.mode === "audio") && synth && voices.length) return "voice";
+  return "text";
+}
 
-let S = { history: [], tossupNo: 0, mode: "voice", rate: 1, voiceURI: "", showText: true, source: "built", mine: "", grace: 0, sound: true };
+let S = { history: [], tossupNo: 0, mode: "audio", rate: 1, voiceURI: "", showText: true, source: "civics", mine: "", grace: 0, sound: true };
 let state = "idle";       // idle | reading | held (early buzz waiting on the voice) | open | done
 let cur = null;           // current tossup runtime
 let deck = [];
@@ -334,6 +393,8 @@ function load(data) {
   if (!saved) { try { saved = JSON.parse(localStorage.getItem(STORE) || "null"); } catch (e) {} }
   if (saved && typeof saved === "object") S = Object.assign(S, saved);
   if (!Array.isArray(S.history)) S.history = [];
+  if (S.v !== 2) { S.v = 2; if (S.mode === "voice") S.mode = "audio"; }   // recorded reader became the default
+  if (!PACKETS[S.source] && S.source !== "mine") S.source = "civics";
 }
 
 /* ---------- questions ---------- */
@@ -343,10 +404,18 @@ function parseMine() {
     return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : [l, ""];
   }).filter(q => q[0].length > 0);
 }
+const pad2 = n => String(n).padStart(2, "0");
+const ITEMS = {};
+for (const k in PACKETS) ITEMS[k] = PACKETS[k].list.map((q, i) => ({ text: q[0], ans: q[1], audio: "audio/" + k + "-" + pad2(i + 1) + ".mp3" }));
+let mineCache = { src: null, items: [] };
 function pool() {
-  if (S.source === "mine") { const m = parseMine(); if (m.length) return m; }
-  return BANK;
+  if (S.source === "mine") {
+    if (mineCache.src !== S.mine) mineCache = { src: S.mine, items: parseMine().map(q => ({ text: q[0], ans: q[1], audio: null })) };
+    if (mineCache.items.length) return mineCache.items;
+  }
+  return ITEMS[S.source] || ITEMS.civics;
 }
+function poolName() { return S.source === "mine" && parseMine().length ? "My questions" : (PACKETS[S.source] || PACKETS.civics).name; }
 function nextQuestion() {
   const p = pool();
   if (!deck.length || deck.poolRef !== p || deck.every(i => i >= p.length)) {
@@ -354,28 +423,30 @@ function nextQuestion() {
     for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
     deck.poolRef = p;
   }
-  return p[deck.pop()];
+  const item = p[deck.pop()];
+  if (deck.length && p[deck[deck.length - 1]].audio && S.mode === "audio") loadClip(p[deck[deck.length - 1]].audio).catch(() => {});   // preload the next one
+  return item;
 }
 
 /* ---------- word display ---------- */
-function buildWords(text) {
+function buildWords(text, mode) {
   const words = [];
   const re = /\S+/g; let m;
   while ((m = re.exec(text))) words.push({ w: m[0], start: m.index, el: null });
   const q = $("question"); q.textContent = "";
-  if (effMode() === "voice" && !S.showText) {
+  const listenOnly = mode !== "text" && !S.showText;
+  if (listenOnly) {
     const ph = document.createElement("span"); ph.className = "ph"; ph.id = "listenPh";
     ph.textContent = "Listening… the text appears after the tossup.";
     q.appendChild(ph);
   }
-  const listenOnly = effMode() === "voice" && !S.showText;
   words.forEach(o => { const s = document.createElement("span"); s.className = "w"; s.textContent = o.w + " "; s.hidden = listenOnly; o.el = s; q.appendChild(s); });
   return words;
 }
 function markRead(o) { o.el.hidden = false; o.el.classList.add("read"); }
 function revealCount() { return cur.words.filter(o => o.el.classList.contains("read")).length; }
 function revealUpTo(charIndex) {
-  if (effMode() === "voice" && !S.showText) return;
+  if (cur.mode !== "text" && !S.showText) return;
   cur.words.forEach(o => { if (o.start <= charIndex) markRead(o); });
 }
 function revealAll() {
@@ -384,19 +455,34 @@ function revealAll() {
 }
 
 /* ---------- reading ---------- */
-function startTossup() {
-  if (state === "reading" || state === "open" || state === "held") return;
-  if (S.sound) audio();
-  const [text, ans] = nextQuestion();
+async function startTossup() {
+  if (state === "reading" || state === "open" || state === "held" || state === "loading") return;
+  const item = nextQuestion();
+  let mode = effMode(item);
+  if (S.sound || mode === "audio") audio();
   const id = ++runId;
   S.tossupNo += 1;
-  cur = { id, text, ans, words: [], endT: 0, textEndAt: 0, timer: null, utter: null, marks: [], speechEnd: null, buzzT: null };
+  cur = { id, text: item.text, ans: item.ans, words: [], endT: 0, textEndAt: 0, timer: null, utter: null, marks: [], speechEnd: null, buzzT: null, mode };
+  lastViz = null;
+
+  let clip = null;
+  if (mode === "audio") {
+    state = "loading";
+    setStatus("play", "Loading");
+    try { clip = await loadClip(item.audio); }
+    catch (e) {
+      mode = cur.mode = effMode({});
+      cur.loadFailed = true;
+      setNote("Couldn't load the recording, so this tossup uses the " + (mode === "voice" ? "browser voice" : "text reader") + ".", true);
+    }
+    if (!cur || cur.id !== id) return;
+  }
   state = "reading";
-  lastViz = null; drawWave();
-  cur.words = buildWords(text);
+  drawWave();
+  cur.words = buildWords(item.text, mode);
 
   $("tossupLabel").firstChild.textContent = "Tossup " + S.tossupNo;
-  $("srcLabel").textContent = S.source === "mine" && parseMine().length ? "My questions" : "Built-in packet";
+  $("srcLabel").textContent = poolName();
   setStatus("play", "In play");
   $("answer").hidden = true;
   $("lamp").classList.remove("on");
@@ -404,10 +490,73 @@ function startTossup() {
   $("verdict").innerHTML = "&nbsp;"; $("verdict").className = "verdict";
   $("detail").textContent = "Wait for the last word…";
   $("next").disabled = true; $("stop").hidden = false;
-  setNote("");
+  if (!cur.loadFailed) setNote("");
+  $("waveReadLegend").textContent = mode === "audio" ? "Reading (the recording)" : "Reading, drawn from word timing";
 
-  cur.mode = effMode();
-  if (cur.mode === "voice") readVoice(id); else readText(id);
+  if (mode === "audio") readClip(id, clip);
+  else if (mode === "voice") readVoice(id);
+  else readText(id);
+}
+
+/* ---------- recorded reader ----------
+   Plays the tossup's recording through Web Audio. The end of the reading is the last
+   audible sample of the decoded audio, mapped onto the event clock with the audio
+   output timestamp, so buzz times are measured against what you actually heard. */
+const clips = new Map();
+function loadClip(url) {
+  if (!clips.has(url)) {
+    const p = fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(ab => new Promise((res, rej) => audio().decodeAudioData(ab, res, rej)))
+      .then(analyzeClip);
+    p.catch(() => clips.delete(url));
+    clips.set(url, p);
+  }
+  return clips.get(url);
+}
+function analyzeClip(buf) {
+  const d = buf.getChannelData(0), sr = buf.sampleRate;
+  const block = Math.max(1, Math.round(sr * 0.004));            // 4 ms peak blocks for drawing
+  const peaks = new Float32Array(Math.ceil(d.length / block));
+  let peak = 0;
+  for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > peaks[(i / block) | 0]) peaks[(i / block) | 0] = a; if (a > peak) peak = a; }
+  const thr = Math.max(0.004, peak * 0.03);                       // about -30 dB below the loudest sample
+  let first = 0, last = d.length - 1;
+  while (first < d.length && Math.abs(d[first]) < thr) first++;
+  while (last > 0 && Math.abs(d[last]) < thr) last--;
+  return { buf, peaks, block, peak: peak || 1, onset: first / sr, offset: (last + 1) / sr };
+}
+function ctxToPerf(a) {
+  // Map an AudioContext time to performance.now() at the moment it leaves the speakers.
+  try {
+    const ts = a.getOutputTimestamp && a.getOutputTimestamp();
+    if (ts && ts.performanceTime > 0 && ts.contextTime > 0) return t => ts.performanceTime + (t - ts.contextTime) * 1000;
+  } catch (e) {}
+  const now = performance.now(), ct = a.currentTime, lat = ((a.outputLatency || 0) + (a.baseLatency || 0)) * 1000;
+  return t => now + (t - ct) * 1000 + lat;
+}
+function readClip(id, clip) {
+  const a = audio();
+  const src = a.createBufferSource();
+  src.buffer = clip.buf;
+  src.playbackRate.value = S.rate;
+  src.connect(a.destination);
+  const when = a.currentTime + 0.08;
+  src.start(when);
+  const toPerf = ctxToPerf(a);
+  cur.src = src; cur.clip = clip; cur.rate = S.rate;
+  cur.startPerf = toPerf(when);
+  cur.onsetT = cur.startPerf + clip.onset / S.rate * 1000;
+  cur.endT = cur.startPerf + clip.offset / S.rate * 1000;
+  const len = cur.text.length;
+  cur.wordT = cur.words.map(o => cur.onsetT + (o.start / len) * (cur.endT - cur.onsetT));
+  const tick = () => {
+    if (!cur || cur.id !== id || state !== "reading") return;
+    const now = performance.now();
+    cur.words.forEach((o, i) => { if (cur.wordT[i] <= now && S.showText) markRead(o); });
+    if (now >= cur.endT) { openWindow(cur.endT); return; }
+    cur.raf = requestAnimationFrame(tick);
+  };
+  cur.raf = requestAnimationFrame(tick);
 }
 
 function readVoice(id) {
@@ -464,7 +613,7 @@ function openWindow(t) {
   state = "open";
   cur.endT = t;
   if (cur.mode === "text" || S.showText) revealAll();
-  cur.timer = setTimeout(() => finish({ type: "miss" }), WINDOW_MS);
+  cur.timer = setTimeout(() => finish({ type: "miss" }), Math.max(0, WINDOW_MS - (performance.now() - t)));
 }
 
 /* ---------- buzzing ---------- */
@@ -480,7 +629,12 @@ function buzz(e) {
   pressAnim();
   if (state === "reading" || state === "open") cur.buzzT = ts;
   if (state === "reading" || state === "open") buzzSound();
-  if (state === "open") {
+  if ((state === "open" || state === "reading") && cur.mode === "audio") {
+    const d = ts - cur.endT;
+    if (d >= 0) finish({ type: "buzz", rt: Math.round(d) });
+    else if (-d <= (S.grace || 0)) finish({ type: "buzz", rt: Math.round(d), early: true });
+    else finish({ type: "neg", wordsLeft: cur.wordT.filter(t => t > ts).length, msEarly: Math.round(-d) });
+  } else if (state === "open") {
     finish({ type: "buzz", rt: Math.max(0, Math.round(ts - cur.endT)) });
   } else if (state === "reading") {
     const left = cur.words.length - revealCount();
@@ -518,6 +672,8 @@ function estimateVoiceLeft(ts) {
 function finish(rec) {
   clearTimeout(cur.timer); clearTimeout(cur.graceTimer);
   if (synth && cur.mode === "voice") synth.cancel();
+  cancelAnimationFrame(cur.raf);
+  if (cur.src && rec.type === "neg") { try { cur.src.stop(); } catch (e) {} }   // the reader stops on a neg
   state = "done";
   revealAll();
   $("answerText").textContent = cur.ans || "(no answer given)";
@@ -569,8 +725,11 @@ function showResult(r) {
 }
 
 function stopTossup() {
+  if (state === "loading") { runId++; state = "idle"; S.tossupNo -= 1; setStatus("ready", "Ready"); $("next").disabled = false; $("stop").hidden = true; return; }
   if (state !== "reading" && state !== "open" && state !== "held") return;
   clearTimeout(cur.timer); clearTimeout(cur.graceTimer);
+  cancelAnimationFrame(cur.raf);
+  if (cur.src) { try { cur.src.stop(); } catch (e) {} }
   $("lamp").classList.remove("on");
   if (synth) synth.cancel();
   state = "idle";
@@ -602,6 +761,11 @@ function interp(pts, c) {
 }
 
 function captureViz(rec) {
+  if (cur.mode === "audio") {
+    return { kind: "audio", type: rec.type, rt: rec.rt, msEarly: rec.msEarly, est: false, buzzT: rec.type === "miss" ? null : cur.buzzT,
+             endT: cur.endT, clip: cur.clip, startPerf: cur.startPerf, rate: cur.rate,
+             cutAt: rec.type === "neg" ? cur.buzzT : null, segs: [] };
+  }
   const n = cur.words.length;
   const v = { type: rec.type, rt: rec.rt, msEarly: rec.msEarly, est: !!rec.est, buzzT: rec.type === "miss" ? null : cur.buzzT, segs: [] };
   if (cur.mode === "text") {
@@ -669,6 +833,19 @@ function drawWave() {
 
   // reading
   ctx.fillStyle = ink;
+  if (v.kind === "audio") {
+    const c = v.clip;
+    for (let px = PX; px < W - PX; px += 2) {
+      const t0 = L + (px - PX) / (W - 2 * PX) * (R - L), t1 = t0 + 2 / (W - 2 * PX) * (R - L);
+      const s0 = (t0 - v.startPerf) / 1000 * v.rate, s1 = (t1 - v.startPerf) / 1000 * v.rate;
+      if (s1 < 0 || s0 > c.buf.duration) continue;
+      const b0 = Math.max(0, Math.floor(s0 * c.buf.sampleRate / c.block)), b1 = Math.min(c.peaks.length - 1, Math.ceil(s1 * c.buf.sampleRate / c.block));
+      let pk = 0; for (let k = b0; k <= b1; k++) if (c.peaks[k] > pk) pk = c.peaks[k];
+      const h = Math.max(0.5, AMP * Math.min(1, pk / c.peak));
+      ctx.globalAlpha = v.cutAt != null && t0 > v.cutAt ? 0.16 : 0.6;
+      ctx.fillRect(px, MID - h, 1.5, 2 * h);
+    }
+  }
   v.segs.forEach(([s0, s1], i) => {
     if (s1 < L || s0 > R || s1 <= s0) return;
     const x0 = x(s0), x1 = x(s1), wpx = x1 - x0;
@@ -845,8 +1022,10 @@ function loadVoices() {
 
 function syncSettings() {
   const voiceOK = !!(synth && voices.length);
-  const m = effMode();
+  const m = S.mode === "audio" && AC ? "audio" : effMode({});
+  $("modeAudio").disabled = !AC;
   $("modeVoice").disabled = !voiceOK && voicesChecked;
+  $("modeAudio").setAttribute("aria-pressed", m === "audio");
   $("modeVoice").setAttribute("aria-pressed", m === "voice");
   $("modeText").setAttribute("aria-pressed", m === "text");
   $("voiceSel").disabled = m !== "voice";
@@ -857,13 +1036,14 @@ function syncSettings() {
   $("rateOut").textContent = Number(S.rate).toFixed(1) + "×";
   $("grace").value = S.grace || 0;
   $("graceOut").textContent = (S.grace || 0) + " ms";
-  $("srcBuilt").setAttribute("aria-pressed", S.source === "built");
+  $("srcCivics").setAttribute("aria-pressed", S.source === "civics");
+  $("srcGeneral").setAttribute("aria-pressed", S.source === "general");
   $("srcMine").setAttribute("aria-pressed", S.source === "mine");
   $("mineBox").hidden = S.source !== "mine";
   if ($("mine").value !== S.mine) $("mine").value = S.mine;
   const n = parseMine().length;
-  $("mineNote").textContent = S.source === "mine" ? (n ? n + " question" + (n === 1 ? "" : "s") + " ready." : "No questions yet. The built-in packet is used until you add some.") : "";
-  if (!voiceOK && voicesChecked && state !== "reading") setNote(synth ? "No voices are available in this browser, so questions appear as text." : "This browser can't read aloud, so questions appear as text.");
+  $("mineNote").textContent = S.source === "mine" ? (n ? n + " question" + (n === 1 ? "" : "s") + " ready." : "No questions yet. The Civics Bowl packet is used until you add some.") + (m === "audio" ? " Your questions use the browser voice, since only the built-in packets have recordings." : "") : "";
+  if (!voiceOK && voicesChecked && state !== "reading" && m !== "audio") setNote(synth ? "No voices are available in this browser, so questions appear as text." : "This browser can't read aloud, so questions appear as text.");
 }
 
 function bind() {
@@ -889,6 +1069,7 @@ function bind() {
     if ((e.code === "Space" || e.key === " ") && tag !== "textarea" && tag !== "input") e.preventDefault();
   });
 
+  $("modeAudio").addEventListener("click", () => { S.mode = "audio"; save(); syncSettings(); });
   $("modeVoice").addEventListener("click", () => { S.mode = "voice"; save(); syncSettings(); });
   $("modeText").addEventListener("click", () => { S.mode = "text"; save(); syncSettings(); });
   $("voiceSel").addEventListener("change", e => { S.voiceURI = e.target.value; save(); });
@@ -896,7 +1077,8 @@ function bind() {
   $("grace").addEventListener("input", e => { S.grace = Number(e.target.value); $("graceOut").textContent = S.grace + " ms"; save(); });
   $("showText").addEventListener("change", e => { S.showText = e.target.checked; save(); });
   $("sound").addEventListener("change", e => { S.sound = e.target.checked; save(); if (S.sound) buzzSound(); });
-  $("srcBuilt").addEventListener("click", () => { S.source = "built"; deck = []; save(); syncSettings(); });
+  $("srcCivics").addEventListener("click", () => { S.source = "civics"; deck = []; save(); syncSettings(); });
+  $("srcGeneral").addEventListener("click", () => { S.source = "general"; deck = []; save(); syncSettings(); });
   $("srcMine").addEventListener("click", () => { S.source = "mine"; deck = []; save(); syncSettings(); });
   $("mine").addEventListener("input", e => { S.mine = e.target.value; deck = []; save(); syncSettings(); });
 

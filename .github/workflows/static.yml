@@ -38,7 +38,7 @@ jobs:
         run: |
           mkdir -p _site/buzzer
           cp -R spaceattack/. _site/
-          cp buzzer/index.html _site/buzzer/
+          cp -R buzzer/index.html buzzer/audio _site/buzzer/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
