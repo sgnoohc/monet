@@ -10,6 +10,7 @@ Practice buzzing the instant a quiz bowl tossup finishes being read.
 - A buzz before the end is a neg, shown as a negative time (how early you were). In Voice mode that is estimated from the reading pace; Text-only mode is exact.
 - **Early buffer** (0–500 ms): a buzz that close before the end counts as on time, shown as a negative time (e.g. −120 ms) instead of a neg. In Voice mode the buzz is held until the speech ends, so these are timed exactly.
 - No buzz within 5 seconds is a dead tossup.
+- After each tossup a waveform shows the end of the reading against your buzzer, with the overlap (early) or gap (late) marked in ms. Browsers don't expose the speech audio, so the reading's waveform is drawn from word timing; the buzzer trace is the real envelope of the buzzer sound.
 - A buzzer sound plays on every buzz that counts (synthesized with Web Audio; turn it off under Display).
 - 24 built-in tossups, or paste your own as `question | answer`, one per line.
 - Results are kept in the browser's local storage.

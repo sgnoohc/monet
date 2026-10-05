@@ -134,6 +134,10 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
 .chart { margin-top: 18px; }
 .chart svg { width: 100%; height: auto; display: block; }
 .chart text { font-family: var(--f-mono); font-size: 9px; fill: var(--muted); }
+.wave { margin-top: 22px; display: flex; flex-direction: column; gap: 6px; }
+.wave-head { display: flex; justify-content: space-between; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
+.wave canvas { width: 100%; height: 150px; display: block; border-radius: 6px; background: var(--bg); }
+.wave .legend { margin-top: 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 
@@ -179,6 +183,17 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
             <div class="big" id="big">–<small>ms</small></div>
             <div class="verdict" id="verdict">&nbsp;</div>
             <div class="detail" id="detail">Your time starts when the reading ends.</div>
+          </div>
+        </div>
+
+        <div class="wave">
+          <div class="wave-head"><span class="label">Buzz vs. reading</span><span class="note" id="waveNote"></span></div>
+          <canvas id="wave" role="img" aria-label="Waveform of the end of the reading and your buzz"></canvas>
+          <div class="legend">
+            <span><i style="background:var(--ink);opacity:.55"></i>Reading, drawn from word timing</span>
+            <span><i style="background:var(--buzz)"></i>Your buzzer</span>
+            <span><i style="background:var(--buzz);opacity:.18"></i>Overlap (early)</span>
+            <span><i style="background:var(--good);opacity:.25"></i>Gap after the last word</span>
           </div>
         </div>
 
@@ -375,8 +390,9 @@ function startTossup() {
   const [text, ans] = nextQuestion();
   const id = ++runId;
   S.tossupNo += 1;
-  cur = { id, text, ans, words: [], endT: 0, textEndAt: 0, timer: null, utter: null, wordsSeen: 0 };
+  cur = { id, text, ans, words: [], endT: 0, textEndAt: 0, timer: null, utter: null, marks: [], speechEnd: null, buzzT: null };
   state = "reading";
+  lastViz = null; drawWave();
   cur.words = buildWords(text);
 
   $("tossupLabel").firstChild.textContent = "Tossup " + S.tossupNo;
@@ -402,14 +418,17 @@ function readVoice(id) {
   cur.utter = u;   // keep a reference so the browser doesn't drop the end event
   u.onstart = () => { if (cur && cur.id === id) cur.startT = performance.now(); };
   u.onboundary = e => {
-    if (!cur || cur.id !== id || state !== "reading") return;
+    if (!cur || cur.id !== id || (state !== "reading" && state !== "held")) return;
     if (e.name && e.name !== "word") return;
+    cur.marks.push([e.charIndex, performance.now()]);
+    if (state !== "reading") return;
     cur.lastChar = e.charIndex; cur.lastT = performance.now();
     revealUpTo(e.charIndex);
   };
   u.onend = () => {
     if (!cur || cur.id !== id) return;
     const t = performance.now();
+    if (state === "held" || state === "reading") cur.speechEnd = t;
     if (state === "held") finish({ type: "buzz", rt: -Math.round(t - cur.buzzT), early: true });
     else if (state === "reading") openWindow(t);
   };
@@ -428,6 +447,7 @@ function readText(id) {
   const per = 60000 / (TEXT_WPM * S.rate);
   const t0 = performance.now();
   const n = cur.words.length;
+  cur.t0 = t0; cur.per = per;
   cur.textEndAt = t0 + (n - 1) * per;
   let i = 0;
   const step = () => {
@@ -458,6 +478,7 @@ function eventTime(e) {
 function buzz(e) {
   const ts = eventTime(e);
   pressAnim();
+  if (state === "reading" || state === "open") cur.buzzT = ts;
   if (state === "reading" || state === "open") buzzSound();
   if (state === "open") {
     finish({ type: "buzz", rt: Math.max(0, Math.round(ts - cur.endT)) });
@@ -509,6 +530,8 @@ function finish(rec) {
   save();
 
   showResult(entry);
+  lastViz = captureViz(entry);
+  drawWave();
   setStatus("done", rec.type === "miss" ? "Dead" : "Locked");
   $("next").disabled = false; $("stop").hidden = true;
   render();
@@ -561,6 +584,158 @@ function stopTossup() {
 /* ---------- UI helpers ---------- */
 function setStatus(s, text) { const c = $("status"); c.dataset.s = s; c.textContent = text; }
 function setNote(t, warn) { const n = $("note"); n.textContent = t; n.className = "note" + (warn ? " warn" : ""); }
+/* ---------- waveform ----------
+   Browsers don't expose the speech audio, so the reading is drawn from word timing:
+   one blob per word, placed at the times the voice reported (or the text showed) it.
+   The buzzer trace is the real envelope of the buzzer sound. */
+let lastViz = null;
+const BUZZ_MS = 450;
+
+function interp(pts, c) {
+  for (let i = 1; i < pts.length; i++) {
+    if (c <= pts[i][0]) {
+      const [c0, t0] = pts[i - 1], [c1, t1] = pts[i];
+      return c1 === c0 ? t0 : t0 + (t1 - t0) * (c - c0) / (c1 - c0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+function captureViz(rec) {
+  const n = cur.words.length;
+  const v = { type: rec.type, rt: rec.rt, msEarly: rec.msEarly, est: !!rec.est, buzzT: rec.type === "miss" ? null : cur.buzzT, segs: [] };
+  if (cur.mode === "text") {
+    // a word "finishes" the moment it appears; the reading ends when the last one does
+    v.endT = cur.endT || cur.textEndAt;
+    for (let i = 0; i < n; i++) { const t = cur.t0 + i * cur.per; v.segs.push([t - cur.per * 0.8, t]); }
+  } else {
+    const len = cur.text.length;
+    let endT = cur.speechEnd;
+    if (endT == null) { endT = (cur.buzzT || performance.now()) + (rec.msEarly || 0); v.est = true; }
+    const startT = cur.startT || endT - len * 1000 / (14.5 * S.rate);
+    const pts = [[0, startT], ...cur.marks.filter(m => m[1] >= startT && m[1] <= endT), [len, endT]].sort((a, b) => a[0] - b[0]);
+    const starts = cur.words.map(o => interp(pts, o.start));
+    for (let i = 0; i < n; i++) {
+      const a = starts[i], b = i < n - 1 ? starts[i + 1] : endT;
+      const gap = i < n - 1 ? Math.min(60, (b - a) * 0.18) : 0;
+      v.segs.push([a, b - gap]);
+    }
+    v.endT = endT;
+  }
+  // words the reader never got to (reading stopped on the buzz)
+  v.cutAt = (rec.type === "neg" || cur.mode === "text") && v.buzzT != null && v.buzzT < v.endT ? v.buzzT : null;
+  return v;
+}
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function noise(k) { const x = Math.sin(k * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); }
+
+function drawWave() {
+  const c = $("wave"); if (!c) return;
+  const W = c.clientWidth || 600, H = 150, dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const ink = cssVar("--ink"), muted = cssVar("--muted"), buzzC = cssVar("--buzz"), good = cssVar("--good"), line = cssVar("--line");
+  const mono = "10px " + cssVar("--f-mono");
+  const MID = 62, AMP = 36;
+  const note = $("waveNote");
+
+  if (!lastViz) {
+    ctx.fillStyle = muted; ctx.font = mono; ctx.textAlign = "center";
+    ctx.fillText(state === "reading" || state === "open" || state === "held" ? "Listening…" : "The reading and your buzz show here after each tossup", W / 2, MID + 4);
+    note.textContent = "";
+    return;
+  }
+  const v = lastViz, end = v.endT, b = v.buzzT;
+  let L = Math.min(end, b == null ? end : b) - 2000;
+  let R = Math.max(end + 800, b == null ? 0 : b + BUZZ_MS + 250);
+  if (R - L < 2800) R = L + 2800;
+  const PX = 10, x = t => PX + (t - L) / (R - L) * (W - 2 * PX);
+
+  // overlap / gap bands
+  if (b != null && b < end) {
+    ctx.fillStyle = buzzC; ctx.globalAlpha = 0.14;
+    ctx.fillRect(x(b), MID - AMP - 6, x(end) - x(b), 2 * AMP + 12);
+  } else if (b != null && b > end) {
+    ctx.fillStyle = good; ctx.globalAlpha = 0.16;
+    ctx.fillRect(x(end), MID - AMP - 6, x(b) - x(end), 2 * AMP + 12);
+  }
+  ctx.globalAlpha = 1;
+
+  // center line
+  ctx.fillStyle = line; ctx.fillRect(PX, MID, W - 2 * PX, 1);
+
+  // reading
+  ctx.fillStyle = ink;
+  v.segs.forEach(([s0, s1], i) => {
+    if (s1 < L || s0 > R || s1 <= s0) return;
+    const x0 = x(s0), x1 = x(s1), wpx = x1 - x0;
+    const syl = Math.max(1, Math.round(wpx / 14));
+    const loud = 0.6 + 0.4 * noise(i * 7.1);
+    for (let px = x0; px < x1; px += 3) {
+      const f = (px - x0) / wpx, t = s0 + f * (s1 - s0);
+      const env = Math.pow(Math.sin(Math.PI * f), 0.5) * (0.55 + 0.45 * Math.abs(Math.sin(Math.PI * syl * f)));
+      const h = Math.max(1, AMP * loud * env * (0.55 + 0.45 * noise(i * 131 + px)));
+      ctx.globalAlpha = v.cutAt != null && t > v.cutAt ? 0.16 : 0.55;
+      ctx.fillRect(px, MID - h, 2, 2 * h);
+    }
+  });
+  ctx.globalAlpha = 1;
+
+  // buzzer
+  if (b != null) {
+    ctx.fillStyle = buzzC;
+    for (let px = x(b); px < x(b + BUZZ_MS); px += 2) {
+      const t = (px - x(b)) / (x(b + BUZZ_MS) - x(b)) * BUZZ_MS;
+      const env = t < 10 ? t / 10 : t < 320 ? 1 : Math.pow(0.0001 / 0.22, (t - 320) / 130);
+      const h = Math.max(1, AMP * 0.92 * env * (0.82 + 0.18 * noise(px * 3.7)));
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(px, MID - h, 1.4, 2 * h);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // markers and labels
+  ctx.font = mono; ctx.textBaseline = "alphabetic";
+  const marker = (t, color, label, side) => {
+    ctx.fillStyle = color; ctx.fillRect(Math.round(x(t)), 14, 1.5, MID + AMP - 8);
+    ctx.textAlign = side; ctx.fillText(label, x(t) + (side === "left" ? 5 : -5), 12);
+  };
+  const endLabel = v.est ? "End (est.)" : "Last word";
+  if (b == null) marker(end, ink, endLabel, "right");
+  else if (b >= end) { marker(end, ink, endLabel, "right"); marker(b, buzzC, "Buzz", "left"); }
+  else { marker(b, buzzC, "Buzz", "right"); marker(end, ink, endLabel, "left"); }
+
+  // bracket with the difference
+  if (b != null && Math.abs(b - end) >= 1) {
+    const y = MID + AMP + 12, xa = x(Math.min(b, end)), xb = x(Math.max(b, end));
+    const diff = Math.round(b - end);
+    const txt = (diff < 0 ? "−" + -diff : "+" + diff) + " ms";
+    ctx.fillStyle = diff < 0 ? buzzC : good;
+    ctx.fillRect(xa, y, Math.max(1, xb - xa), 1.5);
+    ctx.fillRect(xa, y - 3, 1.5, 7); ctx.fillRect(xb - 1.5, y - 3, 1.5, 7);
+    ctx.textAlign = "center";
+    const tx = Math.min(Math.max((xa + xb) / 2, PX + 30), W - PX - 30);
+    ctx.fillText(txt, tx, y + 14);
+  }
+
+  // time axis, seconds relative to the end of the reading
+  ctx.fillStyle = muted; ctx.textAlign = "center"; ctx.globalAlpha = 0.8;
+  for (let k = Math.ceil((L - end) / 500); k <= Math.floor((R - end) / 500); k++) {
+    const tx = x(end + k * 500);
+    ctx.fillRect(tx, H - 16, 1, 4);
+    if (k % 2 === 0) ctx.fillText(k === 0 ? "0 s" : (k > 0 ? "+" : "−") + Math.abs(k / 2) + " s", tx, H - 2);
+  }
+  ctx.globalAlpha = 1;
+
+  if (v.type === "miss") note.textContent = "No buzz within 5 s of the last word.";
+  else if (b >= end) note.textContent = "No overlap: " + Math.round(b - end) + " ms of silence before your buzz.";
+  else if (v.type === "neg") note.textContent = "Overlap: you buzzed " + Math.round(end - b) + " ms before the reading would have ended" + (v.est ? " (estimated)" : "") + ".";
+  else note.textContent = "Overlap: your buzz started " + Math.round(end - b) + " ms before the last word ended, inside your buffer.";
+}
+
 /* Buzzer sound: two detuned square waves through a lowpass, like a lockout-system buzzer. */
 let actx = null;
 function audio() {
@@ -743,9 +918,20 @@ function bind() {
   }
 }
 
+function watchWave() {
+  let raf = 0;
+  const redraw = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(drawWave); };
+  window.addEventListener("resize", redraw);
+  try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw); } catch (e) {}
+  try { new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); } catch (e) {}
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(redraw);
+}
+
 function start(data) {
   load(data);
   bind();
+  watchWave();
+  drawWave();
   syncSettings();
   if (S.tossupNo) $("tossupLabel").firstChild.textContent = "Tossup " + (S.tossupNo + 1);
   render();
