@@ -8,6 +8,7 @@ Practice buzzing the instant a quiz bowl tossup finishes being read.
 - Press **Space** or tap the buzzer. **Enter** starts the next tossup, **Esc** stops one.
 - A buzz after the reading ends is timed in milliseconds from the last word: Sharp ≤250, Quick ≤500, Steady ≤1000, Slow above that.
 - A buzz before the end is a neg, shown as a negative time (how early you were). In Voice mode that is estimated from the reading pace; Text-only mode is exact.
+- **Early buffer** (0–500 ms): a buzz that close before the end counts as on time, shown as a negative time (e.g. −120 ms) instead of a neg. In Voice mode the buzz is held until the speech ends, so these are timed exactly.
 - No buzz within 5 seconds is a dead tossup.
 - 24 built-in tossups, or paste your own as `question | answer`, one per line.
 - Results are kept in the browser's local storage.

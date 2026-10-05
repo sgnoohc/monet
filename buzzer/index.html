@@ -212,6 +212,11 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
             <label class="check"><input type="checkbox" id="showText" checked> Show words as they're read</label>
           </div>
           <div class="field full">
+            <label class="label" for="grace">Early buffer</label>
+            <div class="range-row"><input type="range" id="grace" min="0" max="500" step="25" value="0"><output id="graceOut">0 ms</output></div>
+            <span class="note">A buzz this close before the end counts as on time, shown as a negative time instead of a neg.</span>
+          </div>
+          <div class="field full">
             <span class="label">Questions</span>
             <div class="seg" role="group" aria-label="Question source">
               <button type="button" id="srcBuilt" aria-pressed="true">Built-in packet</button>
@@ -245,7 +250,7 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
             <span><i style="background:var(--good)"></i>Sharp ≤250 · Quick ≤500</span>
             <span><i style="background:var(--ok)"></i>Steady ≤1000</span>
             <span><i style="background:var(--slow)"></i>Slow</span>
-            <span><i style="background:var(--buzz)"></i>Neg (below 0)</span>
+            <span><i style="background:var(--buzz)"></i>Neg</span>
             <span><i style="border:1.5px solid var(--slow);border-radius:50%"></i>No buzz</span>
           </div>
         </div>
@@ -258,7 +263,7 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
           </div>
         </div>
       </section>
-      <p class="fine">A neg is a buzz before the reading finishes, shown as a negative time (how early you were). In Voice mode that early time is estimated from the reading pace. In Voice mode the clock starts when your browser reports the speech has finished, which can trail the last syllable by about 50–150 ms. Text-only mode starts the clock the moment the last word appears.</p>
+      <p class="fine">A neg is a buzz before the reading finishes, shown as a negative time (how early you were). With an early buffer set, a buzz that close before the end counts as on time instead, and its bar dips below zero in green. In Voice mode that early time is estimated from the reading pace. In Voice mode the clock starts when your browser reports the speech has finished, which can trail the last syllable by about 50–150 ms. Text-only mode starts the clock the moment the last word appears.</p>
     </aside>
   </div>
 </div>
@@ -301,8 +306,8 @@ let voices = [];
 let voicesChecked = false;
 const effMode = () => (S.mode === "voice" && synth && voices.length) ? "voice" : "text";
 
-let S = { history: [], tossupNo: 0, mode: "voice", rate: 1, voiceURI: "", showText: true, source: "built", mine: "" };
-let state = "idle";       // idle | reading | open | done
+let S = { history: [], tossupNo: 0, mode: "voice", rate: 1, voiceURI: "", showText: true, source: "built", mine: "", grace: 0 };
+let state = "idle";       // idle | reading | held (early buzz waiting on the voice) | open | done
 let cur = null;           // current tossup runtime
 let deck = [];
 let runId = 0;
@@ -364,7 +369,7 @@ function revealAll() {
 
 /* ---------- reading ---------- */
 function startTossup() {
-  if (state === "reading" || state === "open") return;
+  if (state === "reading" || state === "open" || state === "held") return;
   const [text, ans] = nextQuestion();
   const id = ++runId;
   S.tossupNo += 1;
@@ -401,8 +406,10 @@ function readVoice(id) {
     revealUpTo(e.charIndex);
   };
   u.onend = () => {
-    if (!cur || cur.id !== id || state !== "reading") return;
-    openWindow(performance.now());
+    if (!cur || cur.id !== id) return;
+    const t = performance.now();
+    if (state === "held") finish({ type: "buzz", rt: -Math.round(t - cur.buzzT), early: true });
+    else if (state === "reading") openWindow(t);
   };
   u.onerror = e => {
     if (!cur || cur.id !== id || state !== "reading") return;
@@ -453,10 +460,24 @@ function buzz(e) {
     finish({ type: "buzz", rt: Math.max(0, Math.round(ts - cur.endT)) });
   } else if (state === "reading") {
     const left = cur.words.length - revealCount();
-    const rec = { type: "neg", wordsLeft: left };
-    if (cur.mode === "text") rec.msEarly = Math.max(0, Math.round(cur.textEndAt - ts));
-    else { rec.msEarly = estimateVoiceLeft(ts); rec.est = true; }
-    finish(rec);
+    const grace = S.grace || 0;
+    if (cur.mode === "text") {
+      const early = Math.max(0, Math.round(cur.textEndAt - ts));
+      if (early <= grace) finish({ type: "buzz", rt: -early, early: true });
+      else finish({ type: "neg", wordsLeft: left, msEarly: early });
+    } else if (grace > 0) {
+      // The voice's end time isn't known yet: hold the buzz. If the speech ends
+      // within the buffer it's on time (timed exactly); otherwise it's a neg.
+      state = "held";
+      cur.buzzT = ts;
+      $("lamp").classList.add("on");
+      cur.graceTimer = setTimeout(() => {
+        if (state !== "held") return;
+        finish({ type: "neg", wordsLeft: left, msEarly: Math.max(estimateVoiceLeft(ts), grace + 1), est: true });
+      }, grace);
+    } else {
+      finish({ type: "neg", wordsLeft: left, msEarly: estimateVoiceLeft(ts), est: true });
+    }
   }
 }
 
@@ -471,7 +492,7 @@ function estimateVoiceLeft(ts) {
 }
 
 function finish(rec) {
-  clearTimeout(cur.timer);
+  clearTimeout(cur.timer); clearTimeout(cur.graceTimer);
   if (synth && cur.mode === "voice") synth.cancel();
   state = "done";
   revealAll();
@@ -490,6 +511,7 @@ function finish(rec) {
   render();
 }
 
+function signedMs(ms) { return ms < 0 ? "−" + -ms : String(ms); }
 function negMs(r) { return (r.est ? "≈" : "") + "−" + r.msEarly; }
 
 function band(rt) {
@@ -503,15 +525,15 @@ function showResult(r) {
   const v = $("verdict");
   if (r.type === "buzz") {
     const [cls, name] = band(r.rt);
-    $("big").innerHTML = r.rt + "<small>ms</small>";
+    $("big").innerHTML = signedMs(r.rt) + "<small>ms</small>";
     v.textContent = name; v.className = "verdict c-" + cls;
-    $("detail").textContent = r.rt <= 120 ? "Very close to the last word. You may be anticipating the end, which is a useful skill." : "Measured from the end of the reading to your buzz.";
+    $("detail").textContent = r.rt < 0 ? "You buzzed " + -r.rt + " ms before the end, inside your " + S.grace + " ms early buffer." : r.rt <= 120 ? "Very close to the last word. You may be anticipating the end, which is a useful skill." : "Measured from the end of the reading to your buzz.";
   } else if (r.type === "neg") {
     $("big").innerHTML = typeof r.msEarly === "number" ? negMs(r) + "<small>ms</small>" : "Neg";
     v.textContent = "Neg · early buzz"; v.className = "verdict c-neg";
     const words = r.wordsLeft ? " with " + r.wordsLeft + (r.wordsLeft === 1 ? " word" : " words") + " left" : "";
     $("detail").textContent = typeof r.msEarly === "number"
-      ? "You buzzed " + (r.msEarly / 1000).toFixed(2) + " s before the end" + words + "." + (r.est ? " Voice timing is estimated from the reading pace." : "")
+      ? "You buzzed " + (r.msEarly / 1000).toFixed(2) + " s before the end" + words + (S.grace ? ", outside your " + S.grace + " ms buffer" : "") + "." + (r.est ? " Voice timing is estimated from the reading pace." : "")
       : "You buzzed before the reading finished" + words + ".";
   } else {
     $("big").textContent = "—";
@@ -521,8 +543,9 @@ function showResult(r) {
 }
 
 function stopTossup() {
-  if (state !== "reading" && state !== "open") return;
-  clearTimeout(cur.timer);
+  if (state !== "reading" && state !== "open" && state !== "held") return;
+  clearTimeout(cur.timer); clearTimeout(cur.graceTimer);
+  $("lamp").classList.remove("on");
   if (synth) synth.cancel();
   state = "idle";
   S.tossupNo -= 1;
@@ -537,7 +560,7 @@ function setStatus(s, text) { const c = $("status"); c.dataset.s = s; c.textCont
 function setNote(t, warn) { const n = $("note"); n.textContent = t; n.className = "note" + (warn ? " warn" : ""); }
 function pressAnim() { const b = $("buzzer"); b.classList.add("down"); setTimeout(() => b.classList.remove("down"), 110); }
 
-function fmt(ms) { return ms == null ? "–" : Math.round(ms) + "<small>ms</small>"; }
+function fmt(ms) { return ms == null ? "–" : signedMs(Math.round(ms)) + "<small>ms</small>"; }
 
 function render() {
   const H = S.history;
@@ -547,7 +570,7 @@ function render() {
   const med = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : null;
   $("sAvg").innerHTML = fmt(avg);
   $("sMed").innerHTML = fmt(med);
-  $("sBest").innerHTML = fmt(sorted.length ? sorted[0] : null);
+  $("sBest").innerHTML = fmt(rts.length ? rts.reduce((a, b) => Math.abs(b) < Math.abs(a) ? b : a) : null);
   $("sN").textContent = rts.length;
   $("sNeg").textContent = H.filter(h => h.type === "neg").length;
   $("sMiss").textContent = H.filter(h => h.type === "miss").length;
@@ -560,7 +583,7 @@ function render() {
   H.slice(-15).reverse().forEach(h => {
     const li = document.createElement("li");
     let r, cls;
-    if (h.type === "buzz") { r = h.rt + " ms"; cls = "c-" + band(h.rt)[0]; }
+    if (h.type === "buzz") { r = signedMs(h.rt) + " ms"; cls = "c-" + band(h.rt)[0]; }
     else if (h.type === "neg") { r = typeof h.msEarly === "number" ? negMs(h) + " ms" : "Neg"; cls = "c-neg"; }
     else { r = "No buzz"; cls = "c-miss"; }
     li.innerHTML = '<span class="n"></span><span class="a"></span><span class="r ' + cls + '"></span>';
@@ -586,8 +609,8 @@ function drawChart(items) {
     const cx = X0 + slot * i + slot / 2;
     if (h.type === "buzz") {
       const col = { sharp: "var(--good)", quick: "var(--good)", steady: "var(--ok)", slow: "var(--slow)" }[band(h.rt)[0]];
-      const top = y(h.rt);
-      s += `<rect x="${cx - bw / 2}" y="${top}" width="${bw}" height="${Math.max(1.5, Y0 - top)}" rx="1.5" fill="${col}"><title>${h.rt} ms</title></rect>`;
+      const yv = y(h.rt);
+      s += `<rect x="${cx - bw / 2}" y="${Math.min(yv, Y0)}" width="${bw}" height="${Math.max(1.5, Math.abs(Y0 - yv))}" rx="1.5" fill="${col}"><title>${signedMs(h.rt)} ms</title></rect>`;
       if (h.rt > MAX) s += `<line x1="${cx - bw / 2}" x2="${cx + bw / 2}" y1="${Y1 + 3}" y2="${Y1 + 3}" stroke="var(--surface)" stroke-width="1.5"/>`;
     } else if (h.type === "neg" && typeof h.msEarly === "number") {
       const bot = y(-h.msEarly);
@@ -631,6 +654,8 @@ function syncSettings() {
   $("showText").disabled = m === "text";
   $("rate").value = S.rate;
   $("rateOut").textContent = Number(S.rate).toFixed(1) + "×";
+  $("grace").value = S.grace || 0;
+  $("graceOut").textContent = (S.grace || 0) + " ms";
   $("srcBuilt").setAttribute("aria-pressed", S.source === "built");
   $("srcMine").setAttribute("aria-pressed", S.source === "mine");
   $("mineBox").hidden = S.source !== "mine";
@@ -667,6 +692,7 @@ function bind() {
   $("modeText").addEventListener("click", () => { S.mode = "text"; save(); syncSettings(); });
   $("voiceSel").addEventListener("change", e => { S.voiceURI = e.target.value; save(); });
   $("rate").addEventListener("input", e => { S.rate = Number(e.target.value); $("rateOut").textContent = S.rate.toFixed(1) + "×"; save(); });
+  $("grace").addEventListener("input", e => { S.grace = Number(e.target.value); $("graceOut").textContent = S.grace + " ms"; save(); });
   $("showText").addEventListener("change", e => { S.showText = e.target.checked; save(); });
   $("srcBuilt").addEventListener("click", () => { S.source = "built"; deck = []; save(); syncSettings(); });
   $("srcMine").addEventListener("click", () => { S.source = "mine"; deck = []; save(); syncSettings(); });
