@@ -210,6 +210,7 @@ textarea { font-family: var(--f-mono); font-size: 0.8rem; min-height: 120px; res
           <div class="field">
             <span class="label">Display</span>
             <label class="check"><input type="checkbox" id="showText" checked> Show words as they're read</label>
+            <label class="check"><input type="checkbox" id="sound" checked> Buzzer sound</label>
           </div>
           <div class="field full">
             <label class="label" for="grace">Early buffer</label>
@@ -306,7 +307,7 @@ let voices = [];
 let voicesChecked = false;
 const effMode = () => (S.mode === "voice" && synth && voices.length) ? "voice" : "text";
 
-let S = { history: [], tossupNo: 0, mode: "voice", rate: 1, voiceURI: "", showText: true, source: "built", mine: "", grace: 0 };
+let S = { history: [], tossupNo: 0, mode: "voice", rate: 1, voiceURI: "", showText: true, source: "built", mine: "", grace: 0, sound: true };
 let state = "idle";       // idle | reading | held (early buzz waiting on the voice) | open | done
 let cur = null;           // current tossup runtime
 let deck = [];
@@ -370,6 +371,7 @@ function revealAll() {
 /* ---------- reading ---------- */
 function startTossup() {
   if (state === "reading" || state === "open" || state === "held") return;
+  if (S.sound) audio();
   const [text, ans] = nextQuestion();
   const id = ++runId;
   S.tossupNo += 1;
@@ -456,6 +458,7 @@ function eventTime(e) {
 function buzz(e) {
   const ts = eventTime(e);
   pressAnim();
+  if (state === "reading" || state === "open") buzzSound();
   if (state === "open") {
     finish({ type: "buzz", rt: Math.max(0, Math.round(ts - cur.endT)) });
   } else if (state === "reading") {
@@ -558,6 +561,28 @@ function stopTossup() {
 /* ---------- UI helpers ---------- */
 function setStatus(s, text) { const c = $("status"); c.dataset.s = s; c.textContent = text; }
 function setNote(t, warn) { const n = $("note"); n.textContent = t; n.className = "note" + (warn ? " warn" : ""); }
+/* Buzzer sound: two detuned square waves through a lowpass, like a lockout-system buzzer. */
+let actx = null;
+function audio() {
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+  } catch (e) { actx = null; }
+  return actx;
+}
+function buzzSound() {
+  if (!S.sound) return;
+  const a = audio(); if (!a) return;
+  const t = a.currentTime, g = a.createGain(), f = a.createBiquadFilter();
+  f.type = "lowpass"; f.frequency.value = 2400;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.01);
+  g.gain.setValueAtTime(0.22, t + 0.32);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+  f.connect(g); g.connect(a.destination);
+  [220, 331].forEach(fr => { const o = a.createOscillator(); o.type = "square"; o.frequency.value = fr; o.connect(f); o.start(t); o.stop(t + 0.46); });
+}
+
 function pressAnim() { const b = $("buzzer"); b.classList.add("down"); setTimeout(() => b.classList.remove("down"), 110); }
 
 function fmt(ms) { return ms == null ? "–" : signedMs(Math.round(ms)) + "<small>ms</small>"; }
@@ -652,6 +677,7 @@ function syncSettings() {
   $("voiceSel").disabled = m !== "voice";
   $("showText").checked = m === "text" ? true : S.showText;
   $("showText").disabled = m === "text";
+  $("sound").checked = S.sound !== false;
   $("rate").value = S.rate;
   $("rateOut").textContent = Number(S.rate).toFixed(1) + "×";
   $("grace").value = S.grace || 0;
@@ -694,6 +720,7 @@ function bind() {
   $("rate").addEventListener("input", e => { S.rate = Number(e.target.value); $("rateOut").textContent = S.rate.toFixed(1) + "×"; save(); });
   $("grace").addEventListener("input", e => { S.grace = Number(e.target.value); $("graceOut").textContent = S.grace + " ms"; save(); });
   $("showText").addEventListener("change", e => { S.showText = e.target.checked; save(); });
+  $("sound").addEventListener("change", e => { S.sound = e.target.checked; save(); if (S.sound) buzzSound(); });
   $("srcBuilt").addEventListener("click", () => { S.source = "built"; deck = []; save(); syncSettings(); });
   $("srcMine").addEventListener("click", () => { S.source = "mine"; deck = []; save(); syncSettings(); });
   $("mine").addEventListener("input", e => { S.mine = e.target.value; deck = []; save(); syncSettings(); });
