@@ -912,7 +912,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
   let frame = 0, lastCM = null;
   function tick() {
     if (playing) {
-      stepAcc += speed * 8;
+      stepAcc += speed * 2;  // physics steps per frame at "1×"
       while (stepAcc >= 1) {
         step(); stepAcc -= 1;
         if (stepCount % 10 === 0) pushTrail();
