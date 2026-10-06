@@ -820,9 +820,11 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     const n = rv.clone().cross(bv);
     if (rv.length() < 1e-6 || bv.length() < 1e-9 || n.length() < 1e-6 * rv.length() * bv.length()) { rhHide(); return; }  // parallel: cross product is zero
     const e1 = rv.clone().normalize(), e3 = n.normalize(), e2 = e3.clone().cross(e1);
-    const S = Math.min(Math.max(rv.length() * 0.3, 1.1), 3.2);
+    // the hand lies along the drawn r with its fingertips at the body, where the drawn v (or F) starts
+    const S = Math.min(Math.max(rv.length() * 0.22, 0.8), 2.2);
+    const body = new THREE.Vector3(r[3*i], r[3*i+1], r[3*i+2]);
     hand.quaternion.setFromRotationMatrix(m4.makeBasis(e1, e2, e3));
-    hand.position.copy(vO).addScaledVector(e1, 1.65 * S);  // wrist end sits near O
+    hand.position.copy(body).addScaledVector(e1, -1.0 * S);  // knuckles one finger-length before the body
     hand.scale.setScalar(S);
     const tt = (performance.now() - rh.t0) / 1000;
     const fade = ease(tt / 0.6), curl = ease((tt - 0.9) / 1.8), thumb = ease((tt - 2.9) / 1.1), grow = ease((tt - 4.0) / 1.0);
@@ -833,22 +835,25 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     thumbBase.rotation.y = -0.25 + (-Math.PI / 2 + 0.25) * thumb;  // swings from beside the index finger to +z
     thumbBase.rotation.x = -0.35 * (1 - thumb);
     thumbTip.rotation.y = -0.35 * (1 - thumb);
-    const len = 3.3 * S;
-    setArrow(rhR, vO, e1.clone().multiplyScalar(len), true);
-    setArrow(rhB, vO, bv.clone().normalize().multiplyScalar(len), tt > 0.5);
-    setArrow(rhOut, vO, e3.clone().multiplyScalar(len * 0.9 * grow), grow > 0.01);
+    // the vectors as drawn in the scene: r from O to the body, v (or F) starting at the body
+    const bShown = rh.kind === "L" ? bv.clone().multiplyScalar(1.4) : capLen(bv.clone().multiplyScalar(show.fScale));
+    if (bShown.length() < 1.6 * S) bShown.setLength(1.6 * S);  // long enough to see the fingers curl toward it
+    const len = 2.6 * S;
+    setArrow(rhR, vO, rv, true);
+    setArrow(rhB, body, bShown, tt > 0.5);
+    setArrow(rhOut, body, e3.clone().multiplyScalar(len * grow), grow > 0.01);
     rhR.userData.mat.color.set(css("--r"));
     rhB.userData.mat.color.set(rh.kind === "L" ? css("--v") : css("--F"));
     rhOut.userData.mat.color.set(css("--L"));
     const tip = new THREE.Vector3();
     rhLabels[0].innerHTML = `<i>r</i><sub>${i+1}</sub>`; rhLabels[0].style.color = css("--r");
-    place(rhLabels[0], tip.copy(vO).addScaledVector(e1, len));
-    rhLabels[1].innerHTML = rh.kind === "L" ? `<i>v</i><sub>${i+1}</sub> (moved to O)` : `<i>F</i><sub>${i+1}</sub> (moved to O)`;
+    place(rhLabels[0], tip.copy(vO).addScaledVector(rv, 0.4));
+    rhLabels[1].innerHTML = rh.kind === "L" ? `<i>v</i><sub>${i+1}</sub>` : `<i>F</i><sub>${i+1}</sub>`;
     rhLabels[1].style.color = rh.kind === "L" ? css("--v") : css("--F");
-    if (tt > 0.5) place(rhLabels[1], tip.copy(vO).addScaledVector(bv.clone().normalize(), len)); else rhLabels[1].hidden = true;
+    if (tt > 0.5) place(rhLabels[1], tip.copy(body).add(bShown)); else rhLabels[1].hidden = true;
     rhLabels[2].innerHTML = rh.kind === "L" ? `<i>L</i><sub>${i+1}</sub> = <i>r</i> × <i>p</i>` : `<i>τ</i><sub>${i+1}</sub> = <i>r</i> × <i>F</i>`;
     rhLabels[2].style.color = css("--L");
-    if (grow > 0.3) place(rhLabels[2], tip.copy(vO).addScaledVector(e3, len * 0.9 * grow)); else rhLabels[2].hidden = true;
+    if (grow > 0.3) place(rhLabels[2], tip.copy(body).addScaledVector(e3, len * grow)); else rhLabels[2].hidden = true;
   }
 
   // ---------- render loop ----------
