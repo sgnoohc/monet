@@ -12,6 +12,7 @@ Live: https://sgnoohc.github.io/monet/nbody_simulation/
 - Charts: L_x, L_y, L_z about O over time (flat), and each body's share of L (changes while the sum stays flat)
 - Live readouts: net torque about O stays near 10⁻¹⁵ while individual torques are of order 1
 - A uniform external field you can switch on to see L and P change, dL/dt = M(R_cm − r_O) × g
+- An animated 3D right hand for the selected body: fingers along r, curling toward v (or F), thumb giving L_i = r × p (or τ_i = r × F)
 - A 2D (planar) mode: bodies move in the x–y plane and L points along z
 
 ## Notes

@@ -78,6 +78,10 @@ input[type="range"] { accent-color: var(--L); }
 .lbl.li sub { font-size: 10px; }
 .lbl.L sub { font-size: 12px; }
 .lbl.P { color: var(--P); }
+.lbl.rh { font-size: 15px; font-style: normal; font-family: var(--font-body); font-weight: 600; transform: translate(6px, -18px); }
+.lbl.rh i { font-family: var(--font-display); font-size: 18px; font-weight: 400; }
+.rhbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rhbar button[aria-pressed="true"] { background: var(--L); color: #fff; border-color: var(--L); }
 .lbl.cm { font-family: var(--font-body); font-style: normal; font-size: 11px; color: var(--muted); transform: translate(8px, 4px); }
 .key { position: absolute; left: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--stage) 85%, transparent); padding: 6px 10px; border-radius: 6px; max-width: calc(100% - 24px); box-sizing: border-box; }
 .key span { display: inline-flex; align-items: center; gap: 6px; }
@@ -247,6 +251,12 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
 
     <section>
       <h2>Selected body <span id="selName" class="math"></span></h2>
+      <div class="rhbar">
+        <button id="rhBtn" type="button" aria-pressed="false" disabled>Show right-hand rule</button>
+        <button id="rhReplay" type="button" hidden>Replay</button>
+        <select id="rhKind" aria-label="Cross product to demonstrate"><option value="L">for Lᵢ = r × p</option><option value="tau">for τᵢ = r × F</option></select>
+      </div>
+      <p class="note" id="rhNote">Select a body to see the right-hand rule for its angular momentum.</p>
       <dl class="facts" id="selFacts"></dl>
     </section>
 
@@ -738,6 +748,8 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     $("Eval").innerHTML = fx(KE + PE, 4);
 
     // selected body
+    $("rhBtn").disabled = selected < 0;
+    $("rhNote").hidden = selected >= 0;
     if (selected < 0) { $("selName").innerHTML = ""; $("selFacts").innerHTML = `<dt>Click a body in the view to inspect it. Click it again to deselect.</dt><dd></dd>`; return; }
     const i = selected;
     const rel = [r[3*i]-O[0], r[3*i+1]-O[1], r[3*i+2]-O[2]];
@@ -752,6 +764,91 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
       `<dt>Net force F<sub>i</sub> = Σ F<sub>ij</sub></dt><dd>${vec([Ftot[3*i], Ftot[3*i+1], Ftot[3*i+2]])}</dd>` +
       Array.from({ length: N }, (_, j) => j === i ? "" : `<dt>&nbsp;&nbsp;F<sub>${i+1},${j+1}</sub> from m<sub>${j+1}</sub></dt><dd>${vec(pairForce(i, j))}</dd>`).join("") +
       (extOn ? `<dt>&nbsp;&nbsp;External m<sub>${i+1}</sub>g</dt><dd>${vec(GFIELD.map(g => m[i] * g))}</dd>` : "");
+  }
+
+  // ---------- right-hand rule ----------
+  // Hand model in local coords: fingers along +x, palm faces +y, thumb ends along +z = x × y.
+  // Placed with x = r̂, z = (r × b)̂, y = z × x, so the fingers curl from r toward b and the thumb gives r × b.
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xe6b08a, roughness: 0.65, transparent: true, opacity: 0.95 });
+  const hand = new THREE.Group(); hand.visible = false; scene.add(hand);
+  function seg(len, rad) {
+    const g = new THREE.Group();
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.05, len, 14), skinMat);
+    c.rotation.z = -Math.PI / 2; c.position.x = len / 2; g.add(c);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(rad, 14, 10), skinMat); tip.position.x = len; g.add(tip);
+    return g;
+  }
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.26, 0.86), skinMat); palm.position.x = -0.475; hand.add(palm);
+  const knuckles = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.86, 14), skinMat); knuckles.rotation.x = Math.PI / 2; hand.add(knuckles);
+  const heel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.86, 14), skinMat); heel.rotation.x = Math.PI / 2; heel.position.x = -0.95; hand.add(heel);
+  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.3, 0.7, 16), skinMat); wrist.rotation.z = -Math.PI / 2; wrist.position.x = -1.3; wrist.scale.set(1, 1, 1.25); hand.add(wrist);
+  const fingerJoints = [];
+  [[0.33, [0.42, 0.27, 0.21]], [0.11, [0.46, 0.30, 0.23]], [-0.11, [0.43, 0.28, 0.22]], [-0.33, [0.33, 0.22, 0.18]]].forEach(([z, lens]) => {
+    let parent = hand; const joints = [];
+    for (let k = 0; k < 3; k++) {
+      const j = new THREE.Group();
+      j.position.set(k === 0 ? 0 : lens[k - 1], 0, k === 0 ? z : 0);
+      j.add(seg(lens[k], 0.095 - 0.012 * k)); parent.add(j); joints.push(j); parent = j;
+    }
+    fingerJoints.push(joints);
+  });
+  const thumbBase = new THREE.Group(); thumbBase.position.set(-0.72, 0.06, 0.4); hand.add(thumbBase);
+  thumbBase.add(seg(0.38, 0.11));
+  const thumbTip = new THREE.Group(); thumbTip.position.x = 0.38; thumbTip.add(seg(0.3, 0.1)); thumbBase.add(thumbTip);
+
+  const rhR = makeArrow(0.05), rhB = makeArrow(0.05), rhOut = makeArrow(0.07);
+  [rhR, rhB, rhOut].forEach(a => a.visible = false);
+  const rhLabels = ["r", "b", "out"].map(() => { const d = document.createElement("div"); d.className = "lbl rh"; d.hidden = true; labelLayer.appendChild(d); return d; });
+  const rh = { on: false, t0: 0, kind: "L" };
+  const m4 = new THREE.Matrix4();
+  const ease = x => { x = Math.min(Math.max(x, 0), 1); return x * x * (3 - 2 * x); };
+  function rhSetOn(on) {
+    rh.on = on; rh.t0 = performance.now();
+    $("rhBtn").setAttribute("aria-pressed", String(on));
+    $("rhBtn").textContent = on ? "Hide right-hand rule" : "Show right-hand rule";
+    $("rhReplay").hidden = !on;
+  }
+  $("rhBtn").onclick = () => rhSetOn(!rh.on);
+  $("rhReplay").onclick = () => { rh.t0 = performance.now(); };
+  $("rhKind").onchange = e => { rh.kind = e.target.value; rh.t0 = performance.now(); };
+  function rhHide() { hand.visible = rhR.visible = rhB.visible = rhOut.visible = false; rhLabels.forEach(l => l.hidden = true); }
+  function updateRightHand() {
+    const i = selected;
+    if (!rh.on || i < 0) { if (rh.on && i < 0) rhSetOn(false); rhHide(); return; }
+    const rv = new THREE.Vector3(r[3*i] - O[0], r[3*i+1] - O[1], r[3*i+2] - O[2]);
+    const bv = rh.kind === "L" ? new THREE.Vector3(v[3*i], v[3*i+1], v[3*i+2]) : new THREE.Vector3(Ftot[3*i], Ftot[3*i+1], Ftot[3*i+2]);
+    const n = rv.clone().cross(bv);
+    if (rv.length() < 1e-6 || bv.length() < 1e-9 || n.length() < 1e-6 * rv.length() * bv.length()) { rhHide(); return; }  // parallel: cross product is zero
+    const e1 = rv.clone().normalize(), e3 = n.normalize(), e2 = e3.clone().cross(e1);
+    const S = Math.min(Math.max(rv.length() * 0.3, 1.1), 3.2);
+    hand.quaternion.setFromRotationMatrix(m4.makeBasis(e1, e2, e3));
+    hand.position.copy(vO).addScaledVector(e1, 1.65 * S);  // wrist end sits near O
+    hand.scale.setScalar(S);
+    const tt = (performance.now() - rh.t0) / 1000;
+    const fade = ease(tt / 0.6), curl = ease((tt - 0.9) / 1.8), thumb = ease((tt - 2.9) / 1.1), grow = ease((tt - 4.0) / 1.0);
+    hand.visible = true;
+    skinMat.opacity = 0.95 * fade;
+    const bend = [1.15, 1.35, 1.0];
+    fingerJoints.forEach(js => js.forEach((j, k) => { j.rotation.z = curl * bend[k]; }));
+    thumbBase.rotation.y = -0.25 + (-Math.PI / 2 + 0.25) * thumb;  // swings from beside the index finger to +z
+    thumbBase.rotation.x = -0.35 * (1 - thumb);
+    thumbTip.rotation.y = -0.35 * (1 - thumb);
+    const len = 3.3 * S;
+    setArrow(rhR, vO, e1.clone().multiplyScalar(len), true);
+    setArrow(rhB, vO, bv.clone().normalize().multiplyScalar(len), tt > 0.5);
+    setArrow(rhOut, vO, e3.clone().multiplyScalar(len * 0.9 * grow), grow > 0.01);
+    rhR.userData.mat.color.set(css("--r"));
+    rhB.userData.mat.color.set(rh.kind === "L" ? css("--v") : css("--F"));
+    rhOut.userData.mat.color.set(css("--L"));
+    const tip = new THREE.Vector3();
+    rhLabels[0].innerHTML = `<i>r</i><sub>${i+1}</sub>`; rhLabels[0].style.color = css("--r");
+    place(rhLabels[0], tip.copy(vO).addScaledVector(e1, len));
+    rhLabels[1].innerHTML = rh.kind === "L" ? `<i>v</i><sub>${i+1}</sub> (moved to O)` : `<i>F</i><sub>${i+1}</sub> (moved to O)`;
+    rhLabels[1].style.color = rh.kind === "L" ? css("--v") : css("--F");
+    if (tt > 0.5) place(rhLabels[1], tip.copy(vO).addScaledVector(bv.clone().normalize(), len)); else rhLabels[1].hidden = true;
+    rhLabels[2].innerHTML = rh.kind === "L" ? `<i>L</i><sub>${i+1}</sub> = <i>r</i> × <i>p</i>` : `<i>τ</i><sub>${i+1}</sub> = <i>r</i> × <i>F</i>`;
+    rhLabels[2].style.color = css("--L");
+    if (grow > 0.3) place(rhLabels[2], tip.copy(vO).addScaledVector(e3, len * 0.9 * grow)); else rhLabels[2].hidden = true;
   }
 
   // ---------- render loop ----------
@@ -878,6 +975,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     setArrow(PArrow, vFrom, vTmp, show.P);
     if (show.P && Pm) { vFrom.add(vTmp); place(PLabel, vFrom); } else PLabel.hidden = true;
 
+    updateRightHand();
     controls.update();
     renderer.render(scene, camera);
     if (frame % 2 === 0) updateCharts();
