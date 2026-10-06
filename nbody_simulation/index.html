@@ -799,18 +799,18 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
   const rhR = makeArrow(0.05), rhB = makeArrow(0.05), rhOut = makeArrow(0.07);
   [rhR, rhB, rhOut].forEach(a => a.visible = false);
   const rhLabels = ["r", "b", "out"].map(() => { const d = document.createElement("div"); d.className = "lbl rh"; d.hidden = true; labelLayer.appendChild(d); return d; });
-  const rh = { on: false, t0: 0, kind: "L" };
+  const rh = { on: false, t0: 0, kind: "L", S: null, kOut: null, body: -1 };  // S, kOut: fixed when a demo starts
   const m4 = new THREE.Matrix4();
   const ease = x => { x = Math.min(Math.max(x, 0), 1); return x * x * (3 - 2 * x); };
   function rhSetOn(on) {
-    rh.on = on; rh.t0 = performance.now();
+    rh.on = on; rh.t0 = performance.now(); rh.S = null;
     $("rhBtn").setAttribute("aria-pressed", String(on));
     $("rhBtn").textContent = on ? "Hide right-hand rule" : "Show right-hand rule";
     $("rhReplay").hidden = !on;
   }
   $("rhBtn").onclick = () => rhSetOn(!rh.on);
-  $("rhReplay").onclick = () => { rh.t0 = performance.now(); };
-  $("rhKind").onchange = e => { rh.kind = e.target.value; rh.t0 = performance.now(); };
+  $("rhReplay").onclick = () => { rh.t0 = performance.now(); rh.S = null; };
+  $("rhKind").onchange = e => { rh.kind = e.target.value; rh.t0 = performance.now(); rh.S = null; };
   function rhHide() { hand.visible = rhR.visible = rhB.visible = rhOut.visible = false; rhLabels.forEach(l => l.hidden = true); }
   function updateRightHand() {
     const i = selected;
@@ -821,7 +821,14 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     if (rv.length() < 1e-6 || bv.length() < 1e-9 || n.length() < 1e-6 * rv.length() * bv.length()) { rhHide(); return; }  // parallel: cross product is zero
     const e1 = rv.clone().normalize(), e3 = n.normalize(), e2 = e3.clone().cross(e1);
     // the hand lies along the drawn r with its fingertips at the body, where the drawn v (or F) starts
-    const S = Math.min(Math.max(rv.length() * 0.22, 0.8), 2.2);
+    // hand size and result-arrow scale are fixed when the demo starts, so the drawn r × b
+    // grows or shrinks only if the cross product itself does (a free particle's L stays put)
+    if (rh.S === null || rh.body !== i) {
+      rh.S = Math.min(Math.max(rv.length() * 0.22, 0.8), 2.2);
+      rh.kOut = 2.6 * rh.S / rv.clone().cross(bv).length();
+      rh.body = i;
+    }
+    const S = rh.S;
     const body = new THREE.Vector3(r[3*i], r[3*i+1], r[3*i+2]);
     hand.quaternion.setFromRotationMatrix(m4.makeBasis(e1, e2, e3));
     hand.position.copy(body).addScaledVector(e1, -1.0 * S);  // knuckles one finger-length before the body
@@ -838,7 +845,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     // the vectors as drawn in the scene: r from O to the body, v (or F) starting at the body
     const bShown = rh.kind === "L" ? bv.clone().multiplyScalar(1.4) : capLen(bv.clone().multiplyScalar(show.fScale));
     if (bShown.length() < 1.6 * S) bShown.setLength(1.6 * S);  // long enough to see the fingers curl toward it
-    const len = 2.6 * S;
+    const len = rh.kOut * rv.clone().cross(bv).length();
     setArrow(rhR, vO, rv, true);
     setArrow(rhB, body, bShown, tt > 0.5);
     setArrow(rhOut, body, e3.clone().multiplyScalar(len * grow), grow > 0.01);
