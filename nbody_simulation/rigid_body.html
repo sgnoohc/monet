@@ -123,6 +123,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
 <div class="app">
   <header>
     <button id="play" class="primary" type="button">Pause</button>
+    <button id="reset" type="button" title="Back to the starting angle, ω = 0.80, no torque, axis through the center of mass, nothing selected">Reset</button>
     <div class="ctl"><label for="shape">Body</label>
       <select id="shape">
         <option value="rect">Rectangular plate</option>
@@ -442,6 +443,14 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
   const vec = (a, d = 2) => `(${a.map(x => fx(x, d)).join(", ")})`;
   $("play").textContent = playing ? "Pause" : "Play";
   $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; };
+  $("reset").onclick = () => {
+    theta = 0; omega = 0.8;
+    $("omega").value = omega; $("omegaOut").textContent = omega.toFixed(2);
+    torqueOn = false; $("torque").setAttribute("aria-pressed", "false"); $("torque").textContent = "Apply torque";
+    sel.length = 0; focus = -1;
+    setPivot(0, 0); colorPieces(); refreshTally();
+    standardView("3d");
+  };
   $("shape").onchange = e => { shape = e.target.value; setPivot(0, 0); buildBody(); refreshTally(); };
   $("res").onchange = e => { H = +e.target.value; buildBody(); refreshTally(); };
   $("tGraded").onchange = e => { graded = e.target.checked; buildBody(); refreshTally(); };
