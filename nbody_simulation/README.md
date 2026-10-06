@@ -20,3 +20,14 @@ Live: https://sgnoohc.github.io/monet/nbody_simulation/
 - Kick-drift-kick leapfrog integrator. With central pair forces each step conserves L and P exactly, up to rounding error.
 - Gravity is softened at short range (ε = 0.35) to keep close passes stable. The force still acts along the line between the two bodies, so the conservation argument is unchanged.
 - One self-contained `index.html`. three.js r128 loads from jsDelivr.
+
+# Rigid Body Rotation (`rigid_body.html`)
+
+Live: https://sgnoohc.github.io/monet/nbody_simulation/rigid_body.html
+
+A rigid body built from small pieces dm spins about a vertical axis through O. Click a piece to see its r, r⊥, v = ω × r, a, F = dm a, p, L_i = r × p and τ_i = r × F. Each clicked piece is added to a running table of dm r⊥², which builds up I = Σ dm r⊥² until L_z = I ω.
+
+- Shapes: rectangular plate, disk, ring, rod, L-shaped plate, thick 3D block (L_i tilts off the axis; the tilts cancel in the sum)
+- Move the axis off the center of mass to see the parallel-axis term M d²
+- Coarse or fine pieces: the discrete sum approaches the continuum formula
+- Apply a torque: each piece gets a tangential acceleration α r⊥ and Σ τ_i,z = I α

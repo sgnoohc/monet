@@ -1,0 +1,684 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0}</style></head><body>
+<title>Rigid Body Rotation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: same lab bench as the N-body page. 3D viewport left, instrument panel right; stacks on phones. */
+:root {
+  --bg: #eef1ed; --surface: #ffffff; --stage: #fafbf9; --ink: #161b18; --muted: #5b645e;
+  --line: #d6ddd7; --grid3d: #c4cdc6;
+  --r: #2f7a57;      /* position vectors, green as in the lecture sketch */
+  --F: #c3352b;      /* forces, red */
+  --v: #161b18;      /* velocities, ink */
+  --L: #4a3aa7;      /* angular momentum */
+  --w: #0b6e8a;      /* angular velocity omega */
+  --tau: #b0610f;    /* torque */
+  --piece: #b9c3cf; --piece2: #7f8fa3;   /* body pieces, light to dense */
+  --sel: #8f84e0; --focus: #eda100;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d110f; --surface: #151a17; --stage: #090c0a; --ink: #e8ece9; --muted: #9aa49d;
+    --line: #29322c; --grid3d: #27302a;
+    --r: #56b98a; --F: #ef6a5e; --v: #e8ece9; --L: #9a8ff0; --w: #4fb8d8; --tau: #f0a35e;
+    --piece: #4a5868; --piece2: #8b9bb0; --sel: #9a8ff0; --focus: #f2b632;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d110f; --surface: #151a17; --stage: #090c0a; --ink: #e8ece9; --muted: #9aa49d;
+  --line: #29322c; --grid3d: #27302a;
+  --r: #56b98a; --F: #ef6a5e; --v: #e8ece9; --L: #9a8ff0; --w: #4fb8d8; --tau: #f0a35e;
+  --piece: #4a5868; --piece2: #8b9bb0; --sel: #9a8ff0; --focus: #f2b632;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+.app { height: 100%; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) 400px; grid-template-rows: auto minmax(0, 1fr); gap: 12px; padding: 14px 16px; }
+header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+button { font: 500 13px/1 var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--L); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); min-width: 74px; }
+button[aria-pressed="true"] { background: var(--tau); color: #fff; border-color: var(--tau); }
+.ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.ctl output { font-family: var(--font-mono); color: var(--ink); min-width: 3.6em; }
+.ctl .math { color: var(--ink); }
+input[type="range"] { accent-color: var(--L); }
+select { font: 13px var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; }
+a.navlink { margin-left: auto; color: var(--L); font-size: 13px; text-decoration: none; border-bottom: 1px solid currentColor; }
+
+.stage { position: relative; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--stage); }
+#view { position: absolute; inset: 0; }
+#view canvas { display: block; touch-action: none; }
+#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lbl { position: absolute; transform: translate(8px, -22px); font-family: var(--font-display); font-style: italic; font-size: 18px; color: var(--ink); white-space: nowrap; text-shadow: 0 0 3px var(--stage), 0 0 3px var(--stage); }
+.lbl sub { font-size: 12px; }
+.lbl.o { font-style: normal; transform: translate(-18px, 2px); }
+.views { position: absolute; left: 12px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.views span { font-size: 12px; color: var(--muted); }
+.views button { padding: 6px 10px; font-size: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
+.hint { position: absolute; right: 12px; top: 10px; font-size: 12px; color: var(--muted); }
+.key { position: absolute; left: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--stage) 85%, transparent); padding: 6px 10px; border-radius: 6px; max-width: calc(100% - 24px); box-sizing: border-box; }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.key i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; }
+.key i.sq { width: 10px; height: 10px; border-radius: 2px; }
+.key em { font-family: var(--font-display); font-size: 16px; color: var(--ink); }
+
+aside { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+h2 { font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; display: flex; justify-content: space-between; gap: 8px; }
+h2 .math { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--ink); }
+.math { font-family: var(--font-display); font-style: italic; font-size: 1.15em; }
+.row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 52px; align-items: center; gap: 8px; }
+.row label { font-family: var(--font-display); font-style: italic; font-size: 17px; }
+.row output, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.row output { text-align: right; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { padding: 6px 9px; font-size: 12px; }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; font-size: 12.5px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.facts dd.ok { color: var(--r); }
+.facts dt.sub { padding-left: 12px; }
+.big { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.cell { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 7px; background: var(--bg); min-width: 0; }
+.cell .k { font-family: var(--font-display); font-style: italic; font-size: 15px; color: var(--muted); }
+.cell .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; overflow-wrap: anywhere; }
+.note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.tablewrap { max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
+table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12px; }
+th, td { padding: 4px 8px; text-align: right; white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font: 600 11px var(--font-body); border-bottom: 1px solid var(--line); }
+th .math { font-size: 14px; font-weight: 400; color: var(--ink); }
+tbody tr.focus td { background: color-mix(in srgb, var(--focus) 22%, transparent); }
+tfoot td { border-top: 1px solid var(--line); font-weight: 500; background: var(--bg); position: sticky; bottom: 0; }
+.bar { height: 8px; border-radius: 4px; background: var(--bg); overflow: hidden; }
+.bar > div { height: 100%; background: var(--sel); width: 0; }
+.btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.btnrow button { padding: 6px 10px; font-size: 12px; }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; }
+.toggles label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.toggles input { accent-color: var(--L); }
+details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.deriv { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; font-size: 13.5px; }
+.deriv p { margin: 0; }
+.eq { font-family: var(--font-display); font-size: 18px; line-height: 1.5; padding: 4px 10px; background: var(--bg); border-radius: 6px; overflow-x: auto; white-space: nowrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+
+@media (max-width: 900px) {
+  html, body { height: auto; }
+  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .stage { height: 62svh; min-height: 340px; }
+  aside { overflow: visible; }
+  .hint { display: none; }
+  a.navlink { margin-left: 0; }
+}
+</style>
+
+<div class="app">
+  <header>
+    <button id="play" class="primary" type="button">Pause</button>
+    <div class="ctl"><label for="shape">Body</label>
+      <select id="shape">
+        <option value="rect">Rectangular plate</option>
+        <option value="disk">Disk</option>
+        <option value="ring">Ring</option>
+        <option value="rod">Rod</option>
+        <option value="L">L-shaped plate</option>
+        <option value="block">Thick block (3D)</option>
+      </select></div>
+    <div class="ctl"><label for="res">Pieces</label>
+      <select id="res"><option value="0.5">Coarse</option><option value="0.25">Fine</option></select></div>
+    <div class="ctl"><label for="omega"><span class="math">ω</span></label><input id="omega" type="range" min="-3" max="3" step="0.05" value="0.8"><output id="omegaOut">0.80</output></div>
+    <button id="torque" type="button" aria-pressed="false">Apply torque</button>
+    <div class="ctl"><label for="alpha"><span class="math">α</span></label><input id="alpha" type="range" min="-1" max="1" step="0.05" value="0.3"><output id="alphaOut">0.30</output></div>
+    <div class="ctl"><label for="speed">Speed</label><input id="speed" type="range" min="0" max="3" step="0.25" value="1"><output id="speedOut">1×</output></div>
+    <a class="navlink" href="https://sgnoohc.github.io/monet/nbody_simulation/" target="_blank" rel="noopener">N-body simulation ↗</a>
+  </header>
+
+  <div class="stage">
+    <div id="view"></div>
+    <div id="labels"></div>
+    <div class="views" role="group" aria-label="Standard views">
+      <span>View</span>
+      <button type="button" data-view="top" title="Look down the rotation axis">Top</button>
+      <button type="button" data-view="side" title="Look from the side">Side</button>
+      <button type="button" data-view="3d" title="Angled 3D view">3D</button>
+    </div>
+    <div class="hint">Click a piece to analyze it · click it again to remove it · drag to orbit</div>
+    <div class="key">
+      <span><i class="sq" style="background:var(--focus)"></i>piece being analyzed</span>
+      <span><i class="sq" style="background:var(--sel)"></i>pieces added to the sum</span>
+      <span><i style="background:var(--r)"></i><em>r</em>, <em>r</em><sub>⊥</sub></span>
+      <span><i style="background:var(--v)"></i><em>v</em></span>
+      <span><i style="background:var(--F)"></i><em>F</em> = dm <em>a</em></span>
+      <span><i style="background:var(--L);height:5px"></i><em>L</em></span>
+      <span><i style="background:var(--tau)"></i><em>τ</em></span>
+      <span><i style="background:var(--w);height:5px"></i><em>ω</em></span>
+    </div>
+  </div>
+
+  <aside>
+    <section>
+      <h2>Axis of rotation <span class="mono" id="pivotOut">through the center of mass</span></h2>
+      <p class="note">The axis is vertical (along <span class="math">z</span>) through the fixed point O. Move where it passes through the body.</p>
+      <div class="row"><label for="px">x</label><input id="px" type="range" min="-6" max="6" step="0.25" value="0"><output id="pxOut">0.00</output></div>
+      <div class="row"><label for="py">y</label><input id="py" type="range" min="-6" max="6" step="0.25" value="0"><output id="pyOut">0.00</output></div>
+      <div class="presets">
+        <button type="button" data-pivot="cm">Center of mass</button>
+        <button type="button" data-pivot="edge">Edge</button>
+        <button type="button" data-pivot="corner">Corner</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Whole body <span class="math">L<sub>z</sub> = I ω</span></h2>
+      <div class="big">
+        <div class="cell"><span class="k">ω</span><span class="val" id="wVal">0</span></div>
+        <div class="cell"><span class="k">I = Σ dm r<sub>⊥</sub>²</span><span class="val" id="IVal">0</span></div>
+        <div class="cell"><span class="k">L<sub>z</sub></span><span class="val" id="LzVal">0</span></div>
+      </div>
+      <dl class="facts" id="bodyFacts"></dl>
+    </section>
+
+    <section>
+      <h2>Piece being analyzed <span class="math" id="focusName"></span></h2>
+      <dl class="facts" id="focusFacts"></dl>
+    </section>
+
+    <section>
+      <h2>Building up I <span class="math">I = Σ dm<sub>i</sub> r<sub>⊥i</sub>²</span></h2>
+      <div class="btnrow">
+        <button id="selAll" type="button">Add every piece</button>
+        <button id="selRing" type="button" disabled>Add pieces at this r⊥</button>
+        <button id="selClear" type="button">Clear</button>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>piece</th><th><span class="math">dm</span></th><th><span class="math">r</span><sub>⊥</sub></th><th><span class="math">dm r</span><sub>⊥</sub>²</th><th><span class="math">L<sub>z</sub></span> = <span class="math">dm r</span><sub>⊥</sub>²<span class="math">ω</span></th></tr></thead>
+          <tbody id="tallyBody"></tbody>
+          <tfoot><tr><td>Σ</td><td id="sumDm">0</td><td></td><td id="sumI">0</td><td id="sumL">0</td></tr></tfoot>
+        </table>
+      </div>
+      <div class="bar" aria-hidden="true"><div id="barFill"></div></div>
+      <dl class="facts" id="tallyFacts"></dl>
+    </section>
+
+    <section>
+      <h2>Display</h2>
+      <div class="toggles">
+        <label><input id="tVall" type="checkbox"> <span><span class="math">v</span> on every piece</span></label>
+        <label><input id="tLabels" type="checkbox" checked> Labels</label>
+        <label><input id="tLtot" type="checkbox" checked> Total <span class="math">L</span> and <span class="math">ω</span></label>
+        <label><input id="tGraded" type="checkbox"> Heavier on one side</label>
+      </div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr)"><label for="liAt" style="font-family:var(--font-body);font-style:normal;font-size:13px">Draw the piece's <span class="math">L</span><sub>i</sub>, <span class="math">τ</span><sub>i</sub></label>
+        <select id="liAt"><option value="piece">at the piece</option><option value="O">at O</option></select></div>
+      <p class="note">One piece's <span class="math">F</span>, <span class="math">L</span><sub>i</sub> and <span class="math">τ</span><sub>i</sub> are tiny, so their arrows are drawn as if the piece held the whole mass (× the number of pieces). <span class="math">v</span> is drawn at true scale ×0.5.</p>
+    </section>
+
+    <section>
+      <details open>
+        <summary>From one piece to I ω</summary>
+        <div class="deriv">
+          <p>Every piece moves in a circle about the axis, so its speed is set by its distance from the axis:</p>
+          <div class="eq"><i>v</i><sub>i</sub> = <i>ω</i> × <i>r</i><sub>i</sub>, &nbsp; |<i>v</i><sub>i</sub>| = <i>ω r</i><sub>⊥i</sub></div>
+          <p>Its angular momentum about O has a <span class="math">z</span> part that only depends on <span class="math">r</span><sub>⊥</sub>:</p>
+          <div class="eq"><i>L</i><sub>i,z</sub> = (<i>r</i><sub>i</sub> × <i>dm</i><sub>i</sub> <i>v</i><sub>i</sub>)<sub>z</sub> = <i>dm</i><sub>i</sub> <i>r</i><sub>⊥i</sub>² <i>ω</i></div>
+          <p>Every piece shares the same <span class="math">ω</span>, so it factors out of the sum:</p>
+          <div class="eq"><i>L</i><sub>z</sub> = Σ <i>dm</i><sub>i</sub> <i>r</i><sub>⊥i</sub>² <i>ω</i> = <i>I ω</i>, &nbsp; <i>I</i> = Σ <i>dm</i><sub>i</sub> <i>r</i><sub>⊥i</sub>² → ∫ <i>r</i><sub>⊥</sub>² <i>dm</i></div>
+          <p>Switch Pieces to Fine and the sum moves toward the continuum formula. Move the axis off the center of mass and <span class="math">I</span> grows by <span class="math">Md</span>², the parallel-axis theorem.</p>
+          <p>With a torque applied, each piece also gets a tangential acceleration <span class="math">α r</span><sub>⊥</sub>, and</p>
+          <div class="eq">Σ <i>τ</i><sub>i,z</sub> = Σ <i>dm</i><sub>i</sub> <i>r</i><sub>⊥i</sub>² <i>α</i> = <i>I α</i> = d<i>L</i><sub>z</sub>/d<i>t</i></div>
+          <p>The forces between pieces cancel in pairs, as in the N-body page, so only the external torque changes <span class="math">L</span>. For the thick block, a piece above or below the plane of O has an <span class="math">L</span><sub>i</sub> that tilts away from the axis. A matching piece on the other side tilts the other way, so the sum stays along <span class="math">ω</span>.</p>
+        </div>
+      </details>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const M_TOTAL = 10, OMEGA_REF = 0.8;
+
+  // ---------- body model ----------
+  let shape = "rect", H = 0.5, graded = false;
+  let cells = [], dm = [], Npc = 0;          // local positions relative to the center of mass
+  let pivot = [0, 0];                         // where the axis crosses the body, in body coordinates
+  let theta = 0, omega = 0.8, alphaSet = 0.3, torqueOn = false;
+  let ext = { minx: 0, maxx: 0, miny: 0, maxy: 0 };
+  let formula = null;                          // continuum I about the center of mass (uniform bodies)
+  const sel = []; let focus = -1;              // pieces added to the sum, and the one being analyzed
+
+  function buildBody() {
+    const pts = [];
+    const grid = (wx, wy, wz, keep) => {
+      const nx = Math.max(1, Math.round(wx / H)), ny = Math.max(1, Math.round(wy / H)), nz = Math.max(1, Math.round(wz / H));
+      for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) for (let k = 0; k < nz; k++) {
+        const x = (i - (nx - 1) / 2) * H, y = (j - (ny - 1) / 2) * H, z = wz > 0 ? (k - (nz - 1) / 2) * H : 0;
+        if (!keep || keep(x, y, z)) pts.push([x, y, z]);
+      }
+    };
+    switch (shape) {
+      case "rect": grid(8, 5, 0); formula = M => M * (8 * 8 + 5 * 5) / 12; break;
+      case "disk": grid(8.5, 8.5, 0, (x, y) => Math.hypot(x, y) <= 4); formula = M => 0.5 * M * 4 * 4; break;
+      case "ring": grid(9.5, 9.5, 0, (x, y) => { const q = Math.hypot(x, y); return q >= 2.5 && q <= 4.5; }); formula = M => 0.5 * M * (2.5 * 2.5 + 4.5 * 4.5); break;
+      case "rod": grid(12, 0.5, 0); formula = M => M * (12 * 12 + 0.5 * 0.5) / 12; break;
+      case "L": grid(6, 5, 0, (x, y) => x < -0.6 || y < -0.9); formula = null; break;
+      case "block": grid(5, 3, 2); formula = M => M * (5 * 5 + 3 * 3) / 12; break;
+    }
+    // masses: uniform, or density rising from -x to +x
+    let xmin = Infinity, xmax = -Infinity;
+    pts.forEach(p => { xmin = Math.min(xmin, p[0]); xmax = Math.max(xmax, p[0]); });
+    const dens = pts.map(p => graded ? 1 + 2 * (p[0] - xmin) / Math.max(xmax - xmin, 1e-9) : 1);
+    const dsum = dens.reduce((a, b) => a + b, 0);
+    dm = dens.map(d => M_TOTAL * d / dsum);
+    // shift so the center of mass is the body origin (the plane z = 0 stays the mid-plane)
+    const cm = [0, 0, 0];
+    pts.forEach((p, i) => { for (let k = 0; k < 3; k++) cm[k] += dm[i] * p[k] / M_TOTAL; });
+    cells = pts.map(p => [p[0] - cm[0], p[1] - cm[1], p[2] - cm[2]]);
+    Npc = cells.length;
+    ext = { minx: Infinity, maxx: -Infinity, miny: Infinity, maxy: -Infinity };
+    cells.forEach(p => { ext.minx = Math.min(ext.minx, p[0]); ext.maxx = Math.max(ext.maxx, p[0]); ext.miny = Math.min(ext.miny, p[1]); ext.maxy = Math.max(ext.maxy, p[1]); });
+    if (graded) formula = null;
+    sel.length = 0; focus = -1;
+    buildMesh();
+    Iref = momentOfInertia() || 1;
+  }
+
+  // world position of piece k: the axis is the world z axis, and the body turns by theta about it
+  function worldPos(k, out) {
+    const c = Math.cos(theta), s = Math.sin(theta);
+    const x = cells[k][0] - pivot[0], y = cells[k][1] - pivot[1];
+    out[0] = c * x - s * y; out[1] = s * x + c * y; out[2] = cells[k][2];
+    return out;
+  }
+  const alpha = () => torqueOn ? alphaSet : 0;
+  function pieceKinematics(k) {
+    const r = worldPos(k, [0, 0, 0]);
+    const a = alpha();
+    const v = [-omega * r[1], omega * r[0], 0];
+    const acc = [-a * r[1] - omega * omega * r[0], a * r[0] - omega * omega * r[1], 0];
+    const m = dm[k];
+    const p = v.map(q => m * q), F = acc.map(q => m * q);
+    const rperp = Math.hypot(r[0], r[1]);
+    return { r, v, acc, p, F, m, rperp, L: cross(r, p), tau: cross(r, F) };
+  }
+  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  function momentOfInertia() { let I = 0; for (let k = 0; k < Npc; k++) { const x = cells[k][0] - pivot[0], y = cells[k][1] - pivot[1]; I += dm[k] * (x * x + y * y); } return I; }
+
+  // ---------- scene ----------
+  const view = $("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  view.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
+  camera.up.set(0, 0, 1);
+  camera.position.set(9, -13, 9);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.7); sun.position.set(6, -8, 14); scene.add(sun);
+
+  let grid = null;
+  const UP = new THREE.Vector3(0, 1, 0), tmpD = new THREE.Vector3();
+  function makeArrow(radius, opacity = 1, shared = null) {
+    const grp = new THREE.Group();
+    const mat = shared ? shared.mat : new THREE.MeshBasicMaterial({ transparent: opacity < 1, opacity, depthWrite: opacity >= 1 });
+    let sg, hg;
+    if (shared) { sg = shared.sg; hg = shared.hg; }
+    else { sg = new THREE.CylinderGeometry(radius, radius, 1, 10); sg.translate(0, 0.5, 0); hg = new THREE.ConeGeometry(radius * 3, 1, 16); hg.translate(0, 0.5, 0); }
+    const shaft = new THREE.Mesh(sg, mat), head = new THREE.Mesh(hg, mat);
+    grp.add(shaft, head); grp.userData = { shaft, head, mat, radius }; grp.visible = false;
+    scene.add(grp); return grp;
+  }
+  function setArrow(A, from, vec, show) {
+    const len = vec.length();
+    if (!show || len < 1e-6) { A.visible = false; return; }
+    A.visible = true; A.position.copy(from);
+    tmpD.copy(vec).divideScalar(len); A.quaternion.setFromUnitVectors(UP, tmpD);
+    const nominal = A.userData.radius * 7, headL = Math.min(nominal, len * 0.45), hs = headL / nominal;
+    A.userData.shaft.scale.set(1, Math.max(len - headL, 1e-4), 1);
+    A.userData.head.position.y = len - headL; A.userData.head.scale.set(hs, headL, hs);
+  }
+  const capLen = (v3, max = 9) => { const l = v3.length(); if (l > max) v3.multiplyScalar(max / l); return v3; };
+
+  // axis line and O marker
+  const axisMat = new THREE.LineDashedMaterial({ dashSize: 0.35, gapSize: 0.25 });
+  const axisLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -6), new THREE.Vector3(0, 0, 9)]), axisMat);
+  axisLine.computeLineDistances(); scene.add(axisLine);
+  const oDot = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 12), new THREE.MeshBasicMaterial()); scene.add(oDot);
+
+  // pieces: one instanced mesh
+  let mesh = null;
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  const pieceMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.05 });
+  const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), s3 = new THREE.Vector3(), p3 = new THREE.Vector3(), zAxis = new THREE.Vector3(0, 0, 1);
+  function buildMesh() {
+    if (mesh) { scene.remove(mesh); mesh.dispose(); }
+    pieceMat.transparent = shape === "block"; pieceMat.opacity = shape === "block" ? 0.55 : 1; pieceMat.depthWrite = shape !== "block";
+    pieceMat.needsUpdate = true;
+    mesh = new THREE.InstancedMesh(boxGeo, pieceMat, Npc);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;  // instances move; the base geometry's bounds say nothing about them
+    scene.add(mesh);
+    colorPieces();
+    ensureVArrows();
+  }
+  const cA = new THREE.Color(), cB = new THREE.Color(), cTmp = new THREE.Color();
+  function colorPieces() {
+    if (!mesh) return;
+    cA.set(css("--piece")); cB.set(css("--piece2"));
+    const cFocus = new THREE.Color(css("--focus")), cSel = new THREE.Color(css("--sel"));
+    const dmin = Math.min(...dm), dmax = Math.max(...dm);
+    const inSel = new Set(sel);
+    for (let k = 0; k < Npc; k++) {
+      if (k === focus) cTmp.copy(cFocus);
+      else if (inSel.has(k)) cTmp.copy(cSel);
+      else cTmp.copy(cA).lerp(cB, dmax > dmin ? (dm[k] - dmin) / (dmax - dmin) : 0.25);
+      mesh.setColorAt(k, cTmp);
+    }
+    mesh.instanceColor.needsUpdate = true;
+  }
+
+  // arrows for the piece being analyzed, the whole body, and the optional velocity field
+  const A = {
+    r: makeArrow(0.045), rperp: makeArrow(0.035, 0.7), v: makeArrow(0.05), F: makeArrow(0.05),
+    L: makeArrow(0.06), tau: makeArrow(0.05), Ltot: makeArrow(0.09), w: makeArrow(0.08)
+  };
+  const vAll = [];   // velocity-field arrows share one geometry and material
+  const vShared = { mat: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.7, depthWrite: false }), sg: new THREE.CylinderGeometry(0.022, 0.022, 1, 8), hg: new THREE.ConeGeometry(0.066, 1, 10) };
+  vShared.sg.translate(0, 0.5, 0); vShared.hg.translate(0, 0.5, 0);
+  const V_MAX = 400;
+  function ensureVArrows() { while (vAll.length < Math.min(Npc, V_MAX)) vAll.push(makeArrow(0.022, 0.7, vShared)); vAll.forEach(a => a.visible = false); }
+
+  // labels
+  const labelLayer = $("labels");
+  const mkLabel = (cls, html) => { const d = document.createElement("div"); d.className = "lbl" + (cls ? " " + cls : ""); d.innerHTML = html; d.hidden = true; labelLayer.appendChild(d); return d; };
+  const lbl = {
+    O: mkLabel("o", "O"), dm: mkLabel("", "dm"), r: mkLabel("", "r"), v: mkLabel("", "v"), F: mkLabel("", "F"),
+    L: mkLabel("", "L<sub>i</sub>"), tau: mkLabel("", "τ<sub>i</sub>"), Ltot: mkLabel("", "L"), w: mkLabel("", "ω")
+  };
+  const proj = new THREE.Vector3();
+  function place(el, pos) {
+    proj.copy(pos).project(camera);
+    if (proj.z > 1 || proj.z < -1) { el.hidden = true; return; }
+    el.hidden = false;
+    el.style.left = ((proj.x + 1) / 2 * view.clientWidth) + "px";
+    el.style.top = ((1 - proj.y) / 2 * view.clientHeight) + "px";
+  }
+
+  function applyTheme() {
+    scene.background = new THREE.Color(css("--stage"));
+    if (grid) scene.remove(grid);
+    grid = new THREE.GridHelper(30, 30, new THREE.Color(css("--grid3d")), new THREE.Color(css("--grid3d")));
+    grid.rotation.x = Math.PI / 2; grid.position.z = -2.2; scene.add(grid);
+    axisMat.color.set(css("--muted")); oDot.material.color.set(css("--ink"));
+    A.r.userData.mat.color.set(css("--r")); A.rperp.userData.mat.color.set(css("--r"));
+    A.v.userData.mat.color.set(css("--v")); A.F.userData.mat.color.set(css("--F"));
+    A.L.userData.mat.color.set(css("--L")); A.tau.userData.mat.color.set(css("--tau"));
+    A.Ltot.userData.mat.color.set(css("--L")); A.w.userData.mat.color.set(css("--w"));
+    vShared.mat.color.set(css("--v"));
+    lbl.r.style.color = css("--r"); lbl.v.style.color = css("--v"); lbl.F.style.color = css("--F");
+    lbl.L.style.color = css("--L"); lbl.tau.style.color = css("--tau"); lbl.Ltot.style.color = css("--L"); lbl.w.style.color = css("--w");
+    colorPieces();
+  }
+
+  // ---------- UI ----------
+  let playing = !matchMedia("(prefers-reduced-motion: reduce)").matches, speed = 1;
+  let Iref = 1;
+  const show = { vAll: false, labels: true, Ltot: true, liAt: "piece" };
+  const fx = (x, d = 3) => (Math.abs(x) < 0.5 * 10 ** -d ? 0 : x).toFixed(d).replace(/-/g, "−");
+  const vec = (a, d = 2) => `(${a.map(x => fx(x, d)).join(", ")})`;
+  $("play").textContent = playing ? "Pause" : "Play";
+  $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; };
+  $("shape").onchange = e => { shape = e.target.value; setPivot(0, 0); buildBody(); refreshTally(); };
+  $("res").onchange = e => { H = +e.target.value; buildBody(); refreshTally(); };
+  $("tGraded").onchange = e => { graded = e.target.checked; buildBody(); refreshTally(); };
+  $("omega").oninput = e => { omega = +e.target.value; $("omegaOut").textContent = omega.toFixed(2); };
+  $("alpha").oninput = e => { alphaSet = +e.target.value; $("alphaOut").textContent = alphaSet.toFixed(2); };
+  $("torque").onclick = () => { torqueOn = !torqueOn; $("torque").setAttribute("aria-pressed", String(torqueOn)); $("torque").textContent = torqueOn ? "Remove torque" : "Apply torque"; };
+  $("speed").oninput = e => { speed = +e.target.value; $("speedOut").textContent = speed + "×"; };
+  $("tVall").onchange = e => { show.vAll = e.target.checked; if (!show.vAll) vAll.forEach(a => a.visible = false); };
+  $("tLabels").onchange = e => { show.labels = e.target.checked; labelLayer.hidden = !show.labels; };
+  $("tLtot").onchange = e => { show.Ltot = e.target.checked; };
+  $("liAt").onchange = e => { show.liAt = e.target.value; };
+
+  function setPivot(x, y) {
+    pivot = [x, y];
+    $("px").value = x; $("py").value = y;
+    $("pxOut").textContent = fx(x, 2); $("pyOut").textContent = fx(y, 2);
+    $("pivotOut").textContent = Math.hypot(x, y) < 1e-9 ? "through the center of mass" : `d = ${fx(Math.hypot(x, y), 2)} from the center of mass`;
+    refreshTally();
+  }
+  $("px").oninput = $("py").oninput = () => setPivot(+$("px").value, +$("py").value);
+  document.querySelectorAll("[data-pivot]").forEach(b => b.onclick = () => {
+    const w = b.dataset.pivot, snap = q => Math.round(q * 4) / 4;
+    if (w === "cm") setPivot(0, 0);
+    else if (w === "edge") setPivot(snap(ext.maxx), 0);
+    else setPivot(snap(ext.maxx), snap(ext.maxy));
+  });
+
+  // selection
+  function toggle(k) {
+    const at = sel.indexOf(k);
+    if (at >= 0) { sel.splice(at, 1); if (focus === k) focus = sel.length ? sel[sel.length - 1] : -1; }
+    else { sel.push(k); focus = k; }
+    colorPieces(); refreshTally();
+  }
+  $("selAll").onclick = () => { const keep = new Set(sel); for (let k = 0; k < Npc; k++) if (!keep.has(k)) sel.push(k); colorPieces(); refreshTally(); };
+  $("selClear").onclick = () => { sel.length = 0; focus = -1; colorPieces(); refreshTally(); };
+  $("selRing").onclick = () => {  // every piece at the same distance from the axis as the analyzed one
+    if (focus < 0) return;
+    const rp = k => Math.hypot(cells[k][0] - pivot[0], cells[k][1] - pivot[1]);
+    const target = rp(focus), keep = new Set(sel);
+    for (let k = 0; k < Npc; k++) if (!keep.has(k) && Math.abs(rp(k) - target) < H * 0.5) sel.push(k);
+    colorPieces(); refreshTally();
+  };
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  let downAt = null;
+  renderer.domElement.addEventListener("pointerdown", e => { downAt = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener("pointerup", e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObject(mesh)[0];
+    if (hit && hit.instanceId != null) toggle(hit.instanceId);
+  });
+
+  // ---------- panel ----------
+  function refreshTally() {
+    const rows = [], cap = 80;
+    let sDm = 0, sI = 0;
+    const order = sel.slice().reverse();  // newest first
+    order.forEach((k, n) => {
+      const rp = Math.hypot(cells[k][0] - pivot[0], cells[k][1] - pivot[1]);
+      const mi = dm[k] * rp * rp;
+      sDm += dm[k]; sI += mi;
+      if (n < cap) rows.push(`<tr class="${k === focus ? "focus" : ""}"><td>#${k + 1}</td><td>${fx(dm[k], 4)}</td><td>${fx(rp, 3)}</td><td>${fx(mi, 4)}</td><td>${fx(mi * omega, 4)}</td></tr>`);
+    });
+    if (order.length > cap) rows.push(`<tr><td colspan="5" style="text-align:center;color:var(--muted)">… and ${order.length - cap} more pieces, included in the sums</td></tr>`);
+    if (!order.length) rows.push(`<tr><td colspan="5" style="text-align:center;color:var(--muted);white-space:normal">Click pieces of the body to add their dm r<sub>⊥</sub>² here.</td></tr>`);
+    $("tallyBody").innerHTML = rows.join("");
+    $("sumDm").textContent = fx(sDm, 3); $("sumI").textContent = fx(sI, 3); $("sumL").textContent = fx(sI * omega, 3);
+    const I = momentOfInertia();
+    $("barFill").style.width = Math.min(100, 100 * sI / I) + "%";
+    $("tallyFacts").innerHTML =
+      `<dt>Pieces added</dt><dd>${sel.length} of ${Npc}</dd>` +
+      `<dt>Σ dm r<sub>⊥</sub>² so far</dt><dd>${fx(sI, 3)} = ${fx(100 * sI / I, 1)}% of I</dd>` +
+      `<dt>Σ L<sub>i,z</sub> = (Σ dm r<sub>⊥</sub>²) ω</dt><dd>${fx(sI * omega, 3)}</dd>`;
+    $("selRing").disabled = focus < 0;
+  }
+
+  function updatePanel() {
+    const I = momentOfInertia(), a = alpha();
+    let L = [0, 0, 0], tau = [0, 0, 0], KE = 0;
+    for (let k = 0; k < Npc; k++) {
+      const q = pieceKinematics(k);
+      for (let j = 0; j < 3; j++) { L[j] += q.L[j]; tau[j] += q.tau[j]; }
+      KE += 0.5 * q.m * (q.v[0] ** 2 + q.v[1] ** 2);
+    }
+    $("wVal").textContent = fx(omega, 3); $("IVal").textContent = fx(I, 3); $("LzVal").textContent = fx(L[2], 3);
+    const d = Math.hypot(pivot[0], pivot[1]);
+    const cont = formula ? formula(M_TOTAL) + M_TOTAL * d * d : null;
+    $("bodyFacts").innerHTML =
+      `<dt>Total mass M = Σ dm</dt><dd>${fx(M_TOTAL, 2)} in ${Npc} pieces</dd>` +
+      `<dt>I ω</dt><dd>${fx(I * omega, 3)}</dd>` +
+      `<dt>Total L = Σ L<sub>i</sub></dt><dd>${vec(L, 3)}</dd>` +
+      (cont != null ? `<dt>Continuum formula I<sub>cm</sub> + M d²</dt><dd>${fx(cont, 3)}</dd>` : `<dt>Continuum formula</dt><dd>${graded ? "not for uneven density" : "no simple formula"}</dd>`) +
+      (d > 1e-9 ? `<dt class="sub">of which M d² (parallel axis)</dt><dd>${fx(M_TOTAL * d * d, 3)}</dd>` : "") +
+      `<dt>Net torque Σ τ<sub>i,z</sub></dt><dd>${fx(tau[2], 3)}</dd>` +
+      `<dt>I α</dt><dd>${fx(I * a, 3)}</dd>` +
+      `<dt>Kinetic energy ½ I ω²</dt><dd>${fx(KE, 3)}</dd>`;
+    if (focus < 0) {
+      $("focusName").innerHTML = "";
+      $("focusFacts").innerHTML = `<dt>Click a piece of the body to analyze it.</dt><dd></dd>`;
+      return;
+    }
+    const q = pieceKinematics(focus);
+    $("focusName").innerHTML = `<span class="sw" style="background:${css("--focus")}"></span>piece #${focus + 1}`;
+    $("focusFacts").innerHTML =
+      `<dt>Mass dm</dt><dd>${fx(q.m, 4)}</dd>` +
+      `<dt>Position from O, r</dt><dd>${vec(q.r)}</dd>` +
+      `<dt>Distance from the axis, r<sub>⊥</sub></dt><dd>${fx(q.rperp, 3)}</dd>` +
+      `<dt>Velocity v = ω × r</dt><dd>${vec(q.v)}</dd>` +
+      `<dt class="sub">|v| = ω r<sub>⊥</sub></dt><dd>${fx(Math.hypot(...q.v), 3)} = ${fx(omega, 2)} × ${fx(q.rperp, 3)}</dd>` +
+      `<dt>Momentum p = dm v</dt><dd>${vec(q.p, 4)}</dd>` +
+      `<dt>Acceleration a</dt><dd>${vec(q.acc)}</dd>` +
+      `<dt class="sub">toward the axis, ω² r<sub>⊥</sub></dt><dd>${fx(omega * omega * q.rperp, 3)}</dd>` +
+      `<dt class="sub">along the motion, α r<sub>⊥</sub></dt><dd>${fx(a * q.rperp, 3)}</dd>` +
+      `<dt>Net force on it, F = dm a</dt><dd>${vec(q.F, 4)}</dd>` +
+      `<dt>Angular momentum L<sub>i</sub> = r × p</dt><dd>${vec(q.L, 4)}</dd>` +
+      `<dt class="sub">L<sub>i,z</sub> = dm r<sub>⊥</sub>² ω</dt><dd>${fx(q.L[2], 4)} = ${fx(q.m * q.rperp * q.rperp * omega, 4)}</dd>` +
+      `<dt>Torque τ<sub>i</sub> = r × F</dt><dd>${vec(q.tau, 4)}</dd>` +
+      `<dt class="sub">τ<sub>i,z</sub> = dm r<sub>⊥</sub>² α</dt><dd>${fx(q.tau[2], 4)} = ${fx(q.m * q.rperp * q.rperp * a, 4)}</dd>`;
+  }
+
+  // ---------- views ----------
+  let tween = null;
+  function standardView(which) {
+    const R = Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny) * 0.5 + Math.hypot(...pivot) + 1;
+    const D = Math.max(10, 2.6 * R);
+    const dir = { top: [0, -1e-4, 1], side: [0, -1, 0.12], "3d": [0.5, -0.72, 0.5] }[which];
+    const n = Math.hypot(...dir);
+    const p1 = new THREE.Vector3(dir[0] / n * D, dir[1] / n * D, dir[2] / n * D);
+    tween = { t0: performance.now(), p0: camera.position.clone(), p1, q0: controls.target.clone(), q1: new THREE.Vector3(0, 0, 0) };
+  }
+  document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => standardView(b.dataset.view));
+
+  function resize() {
+    const w = view.clientWidth, h = view.clientHeight;
+    renderer.setSize(w, h, false);
+    renderer.domElement.style.width = w + "px"; renderer.domElement.style.height = h + "px";
+    camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(view);
+
+  // ---------- loop ----------
+  const vFrom = new THREE.Vector3(), vTmp = new THREE.Vector3(), vO = new THREE.Vector3(0, 0, 0), wp = [0, 0, 0];
+  let last = performance.now(), frame = 0;
+  function tick(now) {
+    const dt = Math.min((now - last) / 1000, 0.05); last = now;
+    if (playing) {
+      const h = dt * speed;
+      if (torqueOn) {
+        omega = Math.max(-3, Math.min(3, omega + alphaSet * h));
+        $("omega").value = omega; $("omegaOut").textContent = omega.toFixed(2);
+        if (Math.abs(omega) >= 3) { torqueOn = false; $("torque").setAttribute("aria-pressed", "false"); $("torque").textContent = "Apply torque"; }
+      }
+      theta += omega * h;
+    }
+    if (tween) {
+      const k = Math.min((now - tween.t0) / 450, 1), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+      camera.position.lerpVectors(tween.p0, tween.p1, e); controls.target.lerpVectors(tween.q0, tween.q1, e);
+      if (k >= 1) tween = null;
+    }
+    // place pieces
+    q4.setFromAxisAngle(zAxis, theta);
+    const planar = shape !== "block";
+    s3.set(H * 0.92, H * 0.92, planar ? H * 0.3 : H * 0.9);   // plates are drawn as thin tiles
+    const LIFT = planar ? H * 0.15 + 0.03 : 0;               // piece vectors are drawn just above a plate's top face
+    for (let k = 0; k < Npc; k++) {
+      worldPos(k, wp); p3.set(wp[0], wp[1], wp[2]);
+      m4.compose(p3, q4, s3); mesh.setMatrixAt(k, m4);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere && mesh.computeBoundingSphere();
+
+    // whole body: omega along the axis, total L at O
+    const I = momentOfInertia();
+    let L = [0, 0, 0];
+    for (let k = 0; k < Npc; k++) { const q = pieceKinematics(k); L[0] += q.L[0]; L[1] += q.L[1]; L[2] += q.L[2]; }
+    const kL = 4 / (Iref * OMEGA_REF);                 // fixed per body, so L visibly changes with I and ω
+    vTmp.set(0, 0, omega * 3 / OMEGA_REF); capLen(vTmp, 10);
+    setArrow(A.w, vO, vTmp, show.Ltot);
+    if (show.Ltot) place(lbl.w, vTmp.clone()); else lbl.w.hidden = true;
+    vTmp.set(L[0], L[1], L[2]).multiplyScalar(kL); capLen(vTmp);
+    const Lshift = new THREE.Vector3(0.35, 0, 0);    // draw L just beside ω so both stay visible
+    setArrow(A.Ltot, Lshift, vTmp, show.Ltot);
+    if (show.Ltot) place(lbl.Ltot, vTmp.clone().add(Lshift)); else lbl.Ltot.hidden = true;
+    place(lbl.O, vO);
+
+    // velocity field
+    if (show.vAll) {
+      const stride = Math.ceil(Npc / V_MAX);  // on fine meshes, every few pieces
+      for (let n = 0, k = 0; k < Npc && n < vAll.length; k += stride, n++) {
+        const q = pieceKinematics(k);
+        setArrow(vAll[n], vFrom.set(q.r[0], q.r[1], q.r[2] + LIFT), vTmp.set(q.v[0], q.v[1], q.v[2]).multiplyScalar(0.5), true);
+      }
+    }
+
+    // the piece being analyzed
+    const hide = () => { ["r", "rperp", "v", "F", "L", "tau"].forEach(n => A[n].visible = false); ["dm", "r", "v", "F", "L", "tau"].forEach(n => lbl[n].hidden = true); };
+    if (focus >= 0) {
+      const q = pieceKinematics(focus), mag = Npc;   // piece vectors drawn as if the piece held the whole mass
+      const P = new THREE.Vector3(q.r[0], q.r[1], q.r[2] + LIFT), foot = new THREE.Vector3(0, 0, q.r[2] + LIFT);
+      const O2 = new THREE.Vector3(0, 0, LIFT);
+      setArrow(A.r, O2, P.clone().sub(O2), true);
+      setArrow(A.rperp, foot, P.clone().sub(foot), Math.abs(q.r[2]) > 1e-6);
+      const vv = new THREE.Vector3(...q.v).multiplyScalar(0.5);
+      setArrow(A.v, P, vv, true);
+      const FF = capLen(new THREE.Vector3(...q.F).multiplyScalar(mag * 0.5 / M_TOTAL * 1.0));
+      setArrow(A.F, P, FF, true);
+      const at = show.liAt === "piece" ? P : O2;
+      const LL = capLen(new THREE.Vector3(...q.L).multiplyScalar(mag * kL));
+      setArrow(A.L, at, LL, true);
+      const TT = capLen(new THREE.Vector3(...q.tau).multiplyScalar(mag * kL * 2));
+      setArrow(A.tau, at, TT, TT.length() > 0.05);
+      place(lbl.dm, P);
+      place(lbl.r, P.clone().add(O2).multiplyScalar(0.5));
+      place(lbl.v, P.clone().add(vv));
+      if (FF.length() > 0.05) place(lbl.F, P.clone().add(FF)); else lbl.F.hidden = true;
+      place(lbl.L, at.clone().add(LL));
+      if (TT.length() > 0.05) place(lbl.tau, at.clone().add(TT)); else lbl.tau.hidden = true;
+    } else hide();
+
+    controls.update();
+    renderer.render(scene, camera);
+    if (frame % 6 === 0) updatePanel();
+    if (frame % 15 === 0 && sel.length) refreshTally();  // L_z column follows ω
+    frame++;
+    requestAnimationFrame(tick);
+  }
+
+  applyTheme();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  buildBody();
+  setPivot(0, 0);
+  resize();
+  requestAnimationFrame(t => { last = t; tick(t); });
+})();
+</script>
+</body></html>
