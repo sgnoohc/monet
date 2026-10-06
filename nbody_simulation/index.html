@@ -372,7 +372,9 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     history.length = 0; pushSample();
     resetTrails();
     setBaseline();
-    Lref = Math.hypot(...baseL) || 1;  // arrow scale fixed per system, so moving O visibly changes |L|
+    // L arrow scale fixed per system from M·v_rms (not from |L| about the starting O), so moving O visibly
+    // changes |L|. For a single body, |L|/(M·v_rms) is the perpendicular distance from O to its path.
+    { let Mt = 0, K = 0; for (let i = 0; i < N; i++) { Mt += m[i]; K += m[i] * (v[3*i]**2 + v[3*i+1]**2 + v[3*i+2]**2); } Lref = Math.sqrt(Mt * K) || 1; }
     baseP = totalP(); Pref = Math.hypot(...baseP) || 1;
     document.getElementById("newsys").title = "System #" + seed;
   }
@@ -965,7 +967,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
       }
       place(bodyLabels[i], vFrom);
     }
-    const L = totalL(), Lm = Math.hypot(...L), kL = 4 * show.lScale / Lref;  // one fixed scale for L and every L_i
+    const L = totalL(), Lm = Math.hypot(...L), kL = show.lScale / Lref;  // one fixed scale for L and every L_i (1 body: length = distance from O to its path)
     vTmp.set(L[0], L[1], L[2]).multiplyScalar(kL); capLen(vTmp);
     setArrow(LArrow, vO, vTmp, show.L);
     const chainPos = vO.clone(), li = new THREE.Vector3(), bodyPos = new THREE.Vector3();
