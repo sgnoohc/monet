@@ -36,9 +36,10 @@ jobs:
       - name: Assemble site
         # spaceattack stays at the site root; other web apps get their own path
         run: |
-          mkdir -p _site/buzzer
+          mkdir -p _site/buzzer _site/nbody_simulation
           cp -R spaceattack/. _site/
           cp -R buzzer/index.html buzzer/audio _site/buzzer/
+          cp nbody_simulation/index.html _site/nbody_simulation/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

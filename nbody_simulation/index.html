@@ -1,0 +1,894 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0}</style></head><body>
+<title>N-Body Angular Momentum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-screen lab bench. 3D viewport on the left, instrument panel on the right; stacks on phones. */
+:root {
+  --bg: #eef1ed;
+  --surface: #ffffff;
+  --stage: #fafbf9;
+  --ink: #161b18;
+  --muted: #5b645e;
+  --line: #d6ddd7;
+  --grid3d: #c4cdc6;
+  --halo: #7d8a82;
+  --r: #2f7a57;          /* position vectors r_i, green as in the lecture sketch */
+  --F: #c3352b;          /* forces F_i, red as in the sketch */
+  --v: #161b18;          /* velocities v_i, ink as in the sketch */
+  --L: #4a3aa7;          /* total angular momentum */
+  --P: #0b6e8a;          /* total linear momentum */
+  --ext: rgba(195, 53, 43, 0.10);
+  --p1: #2a78d6; --p2: #eb6834; --p3: #1baf7a; --p4: #eda100; --p5: #e87ba4; --p6: #008300; --p7: #4a3aa7;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d110f; --surface: #151a17; --stage: #090c0a; --ink: #e8ece9; --muted: #9aa49d;
+    --line: #29322c; --grid3d: #27302a; --halo: #b9c4bc;
+    --r: #56b98a; --F: #ef6a5e; --v: #e8ece9; --L: #9a8ff0; --P: #4fb8d8; --ext: rgba(239, 106, 94, 0.15);
+    --p1: #3987e5; --p2: #d95926; --p3: #199e70; --p4: #c98500; --p5: #d55181; --p6: #2f9a2f; --p7: #9085e9;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d110f; --surface: #151a17; --stage: #090c0a; --ink: #e8ece9; --muted: #9aa49d;
+  --line: #29322c; --grid3d: #27302a; --halo: #b9c4bc;
+  --r: #56b98a; --F: #ef6a5e; --v: #e8ece9; --L: #9a8ff0; --P: #4fb8d8; --ext: rgba(239, 106, 94, 0.15);
+  --p1: #3987e5; --p2: #d95926; --p3: #199e70; --p4: #c98500; --p5: #d55181; --p6: #2f9a2f; --p7: #9085e9;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+.app {
+  height: 100%; box-sizing: border-box;
+  display: grid; grid-template-columns: minmax(0, 1fr) 390px; grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px; padding: 14px 16px;
+}
+header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 10px 20px; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h1 em { color: var(--L); }
+.sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+button {
+  font: 500 13px/1 var(--font-body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--L); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); min-width: 74px; }
+#dim[aria-pressed="true"] { background: var(--L); color: #fff; border-color: var(--L); }
+button.danger[aria-pressed="true"] { background: var(--F); color: #fff; border-color: var(--F); }
+.speed { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.speed output { font-family: var(--font-mono); color: var(--ink); min-width: 3.2em; }
+input[type="range"] { accent-color: var(--L); }
+
+.stage { position: relative; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--stage); }
+#view { position: absolute; inset: 0; }
+#view canvas { display: block; touch-action: none; }
+#labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.lbl { position: absolute; transform: translate(8px, -22px); font-family: var(--font-display); font-style: italic; font-size: 18px; color: var(--ink); white-space: nowrap; text-shadow: 0 0 3px var(--stage), 0 0 3px var(--stage); }
+.lbl sub { font-size: 12px; }
+.lbl.o { font-style: normal; font-weight: 400; transform: translate(-18px, 2px); }
+.lbl.L { color: var(--L); }
+.lbl.li { font-size: 14px; transform: translate(8px, 2px); }
+.lbl.li sub { font-size: 10px; }
+.lbl.L sub { font-size: 12px; }
+.lbl.P { color: var(--P); }
+.lbl.cm { font-family: var(--font-body); font-style: normal; font-size: 11px; color: var(--muted); transform: translate(8px, 4px); }
+.key { position: absolute; left: 12px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--stage) 85%, transparent); padding: 6px 10px; border-radius: 6px; max-width: calc(100% - 24px); box-sizing: border-box; }
+.key span { display: inline-flex; align-items: center; gap: 6px; }
+.key i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; }
+.key em { font-family: var(--font-display); font-size: 16px; color: var(--ink); }
+.hint { position: absolute; right: 12px; top: 10px; font-size: 12px; color: var(--muted); }
+.views { position: absolute; left: 12px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.views span { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.views button { padding: 6px 10px; font-size: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
+.views button .math { font-size: 15px; }
+.banner { position: absolute; left: 12px; top: 50px; font-size: 12px; font-weight: 600; color: #fff; background: var(--F); padding: 5px 9px; border-radius: 6px; }
+
+aside { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+h2 { font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; display: flex; justify-content: space-between; gap: 8px; }
+h2 .math { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.math { font-family: var(--font-display); font-style: italic; font-size: 1.15em; }
+.math sub { font-style: italic; }
+.row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 52px; align-items: center; gap: 8px; }
+.row label { font-family: var(--font-display); font-style: italic; font-size: 17px; }
+.row output, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.row output { text-align: right; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.presets button { padding: 6px 9px; font-size: 12px; }
+.readout { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.cell { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 7px; background: var(--bg); min-width: 0; }
+.cell .k { font-family: var(--font-display); font-style: italic; font-size: 15px; color: var(--muted); }
+.cell .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; overflow-wrap: anywhere; }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; font-size: 12.5px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.facts dd.ok { color: var(--r); }
+.facts dd.bad { color: var(--F); }
+.chartbox { position: relative; }
+.chartbox canvas { display: block; width: 100%; height: 150px; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: 12px/1.4 var(--font-mono); box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; z-index: 2; }
+.tip b { font-weight: 500; }
+.tip i.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; }
+.toggles label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.toggles input { accent-color: var(--L); }
+select { font: 13px var(--font-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.deriv { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; font-size: 13.5px; }
+.deriv p { margin: 0; }
+.eq { font-family: var(--font-display); font-size: 18px; line-height: 1.5; padding: 4px 10px; background: var(--bg); border-radius: 6px; overflow-x: auto; white-space: nowrap; }
+.eq i { font-style: italic; }
+.vec { position: relative; font-weight: 400; }
+.zero { color: var(--r); }
+.sel-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .stage { height: 62svh; min-height: 340px; }
+  aside { overflow: visible; }
+  .hint { display: none; }
+}
+</style>
+
+<div class="app">
+  <header>
+    <div class="controls">
+      <button id="play" class="primary" type="button">Pause</button>
+      <button id="restart" type="button">Restart</button>
+      <button id="newsys" type="button">New system</button>
+      <button id="dim" type="button" aria-pressed="false" title="Keep every body in the x–y plane">2D (planar)</button>
+      <div class="speed"><label for="nBodies">Bodies</label><input id="nBodies" type="range" min="1" max="15" step="1" value="7"><output id="nBodiesOut">7</output></div>
+      <div class="speed"><label for="speed">Speed</label><input id="speed" type="range" min="0" max="4" step="0.25" value="1"><output id="speedOut">1×</output></div>
+    </div>
+  </header>
+
+  <div class="stage">
+    <div id="view"></div>
+    <div id="labels"></div>
+    <div class="hint" id="hint">Drag to orbit · scroll to zoom · right-drag to pan · click a body to inspect it</div>
+    <div class="views" role="group" aria-label="Standard views">
+      <span>View</span>
+      <button type="button" data-view="xy" title="Look down the z axis">x–y</button>
+      <button type="button" data-view="xz" title="Look down the y axis">x–z</button>
+      <button type="button" data-view="yz" title="Look down the x axis">y–z</button>
+      <button type="button" data-view="3d" title="Angled 3D view">3D</button>
+    </div>
+    <div class="banner" id="banner" hidden>External field on: now Σ τ ≠ 0</div>
+    <div class="key">
+      <span><i style="background:var(--r)"></i><em>r<sub>i</sub></em> from O</span>
+      <span><i style="background:var(--v)"></i><em>v<sub>i</sub></em></span>
+      <span><i style="background:var(--F)"></i><em>F<sub>i</sub></em> net</span>
+      <span><i style="background:var(--F);height:2px;opacity:.75"></i><em>F<sub>ij</sub></em> pair</span>
+      <span><i style="background:var(--L);height:5px"></i><em>L</em> total, drawn at O</span>
+      <span><i style="background:var(--P);height:5px"></i><em>P</em> total, drawn at center of mass</span>
+    </div>
+  </div>
+
+  <aside>
+    <section>
+      <h2>Reference point O <span class="mono" id="oOut">(0, 0, 0)</span></h2>
+      <div class="row"><label for="ox">x</label><input id="ox" type="range" min="-12" max="12" step="0.5" value="0"><output id="oxOut">0.0</output></div>
+      <div class="row"><label for="oy">y</label><input id="oy" type="range" min="-12" max="12" step="0.5" value="0"><output id="oyOut">0.0</output></div>
+      <div class="row"><label for="oz">z</label><input id="oz" type="range" min="-12" max="12" step="0.5" value="0"><output id="ozOut">0.0</output></div>
+      <div class="presets">
+        <button type="button" data-o="origin">Origin</button>
+        <button type="button" data-o="cm">Starting center of mass</button>
+        <button type="button" data-o="far" id="farBtn">Far corner (10, −8, 9)</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Total angular momentum about O <span class="math">L = Σ (r<sub>i</sub> − r<sub>O</sub>) × m<sub>i</sub>v<sub>i</sub></span></h2>
+      <div class="readout">
+        <div class="cell"><span class="k">L<sub>x</sub></span><span class="val" id="Lx">0</span></div>
+        <div class="cell"><span class="k">L<sub>y</sub></span><span class="val" id="Ly">0</span></div>
+        <div class="cell"><span class="k">L<sub>z</sub></span><span class="val" id="Lz">0</span></div>
+      </div>
+      <div class="chartbox"><canvas id="chartTotal" aria-label="Components of total angular momentum versus time"></canvas><div class="tip" id="tipTotal" hidden></div></div>
+      <div class="legend"><span><i style="background:var(--L)"></i>L<sub>x</sub></span><span><i style="background:repeating-linear-gradient(90deg,var(--L) 0 5px,transparent 5px 8px)"></i>L<sub>y</sub></span><span><i style="background:repeating-linear-gradient(90deg,var(--L) 0 2px,transparent 2px 5px)"></i>L<sub>z</sub></span><span><i style="background:var(--ext);height:9px"></i>external field on</span></div>
+      <dl class="facts">
+        <dt>Change in |L| since O was set</dt><dd id="drift">0</dd>
+        <dt>Net torque about O, |Σ τ<sub>i</sub>|</dt><dd id="netTau">0</dd>
+        <dt>Largest single-body torque |τ<sub>i</sub>|</dt><dd id="maxTau">0</dd>
+        <dt>Total momentum P = Σ m<sub>i</sub>v<sub>i</sub></dt><dd id="Pmag">0</dd>
+        <dt>Change in P since reset</dt><dd id="Pdrift">0</dd>
+        <dt>Energy E (for comparison)</dt><dd id="Eval">0</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Each body's share <span class="math">L<sub>i</sub> · L̂</span></h2>
+      <div class="chartbox"><canvas id="chartParts" aria-label="Each body's angular momentum along the total direction versus time"></canvas><div class="tip" id="tipParts" hidden></div></div>
+      <div class="legend" id="partsLegend"></div>
+      <p class="note">Each colored line is one body's angular momentum about O, projected on the direction of the total. They trade angular momentum back and forth through gravity. The thick line is their sum.</p>
+    </section>
+
+    <section>
+      <h2>Forces and display</h2>
+      <button id="ext" class="danger" type="button" aria-pressed="false">Turn on uniform external field g (downward)</button>
+      <div class="toggles">
+        <label><input id="tR" type="checkbox" checked> Position vectors</label>
+        <label><input id="tV" type="checkbox" checked> Velocities</label>
+        <label><input id="tF" type="checkbox" checked> Net forces F<sub>i</sub></label>
+        <label><input id="tL" type="checkbox" checked> Total L arrow</label>
+        <label><input id="tP" type="checkbox" checked> Total P arrow</label>
+        <label><input id="tTrail" type="checkbox" checked> Trails</label>
+        <label><input id="tLabels" type="checkbox" checked> Labels</label>
+        <label><input id="tFollow" type="checkbox"> Follow the center of mass</label>
+      </div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr)"><label for="liMode" style="font-family:var(--font-body);font-style:normal;font-size:13px">Each body's L<sub>i</sub></label>
+        <select id="liMode"><option value="off">Hidden</option><option value="chain">Tip-to-tail from O (adds up to L)</option><option value="body">At each body</option></select></div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr)"><label for="fMode" style="font-family:var(--font-body);font-style:normal;font-size:13px">Pair forces F<sub>ij</sub></label>
+        <select id="fMode"><option value="net">Hidden</option><option value="sel">On the selected body</option><option value="all">On every body</option></select></div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr) 44px"><label for="fScale" style="font-family:var(--font-body);font-style:normal;font-size:13px">Force arrow scale</label>
+        <input id="fScale" type="range" min="0.5" max="12" step="0.5" value="4"><output id="fScaleOut">4.0</output></div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr) 44px"><label for="pScale" style="font-family:var(--font-body);font-style:normal;font-size:13px">P arrow scale</label>
+        <input id="pScale" type="range" min="0.5" max="10" step="0.5" value="2"><output id="pScaleOut">2.0</output></div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr)"><label for="rMode" style="font-family:var(--font-body);font-style:normal;font-size:13px">Show <span class="math">r<sub>i</sub></span> for</label>
+        <select id="rMode"><option value="all">all bodies</option><option value="sel">selected body only</option></select></div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr) 44px"><label for="ballSize" style="font-family:var(--font-body);font-style:normal;font-size:13px">Ball size</label>
+        <input id="ballSize" type="range" min="0.2" max="3" step="0.1" value="1"><output id="ballSizeOut">1.0×</output></div>
+      <p class="note">Ball size only changes how the bodies are drawn; the physics treats them as point masses. Arrow lengths are scaled for visibility. Force arrows share one linear scale, so the thin pair forces F<sub>ij</sub> add tip-to-tail to the thick net force F<sub>i</sub>. Turn the scale down if a close pass makes them long.</p>
+    </section>
+
+    <section>
+      <h2>Selected body <span id="selName" class="math"></span></h2>
+      <dl class="facts" id="selFacts"></dl>
+    </section>
+
+    <section>
+      <details id="derivBox" open>
+        <summary>Why the total stays constant</summary>
+        <div class="deriv">
+          <p>First, the linear momentum. Internal forces cancel in pairs (Newton's third law), so</p>
+          <div class="eq">d<i>P</i>/d<i>t</i> = Σ<sub><i>i</i></sub> <i>F<sub>i</sub></i> = Σ<sub><i>i</i>,<i>j</i></sub> <i>F<sub>ij</sub></i> = <span class="zero">0</span></div>
+          <p>The cyan arrow at the center of mass is <i class="math">P</i> = <i class="math">M V</i><sub>cm</sub>. It keeps a fixed length and direction while the bodies swirl.</p>
+          <p>Now take any point O that is fixed in space. Differentiate the total angular momentum about it:</p>
+          <div class="eq">d<i>L</i>/d<i>t</i> = Σ <i>v<sub>i</sub></i> × <i>m<sub>i</sub>v<sub>i</sub></i> + Σ (<i>r<sub>i</sub></i> − <i>r<sub>O</sub></i>) × <i>F<sub>i</sub></i></div>
+          <p>The first sum is zero because a vector crossed with itself vanishes. With only internal forces, <i class="math">F<sub>i</sub></i> = Σ<sub>j≠i</sub> <i class="math">F<sub>ij</sub></i>, and Newton's third law pairs them up:</p>
+          <div class="eq">Σ<sub><i>i</i></sub> <i>r<sub>O</sub></i> × <i>F<sub>i</sub></i> = <i>r<sub>O</sub></i> × Σ<sub><i>i</i>,<i>j</i></sub> <i>F<sub>ij</sub></i> = <span class="zero">0</span></div>
+          <div class="eq">Σ<sub><i>i</i></sub> <i>r<sub>i</sub></i> × <i>F<sub>i</sub></i> = Σ<sub><i>i</i>&lt;<i>j</i></sub> (<i>r<sub>i</sub></i> − <i>r<sub>j</sub></i>) × <i>F<sub>ij</sub></i> = <span class="zero">0</span></div>
+          <p>The last sum vanishes because gravity is central: <i class="math">F<sub>ij</sub></i> points along <i class="math">r<sub>i</sub></i> − <i class="math">r<sub>j</sub></i>. So d<i class="math">L</i>/d<i class="math">t</i> = 0 for every fixed O. Moving O changes the value by −<i class="math">r<sub>O</sub></i> × <i class="math">P</i>, which is also constant because <i class="math">P</i> is conserved.</p>
+          <p>Turn on the external field and the torque no longer cancels:</p>
+          <div class="eq">d<i>L</i>/d<i>t</i> = Σ (<i>r<sub>i</sub></i> − <i>r<sub>O</sub></i>) × <i>m<sub>i</sub>g</i> = <i>M</i>(<i>R</i><sub>cm</sub> − <i>r<sub>O</sub></i>) × <i>g</i></div>
+          <p>The field also gives a net force, d<i class="math">P</i>/d<i class="math">t</i> = <i class="math">Mg</i>, so the <i class="math">P</i> arrow tips downward and grows.</p>
+          <p>The simulation uses a leapfrog integrator. Each step keeps Σ <i class="math">r<sub>i</sub></i> × <i class="math">F<sub>i</sub></i> = 0 exactly, so <i class="math">L</i> holds to rounding error (about 10<sup>−15</sup>). The energy wobbles slightly because the integrator only approximates it.</p>
+        </div>
+      </details>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(() => {
+  // ---------- physics ----------
+  const NMAX = 15; let N = 7;
+  const G = 1, EPS = 0.35, EPS2 = EPS * EPS, DT = 0.004;
+  const GFIELD = [0, -0.12, 0];
+  const m = new Float64Array(NMAX), r = new Float64Array(3 * NMAX), v = new Float64Array(3 * NMAX);
+  const acc = new Float64Array(3 * NMAX), Fint = new Float64Array(3 * NMAX), Ftot = new Float64Array(3 * NMAX);
+  let planar = false;
+  let t = 0, extOn = false, seed = 0, stepCount = 0;
+  const startCM = [0, 0, 0];
+
+  function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let x = Math.imul(a ^ a >>> 15, 1 | a); x = x + Math.imul(x ^ x >>> 7, 61 | x) ^ x; return ((x ^ x >>> 14) >>> 0) / 4294967296; }; }
+
+  function computeForces() {
+    Fint.fill(0);
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      const dx = r[3*j] - r[3*i], dy = r[3*j+1] - r[3*i+1], dz = r[3*j+2] - r[3*i+2];
+      const d2 = dx*dx + dy*dy + dz*dz + EPS2;
+      const s = G * m[i] * m[j] / (d2 * Math.sqrt(d2));
+      const fx = s*dx, fy = s*dy, fz = s*dz;
+      Fint[3*i] += fx; Fint[3*i+1] += fy; Fint[3*i+2] += fz;
+      Fint[3*j] -= fx; Fint[3*j+1] -= fy; Fint[3*j+2] -= fz;   // Newton's third law
+    }
+    for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) {
+      Ftot[3*i+k] = Fint[3*i+k] + (extOn ? m[i] * GFIELD[k] : 0);
+      acc[3*i+k] = Ftot[3*i+k] / m[i];
+    }
+  }
+
+  function step() { // kick-drift-kick leapfrog
+    for (let n = 0; n < 3 * N; n++) v[n] += 0.5 * DT * acc[n];
+    for (let n = 0; n < 3 * N; n++) r[n] += DT * v[n];
+    computeForces();
+    for (let n = 0; n < 3 * N; n++) v[n] += 0.5 * DT * acc[n];
+    t += DT; stepCount++;
+  }
+
+  function init(s) {
+    seed = s;
+    const rnd = mulberry32(s);
+    const gauss = () => { let u = 0, w = 0; while (!u) u = rnd(); while (!w) w = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * w); };
+    for (let i = 0; i < N; i++) m[i] = 0.6 + 2.4 * rnd();
+    for (let i = 0; i < N; i++) {
+      for (let tries = 0; tries < 500; tries++) {
+        const R = planar ? Math.sqrt(N / 7) : Math.cbrt(N / 7);
+        const x = (rnd()*2-1)*6*R, y = (rnd()*2-1)*(planar ? 5 : 4)*R, z = planar ? 0 : (rnd()*2-1)*6*R;
+        if ((x*x/36 + y*y/(planar ? 25 : 16) + z*z/36) / (R*R) > 1) continue;
+        let ok = true;
+        for (let j = 0; j < i; j++) { const dx = x-r[3*j], dy = y-r[3*j+1], dz = z-r[3*j+2]; if (dx*dx+dy*dy+dz*dz < 2.6) { ok = false; break; } }
+        r[3*i] = x; r[3*i+1] = y; r[3*i+2] = z;
+        if (ok) break;
+      }
+    }
+    let M = 0; const cm = [0, 0, 0];
+    for (let i = 0; i < N; i++) { M += m[i]; for (let k = 0; k < 3; k++) cm[k] += m[i] * r[3*i+k]; }
+    for (let k = 0; k < 3; k++) cm[k] /= M;
+    // rotation about a tilted axis plus random motion
+    let ax = planar ? [0, 0, 1] : [0.25 + 0.4*(rnd()-0.5), 1, 0.2 + 0.4*(rnd()-0.5)];
+    const an = Math.hypot(...ax); ax = ax.map(c => c / an);
+    for (let i = 0; i < N; i++) {
+      const rel = [r[3*i]-cm[0], r[3*i+1]-cm[1], r[3*i+2]-cm[2]];
+      const d = Math.max(Math.hypot(...rel), 1.5);
+      const c = [ax[1]*rel[2]-ax[2]*rel[1], ax[2]*rel[0]-ax[0]*rel[2], ax[0]*rel[1]-ax[1]*rel[0]];
+      const cn = Math.hypot(...c) || 1;
+      const vr = 0.6 * Math.sqrt(G * M / d);
+      for (let k = 0; k < 3; k++) v[3*i+k] = vr * c[k] / cn + 0.35 * gauss();
+      if (planar) v[3*i+2] = 0;
+    }
+    // remove center-of-mass velocity, then rescale to a bound virial ratio
+    const vcm = [0, 0, 0];
+    for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) vcm[k] += m[i] * v[3*i+k] / M;
+    for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) v[3*i+k] -= vcm[k];
+    let KE = 0, PE = 0;
+    for (let i = 0; i < N; i++) KE += 0.5 * m[i] * (v[3*i]**2 + v[3*i+1]**2 + v[3*i+2]**2);
+    for (let i = 0; i < N; i++) for (let j = i+1; j < N; j++) PE -= G*m[i]*m[j] / Math.sqrt((r[3*i]-r[3*j])**2 + (r[3*i+1]-r[3*j+1])**2 + (r[3*i+2]-r[3*j+2])**2 + EPS2);
+    const f = KE > 0 ? Math.sqrt(0.4 * Math.abs(PE) / KE) : 0;
+    // place the cluster away from the world origin and give it a slow drift, so the choice of O matters
+    const shift = planar ? [2.5, 1, 0] : [2.5, 0.5, -1.5], drift = planar ? [0.05, 0.03, 0] : [0.05, 0.015, -0.035];
+    for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) { v[3*i+k] = v[3*i+k] * f + drift[k]; r[3*i+k] += shift[k] - cm[k]; }
+    if (N === 1) { v[0] = 0.6; v[1] = 0.25; v[2] = planar ? 0 : -0.3; }  // a lone body coasts in a straight line
+    for (let k = 0; k < 3; k++) startCM[k] = shift[k];
+    t = 0; stepCount = 0;
+    computeForces();
+    history.length = 0; pushSample();
+    resetTrails();
+    setBaseline();
+    baseP = totalP(); Pref = Math.hypot(...baseP) || 1;
+    document.getElementById("newsys").title = "System #" + seed;
+  }
+
+  // ---------- diagnostics ----------
+  const O = [0, 0, 0];
+  const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+  function bodyL(i, rr = r, vv = v, isP = false) {
+    const rel = [rr[3*i]-O[0], rr[3*i+1]-O[1], rr[3*i+2]-O[2]];
+    const p = isP ? [vv[3*i], vv[3*i+1], vv[3*i+2]] : [m[i]*vv[3*i], m[i]*vv[3*i+1], m[i]*vv[3*i+2]];
+    return cross(rel, p);
+  }
+  function totalL() { const L = [0, 0, 0]; for (let i = 0; i < N; i++) { const l = bodyL(i); L[0] += l[0]; L[1] += l[1]; L[2] += l[2]; } return L; }
+  let baseL = [0, 0, 0], baseP = [0, 0, 0], Pref = 1;
+  function totalP() { const P = [0, 0, 0]; for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) P[k] += m[i] * v[3*i+k]; return P; }
+  function setBaseline() { baseL = totalL(); Lref = Math.hypot(...baseL) || 1; }
+
+  // history: positions and momenta every 20 steps; L about the current O is recomputed from these
+  const history = [], HMAX = 900, SAMPLE_EVERY = 20;
+  function pushSample() {
+    const p = new Float64Array(3 * N);
+    for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) p[3*i+k] = m[i] * v[3*i+k];
+    history.push({ t, ext: extOn, r: Float64Array.from(r), p });
+    if (history.length > HMAX) history.shift();
+  }
+
+  // ---------- 3D scene ----------
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const view = document.getElementById("view");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  view.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 500);
+  camera.position.set(11, 8, 14);
+  let controls = null;
+  function makeControls(target) {  // OrbitControls reads camera.up only when constructed
+    if (controls) controls.dispose();
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true; controls.dampingFactor = 0.08;
+    controls.target.copy(target);
+  }
+  makeControls(new THREE.Vector3(2, 0, -1));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(8, 14, 10); scene.add(sun);
+
+  let grid = null;
+  function placeGrid() {
+    if (!grid) return;
+    if (planar) { grid.rotation.set(Math.PI / 2, 0, 0); grid.position.set(0, 0, -0.02); }  // the x–y plane itself
+    else { grid.rotation.set(0, 0, 0); grid.position.set(0, -7, 0); }
+  }
+  const UP = new THREE.Vector3(0, 1, 0), tmpD = new THREE.Vector3();
+  function makeArrow(radius, opacity = 1, sharedMat = null) {
+    const grp = new THREE.Group();
+    const mat = sharedMat || new THREE.MeshBasicMaterial({ transparent: true, opacity, depthWrite: opacity >= 1 });
+    mat.userData.base = opacity;
+    const sg = new THREE.CylinderGeometry(radius, radius, 1, 10); sg.translate(0, 0.5, 0);
+    const hg = new THREE.ConeGeometry(radius * 3, 1, 16); hg.translate(0, 0.5, 0);
+    const shaft = new THREE.Mesh(sg, mat), head = new THREE.Mesh(hg, mat);
+    grp.add(shaft, head);
+    grp.userData = { shaft, head, mat, radius };
+    scene.add(grp);
+    return grp;
+  }
+  function setArrow(A, from, vec, show) {
+    const len = vec.length();
+    if (!show || len < 1e-6) { A.visible = false; return; }
+    A.visible = true; A.position.copy(from);
+    tmpD.copy(vec).divideScalar(len);
+    A.quaternion.setFromUnitVectors(UP, tmpD);
+    const nominal = A.userData.radius * 7, headL = Math.min(nominal, len * 0.45), hs = headL / nominal;
+    A.userData.shaft.scale.set(1, Math.max(len - headL, 1e-4), 1);
+    A.userData.head.position.y = len - headL;
+    A.userData.head.scale.set(hs, headL, hs);
+  }
+
+  const bodies = [], halos = [], rArrows = [], vArrows = [], fArrows = [], trails = [];
+  const TRAIL_MAX = 500;
+  const trailCount = new Array(NMAX).fill(0);
+  for (let i = 0; i < NMAX; i++) {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.05 }));
+    s.userData.index = i; scene.add(s); bodies.push(s);
+    const h = new THREE.Mesh(new THREE.SphereGeometry(1, 28, 20), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.16, depthWrite: false }));
+    h.visible = false; scene.add(h); halos.push(h);
+    rArrows.push(makeArrow(0.028, 0.55));
+    vArrows.push(makeArrow(0.03));
+    fArrows.push(makeArrow(0.03));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3 * TRAIL_MAX), 3));
+    geo.setDrawRange(0, 0);
+    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ transparent: true, opacity: 0.55 }));
+    line.frustumCulled = false; scene.add(line); trails.push(line);
+  }
+  const selRArrow = makeArrow(0.04);
+  // pair forces F_ij drawn at body i; slot i*NMAX+i holds the external force m_i g
+  const LiArrows = [];
+  for (let i = 0; i < NMAX; i++) { const A = makeArrow(0.045); A.visible = false; LiArrows.push(A); }
+  const pairMats = Array.from({ length: NMAX }, () => { const mt = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, depthWrite: false }); mt.userData.base = 0.75; return mt; });
+  const pairArrows = [];
+  for (let k = 0; k < NMAX * NMAX; k++) { const A = makeArrow(0.024, 0.75, pairMats[Math.floor(k / NMAX)]); A.visible = false; pairArrows.push(A); }
+  const LArrow = makeArrow(0.075);
+  const PArrow = makeArrow(0.045);
+  const cmMark = new THREE.Mesh(new THREE.OctahedronGeometry(0.16), new THREE.MeshBasicMaterial());
+  scene.add(cmMark);
+
+  // origin marker: little axes like the corner of the lecture sketch
+  const oGroup = new THREE.Group();
+  const oMat = new THREE.LineBasicMaterial();
+  const oPts = [[1.3,0,0],[0,1.3,0],[0,0,1.3]];
+  oPts.forEach(p => { const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(...p)]); oGroup.add(new THREE.Line(g, oMat)); });
+  const oDot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), new THREE.MeshBasicMaterial());
+  oGroup.add(oDot); scene.add(oGroup);
+
+  // HTML labels
+  const labelLayer = document.getElementById("labels");
+  const bodyLabels = [];
+  for (let i = 0; i < NMAX; i++) { const d = document.createElement("div"); d.className = "lbl"; d.innerHTML = `m<sub>${i+1}</sub>`; labelLayer.appendChild(d); bodyLabels.push(d); }
+  const liLabels = [];  // 2D only: L_i points out of the page, so show ⊙/⊗ and its value
+  for (let i = 0; i < NMAX; i++) { const d = document.createElement("div"); d.className = "lbl li"; d.hidden = true; labelLayer.appendChild(d); liLabels.push(d); }
+  const oLabel = document.createElement("div"); oLabel.className = "lbl o"; oLabel.textContent = "O"; labelLayer.appendChild(oLabel);
+  const LLabel = document.createElement("div"); LLabel.className = "lbl L"; LLabel.innerHTML = "L"; labelLayer.appendChild(LLabel);
+  const PLabel = document.createElement("div"); PLabel.className = "lbl P"; PLabel.innerHTML = "P"; labelLayer.appendChild(PLabel);
+  const cmLabel = document.createElement("div"); cmLabel.className = "lbl cm"; cmLabel.textContent = "cm"; labelLayer.appendChild(cmLabel);
+
+  let colors = [];
+  function applyTheme() {
+    const dt = document.documentElement.dataset.theme;
+    const dark = dt === "dark" || (dt !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+    colors = [];
+    for (let i = 0; i < NMAX; i++) colors.push(i < 7 ? css("--p" + (i + 1)) : `hsl(${Math.round((i * 137.5 + 15) % 360)}, 55%, ${dark ? 62 : 44}%)`);
+    scene.background = new THREE.Color(css("--stage"));
+    if (grid) scene.remove(grid);
+    grid = new THREE.GridHelper(48, 24, new THREE.Color(css("--grid3d")), new THREE.Color(css("--grid3d")));
+    placeGrid(); scene.add(grid);
+    for (let i = 0; i < NMAX; i++) {
+      bodies[i].material.color.set(colors[i]);
+      trails[i].material.color.set(colors[i]);
+      halos[i].material.color.set(css("--halo"));
+      rArrows[i].userData.mat.color.set(css("--r"));
+      vArrows[i].userData.mat.color.set(css("--v"));
+      fArrows[i].userData.mat.color.set(css("--F"));
+      pairMats[i].color.set(css("--F"));
+      LiArrows[i].userData.mat.color.set(colors[i]);
+    }
+    selRArrow.userData.mat.color.set(css("--r"));
+    LArrow.userData.mat.color.set(css("--L"));
+    PArrow.userData.mat.color.set(css("--P")); cmMark.material.color.set(css("--P"));
+    oMat.color.set(css("--ink")); oDot.material.color.set(css("--ink"));
+    buildPartsLegend();
+  }
+
+  function resetTrails() {
+    for (let i = 0; i < NMAX; i++) { trailCount[i] = 0; trails[i].geometry.setDrawRange(0, 0); }
+  }
+  function pushTrail() {
+    for (let i = 0; i < N; i++) {
+      const attr = trails[i].geometry.attributes.position, a = attr.array;
+      if (trailCount[i] < TRAIL_MAX) trailCount[i]++; else a.copyWithin(0, 3);
+      const k = 3 * (trailCount[i] - 1);
+      a[k] = r[3*i]; a[k+1] = r[3*i+1]; a[k+2] = r[3*i+2];
+      attr.needsUpdate = true; trails[i].geometry.setDrawRange(0, trailCount[i]);
+    }
+  }
+
+  // ---------- UI state ----------
+  const $ = id => document.getElementById(id);
+  let playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let speed = 1, stepAcc = 0, selected = -1, ballScale = 1;  // -1: nothing selected
+  const show = { r: true, v: true, F: true, L: true, P: true, trail: true, follow: false, rMode: "all", fMode: "net", fScale: 4, pScale: 2, liMode: "off" };
+  $("play").textContent = playing ? "Pause" : "Play";
+  $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; };
+  $("restart").onclick = () => { init(seed); };
+  $("newsys").onclick = () => { init((Math.random() * 1e6) | 0); };
+  $("speed").oninput = e => { speed = +e.target.value; $("speedOut").textContent = speed + "×"; };
+  $("ext").onclick = () => {
+    extOn = !extOn; computeForces();
+    $("ext").setAttribute("aria-pressed", String(extOn));
+    $("ext").textContent = extOn ? "Turn off external field g" : "Turn on uniform external field g (downward)";
+    $("banner").hidden = !extOn;
+    setBaseline(); baseP = totalP();
+  };
+  const bind = (id, key) => $(id).onchange = e => { show[key] = e.target.checked; if (key === "trail") trails.forEach((l, i) => l.visible = show.trail && i < N); };
+  bind("tR", "r"); bind("tV", "v"); bind("tF", "F"); bind("tL", "L"); bind("tP", "P"); bind("tTrail", "trail"); bind("tFollow", "follow");
+  $("ballSize").oninput = e => { ballScale = +e.target.value; $("ballSizeOut").textContent = ballScale.toFixed(1) + "×"; };
+  $("tLabels").onchange = e => { labelLayer.hidden = !e.target.checked; };
+  function setN(n) {
+    N = n; $("nBodiesOut").textContent = N;
+    if (selected >= N) selected = -1;
+    for (let i = N; i < NMAX; i++) {
+      bodies[i].visible = halos[i].visible = rArrows[i].visible = vArrows[i].visible = fArrows[i].visible = false;
+      for (let j = 0; j < NMAX; j++) pairArrows[i*NMAX+j].visible = pairArrows[j*NMAX+i].visible = false;
+      trails[i].visible = false; bodyLabels[i].hidden = true; LiArrows[i].visible = false; liLabels[i].hidden = true;
+    }
+    for (let i = 0; i < N; i++) { bodies[i].visible = true; trails[i].visible = show.trail; }
+    init(seed); buildPartsLegend();
+  }
+  $("nBodies").oninput = e => setN(+e.target.value);
+  $("dim").onclick = () => {
+    planar = !planar;
+    $("dim").setAttribute("aria-pressed", String(planar));
+    $("oz").disabled = planar;
+    camera.up.set(0, planar ? 0 : 1, planar ? 1 : 0);
+    makeControls(controls.target.clone());
+    $("farBtn").textContent = planar ? "Far corner (10, −8, 0)" : "Far corner (10, −8, 9)";
+    placeGrid();
+    setO(O[0], O[1], planar ? 0 : O[2]);
+    init(seed);
+    standardView("3d");
+  };
+  $("rMode").onchange = e => { show.rMode = e.target.value; };
+  $("pScale").oninput = e => { show.pScale = +e.target.value; $("pScaleOut").textContent = show.pScale.toFixed(1); };
+  $("liMode").onchange = e => { show.liMode = e.target.value; };
+  $("fMode").onchange = e => { show.fMode = e.target.value; };
+  $("fScale").oninput = e => { show.fScale = +e.target.value; $("fScaleOut").textContent = show.fScale.toFixed(1); };
+
+  function setO(x, y, z) {
+    O[0] = x; O[1] = y; O[2] = z;
+    ["x","y","z"].forEach((c, k) => { $("o" + c).value = O[k]; $("o" + c + "Out").textContent = O[k].toFixed(1); });
+    $("oOut").textContent = `(${O.map(fmt1).join(", ")})`;
+    setBaseline();
+  }
+  const fmt1 = x => (Math.round(x * 10) / 10).toString().replace("-", "−");
+  ["x","y","z"].forEach((c, k) => $("o" + c).oninput = () => setO(+$("ox").value, +$("oy").value, +$("oz").value));
+  document.querySelectorAll("[data-o]").forEach(b => b.onclick = () => {
+    const w = b.dataset.o;
+    if (w === "origin") setO(0, 0, 0);
+    else if (w === "cm") setO(Math.round(startCM[0]*2)/2, Math.round(startCM[1]*2)/2, Math.round(startCM[2]*2)/2);
+    else setO(10, -8, planar ? 0 : 9);
+  });
+
+  // picking
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  let downAt = null;
+  renderer.domElement.addEventListener("pointerdown", e => { downAt = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener("pointerup", e => {
+    if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+    const rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    const hit = ray.intersectObjects(bodies.slice(0, N))[0];
+    if (hit) { const k = hit.object.userData.index; selected = k === selected ? -1 : k; }  // click again to deselect
+  });
+
+  // ---------- number formatting ----------
+  const minus = s => s.replace(/-/g, "−");
+  const fx = (x, d = 4) => minus((Math.abs(x) < 0.5 * 10 ** -d ? 0 : x).toFixed(d));
+  function sci(x) {
+    if (x === 0 || !isFinite(x)) return "0";
+    const e = Math.floor(Math.log10(Math.abs(x)));
+    if (e >= -2 && e < 4) return fx(x, 3);
+    return `${minus((x / 10 ** e).toFixed(1))} × 10<sup>${minus(String(e))}</sup>`;
+  }
+
+  // ---------- charts ----------
+  function setupChart(canvasId, tipId) {
+    const c = $(canvasId), ch = { c, ctx: c.getContext("2d"), tip: $(tipId), hover: null, data: null };
+    c.addEventListener("pointermove", e => { const r0 = c.getBoundingClientRect(); ch.hover = e.clientX - r0.left; });
+    c.addEventListener("pointerleave", () => { ch.hover = null; ch.tip.hidden = true; });
+    return ch;
+  }
+  const chartTotal = setupChart("chartTotal", "tipTotal");
+  const chartParts = setupChart("chartParts", "tipParts");
+
+  function niceStep(span) {
+    const raw = span / 2, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+  }
+  function drawChart(ch, ts, extFlags, series) {
+    const { c, ctx } = ch, dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const W = c.clientWidth, H = c.clientHeight;
+    if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const padL = 46, padR = 8, padT = 8, padB = 20, pw = W - padL - padR, ph = H - padT - padB;
+    const n = ts.length; if (n < 2) return;
+    // symmetric range around zero so a constant stays visibly flat (no autoscaling into round-off)
+    let M = 0; series.forEach(s => s.values.forEach(y => { if (Math.abs(y) > M) M = Math.abs(y); }));
+    M = Math.max(M * 1.15, 1e-6);
+    const t0 = ts[0], t1 = Math.max(ts[n-1], t0 + 1e-9);
+    const X = tt => padL + (tt - t0) / (t1 - t0) * pw, Y = y => padT + ph / 2 - y / M * ph / 2;
+    const muted = css("--muted"), line = css("--line"), ink = css("--ink");
+    // external-field bands
+    ctx.fillStyle = css("--ext");
+    for (let i = 0; i < n; i++) if (extFlags[i]) { let j = i; while (j + 1 < n && extFlags[j+1]) j++; ctx.fillRect(X(ts[Math.max(i-1,0)]), padT, X(ts[j]) - X(ts[Math.max(i-1,0)]), ph); i = j; }
+    // grid
+    const st = niceStep(M);
+    ctx.font = "10.5px " + css("--font-mono"); ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let y = -Math.floor(M / st) * st; y <= M + 1e-12; y += st) {
+      const py = Y(y);
+      ctx.strokeStyle = Math.abs(y) < st * 1e-6 ? muted : line; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padL, Math.round(py) + 0.5); ctx.lineTo(W - padR, Math.round(py) + 0.5); ctx.stroke();
+      ctx.fillStyle = muted; ctx.fillText(minus(Math.abs(y) < st * 1e-6 ? "0" : +y.toPrecision(3) + ""), padL - 6, py);
+    }
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    const tst = niceStep((t1 - t0) * 0.8);
+    for (let tt = Math.ceil(t0 / tst) * tst; tt <= t1; tt += tst) ctx.fillText("t=" + (+tt.toPrecision(4)), X(tt), H - padB + 5);
+    // series
+    series.forEach(s => {
+      ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 2; ctx.setLineDash(s.dash || []); ctx.lineJoin = "round";
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) { const px = X(ts[i]), py = Y(s.values[i]); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    // hover
+    if (ch.hover != null && ch.hover >= padL && ch.hover <= W - padR) {
+      const tt = t0 + (ch.hover - padL) / pw * (t1 - t0);
+      let i = Math.round((tt - t0) / (t1 - t0) * (n - 1)); i = Math.max(0, Math.min(n - 1, i));
+      while (i > 0 && ts[i] > tt && ts[i-1] >= tt) i--;
+      const px = X(ts[i]);
+      ctx.strokeStyle = muted; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px + 0.5, padT); ctx.lineTo(px + 0.5, padT + ph); ctx.stroke();
+      series.forEach(s => { ctx.fillStyle = s.color; ctx.strokeStyle = css("--surface"); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px, Y(s.values[i]), 4, 0, 7); ctx.fill(); ctx.stroke(); });
+      ch.tip.innerHTML = `<div>t = ${ts[i].toFixed(2)}${extFlags[i] ? " · field on" : ""}</div>` + series.map(s => `<div><i class="sw" style="background:${s.color}"></i>${s.name} <b>${fx(s.values[i], 3)}</b></div>`).join("");
+      ch.tip.hidden = false;
+      const tw = ch.tip.offsetWidth;
+      ch.tip.style.left = (px + 12 + tw > W ? px - 12 - tw : px + 12) + "px";
+      ch.tip.style.top = "4px";
+    } else ch.tip.hidden = true;
+  }
+
+  function buildPartsLegend() {
+    $("partsLegend").innerHTML = colors.slice(0, N).map((c, i) => `<span><i style="background:${c}"></i>m<sub>${i+1}</sub></span>`).join("") +
+      `<span><i style="background:${css("--L")};height:5px"></i>Sum (total L)</span>`;
+  }
+
+  function updateCharts() {
+    const n = history.length, ts = new Array(n), ext = new Array(n);
+    const Lx = new Float64Array(n), Ly = new Float64Array(n), Lz = new Float64Array(n);
+    const per = Array.from({ length: N }, () => []);
+    for (let s = 0; s < n; s++) {
+      const h = history[s]; ts[s] = h.t; ext[s] = h.ext;
+      let sx = 0, sy = 0, sz = 0;
+      for (let i = 0; i < N; i++) { const l = bodyL(i, h.r, h.p, true); per[i].push(l); sx += l[0]; sy += l[1]; sz += l[2]; }
+      Lx[s] = sx; Ly[s] = sy; Lz[s] = sz;
+    }
+    const accent = css("--L");
+    drawChart(chartTotal, ts, ext, [
+      { name: "Lx", color: accent, values: Lx },
+      { name: "Ly", color: accent, values: Ly, dash: [6, 4] },
+      { name: "Lz", color: accent, values: Lz, dash: [2, 3] },
+    ]);
+    const last = n - 1, Lm = Math.hypot(Lx[last], Ly[last], Lz[last]) || 1;
+    const u = [Lx[last] / Lm, Ly[last] / Lm, Lz[last] / Lm];
+    const partSeries = per.map((arr, i) => ({ name: "m" + (i+1), color: colors[i], width: 1.6, values: arr.map(l => l[0]*u[0] + l[1]*u[1] + l[2]*u[2]) }));
+    const sum = new Float64Array(n); for (let s = 0; s < n; s++) sum[s] = Lx[s]*u[0] + Ly[s]*u[1] + Lz[s]*u[2];
+    partSeries.push({ name: "Sum", color: accent, width: 3.5, values: sum });
+    drawChart(chartParts, ts, ext, partSeries);
+  }
+
+  function updateReadouts() {
+    const L = totalL();
+    $("Lx").innerHTML = fx(L[0]); $("Ly").innerHTML = fx(L[1]); $("Lz").innerHTML = fx(L[2]);
+    const dL = Math.hypot(L[0]-baseL[0], L[1]-baseL[1], L[2]-baseL[2]), relDrift = dL / (Math.hypot(...baseL) || 1);
+    $("drift").innerHTML = relDrift === 0 ? "0" : sci(relDrift) + " (relative)";
+    $("drift").className = relDrift < 1e-9 ? "ok" : "bad";
+    const tau = [0, 0, 0]; let maxT = 0;
+    for (let i = 0; i < N; i++) {
+      const ti = cross([r[3*i]-O[0], r[3*i+1]-O[1], r[3*i+2]-O[2]], [Ftot[3*i], Ftot[3*i+1], Ftot[3*i+2]]);
+      tau[0] += ti[0]; tau[1] += ti[1]; tau[2] += ti[2]; maxT = Math.max(maxT, Math.hypot(...ti));
+    }
+    const nt = Math.hypot(...tau);
+    $("netTau").innerHTML = sci(nt); $("netTau").className = nt < 1e-9 ? "ok" : "bad";
+    $("maxTau").innerHTML = fx(maxT, 3);
+    const P = totalP();
+    $("Pmag").innerHTML = `(${P.map(x => fx(x, 4)).join(", ")})`;
+    const dP = Math.hypot(P[0]-baseP[0], P[1]-baseP[1], P[2]-baseP[2]);
+    $("Pdrift").innerHTML = sci(dP); $("Pdrift").className = dP < 1e-9 ? "ok" : "bad";
+    let KE = 0, PE = 0;
+    for (let i = 0; i < N; i++) { KE += 0.5 * m[i] * (v[3*i]**2 + v[3*i+1]**2 + v[3*i+2]**2); if (extOn) PE -= m[i] * (GFIELD[1] * r[3*i+1]); }
+    for (let i = 0; i < N; i++) for (let j = i+1; j < N; j++) PE -= G*m[i]*m[j] / Math.sqrt((r[3*i]-r[3*j])**2 + (r[3*i+1]-r[3*j+1])**2 + (r[3*i+2]-r[3*j+2])**2 + EPS2);
+    $("Eval").innerHTML = fx(KE + PE, 4);
+
+    // selected body
+    if (selected < 0) { $("selName").innerHTML = ""; $("selFacts").innerHTML = `<dt>Click a body in the view to inspect it. Click it again to deselect.</dt><dd></dd>`; return; }
+    const i = selected;
+    const rel = [r[3*i]-O[0], r[3*i+1]-O[1], r[3*i+2]-O[2]];
+    const Li = bodyL(i), ti = cross(rel, [Ftot[3*i], Ftot[3*i+1], Ftot[3*i+2]]);
+    const vec = a => `(${a.map(x => fx(x, 2)).join(", ")})`;
+    $("selName").innerHTML = `<span class="sel-swatch" style="background:${colors[i]}"></span>m<sub>${i+1}</sub> = ${m[i].toFixed(2)}`;
+    $("selFacts").innerHTML =
+      `<dt>Position from O, r<sub>i</sub> − r<sub>O</sub></dt><dd>${vec(rel)}</dd>` +
+      `<dt>Velocity v<sub>i</sub></dt><dd>${vec([v[3*i], v[3*i+1], v[3*i+2]])}</dd>` +
+      `<dt>Its L<sub>i</sub> about O</dt><dd>${vec(Li)}</dd>` +
+      `<dt>Its torque τ<sub>i</sub> about O</dt><dd>${vec(ti)}</dd>` +
+      `<dt>Net force F<sub>i</sub> = Σ F<sub>ij</sub></dt><dd>${vec([Ftot[3*i], Ftot[3*i+1], Ftot[3*i+2]])}</dd>` +
+      Array.from({ length: N }, (_, j) => j === i ? "" : `<dt>&nbsp;&nbsp;F<sub>${i+1},${j+1}</sub> from m<sub>${j+1}</sub></dt><dd>${vec(pairForce(i, j))}</dd>`).join("") +
+      (extOn ? `<dt>&nbsp;&nbsp;External m<sub>${i+1}</sub>g</dt><dd>${vec(GFIELD.map(g => m[i] * g))}</dd>` : "");
+  }
+
+  // ---------- render loop ----------
+  function pairForce(i, j) { // force on i due to j
+    const dx = r[3*j]-r[3*i], dy = r[3*j+1]-r[3*i+1], dz = r[3*j+2]-r[3*i+2];
+    const d2 = dx*dx + dy*dy + dz*dz + EPS2, s = G * m[i] * m[j] / (d2 * Math.sqrt(d2));
+    return [s*dx, s*dy, s*dz];
+  }
+  function capLen(vec) { const l = vec.length(); if (l > 20) vec.multiplyScalar(20 / l); return vec; }
+  const vTmp = new THREE.Vector3(), vFrom = new THREE.Vector3(), vO = new THREE.Vector3(), proj = new THREE.Vector3();
+  let Lref = 1;
+  function place(el, pos) {
+    proj.copy(pos).project(camera);
+    if (proj.z > 1 || proj.z < -1) { el.hidden = true; return; }
+    el.hidden = false;
+    el.style.left = ((proj.x + 1) / 2 * view.clientWidth) + "px";
+    el.style.top = ((1 - proj.y) / 2 * view.clientHeight) + "px";
+  }
+
+  // standard views: frame all bodies, centered on the current center of mass
+  let tween = null;
+  function standardView(which) {
+    const cm = [0, 0, 0]; let M = 0;
+    for (let i = 0; i < N; i++) { M += m[i]; for (let k = 0; k < 3; k++) cm[k] += m[i] * r[3*i+k]; }
+    for (let k = 0; k < 3; k++) cm[k] /= M;
+    let R = 1;
+    for (let i = 0; i < N; i++) R = Math.max(R, Math.hypot(r[3*i]-cm[0], r[3*i+1]-cm[1], r[3*i+2]-cm[2]));
+    const fit = Math.min(camera.fov, 2 * Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect) * 180 / Math.PI);
+    const D = Math.max(10, R + 1.3 * R / Math.tan(fit * Math.PI / 360));  // + R so near-side bodies still fit
+    const dir = planar  // planar mode uses z as screen-up, so the x–y plane reads as a floor
+      ? { xy: [0, -1e-4, 1], xz: [0, -1, 0], yz: [1, 0, 0], "3d": [0.6, -0.65, 0.45] }[which]
+      : { xy: [0, 0, 1], xz: [0, 1, 1e-4], yz: [1, 0, 0], "3d": [0.55, 0.4, 0.73] }[which];
+    const dn = Math.hypot(...dir);
+    const q1 = new THREE.Vector3(...cm);
+    const p1 = q1.clone().add(new THREE.Vector3(dir[0]/dn*D, dir[1]/dn*D, dir[2]/dn*D));
+    tween = { t0: performance.now(), p0: camera.position.clone(), p1, q0: controls.target.clone(), q1 };
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) { camera.position.copy(p1); controls.target.copy(q1); tween = null; }
+  }
+  document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => standardView(b.dataset.view));
+
+  function resize() {
+    const w = view.clientWidth, h = view.clientHeight;
+    renderer.setSize(w, h, false);
+    renderer.domElement.style.width = w + "px"; renderer.domElement.style.height = h + "px";
+    camera.aspect = w / Math.max(h, 1); camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(view);
+
+  let frame = 0, lastCM = null;
+  function tick() {
+    if (playing) {
+      stepAcc += speed * 8;
+      while (stepAcc >= 1) {
+        step(); stepAcc -= 1;
+        if (stepCount % 10 === 0) pushTrail();
+        if (stepCount % SAMPLE_EVERY === 0) pushSample();
+      }
+    }
+    // follow the center of mass by translating camera and target together
+    const cm = [0, 0, 0]; let M = 0;
+    for (let i = 0; i < N; i++) { M += m[i]; for (let k = 0; k < 3; k++) cm[k] += m[i] * r[3*i+k]; }
+    for (let k = 0; k < 3; k++) cm[k] /= M;
+    if (show.follow && lastCM) {
+      const d = new THREE.Vector3(cm[0]-lastCM[0], cm[1]-lastCM[1], cm[2]-lastCM[2]);
+      camera.position.add(d); controls.target.add(d);
+    }
+    lastCM = cm;
+    if (tween) {
+      const k = Math.min((performance.now() - tween.t0) / 450, 1), e = k < 0.5 ? 2*k*k : 1 - (-2*k + 2) ** 2 / 2;
+      camera.position.lerpVectors(tween.p0, tween.p1, e);
+      controls.target.lerpVectors(tween.q0, tween.q1, e);
+      if (k >= 1) tween = null;
+    }
+
+    vO.set(O[0], O[1], O[2]);
+    oGroup.position.copy(vO);
+    if (selected < 0) selRArrow.visible = false;
+    for (let i = 0; i < N; i++) {
+      const rad = (0.25 + 0.2 * Math.cbrt(m[i])) * ballScale;
+      vFrom.set(r[3*i], r[3*i+1], r[3*i+2]);
+      bodies[i].position.copy(vFrom); bodies[i].scale.setScalar(rad);
+      halos[i].visible = i === selected; halos[i].position.copy(vFrom); halos[i].scale.setScalar(rad * 2.6);
+      const dim = selected >= 0 && i !== selected;  // a selection fades every other body's vectors
+      for (const mt of [rArrows[i].userData.mat, vArrows[i].userData.mat, fArrows[i].userData.mat, LiArrows[i].userData.mat, pairMats[i]]) {
+        mt.opacity = dim ? 0.12 : mt.userData.base; mt.depthWrite = !dim && mt.userData.base >= 1;
+      }
+      vTmp.copy(vFrom).sub(vO);
+      setArrow(rArrows[i], vO, vTmp, show.r && show.rMode === "all" && i !== selected);
+      if (i === selected) setArrow(selRArrow, vO, vTmp, show.r);
+      vTmp.set(v[3*i], v[3*i+1], v[3*i+2]).multiplyScalar(1.4);
+      setArrow(vArrows[i], vFrom, vTmp, show.v);
+      vTmp.set(Ftot[3*i], Ftot[3*i+1], Ftot[3*i+2]);
+      setArrow(fArrows[i], vFrom, capLen(vTmp.multiplyScalar(show.fScale)), show.F);
+      const showPairs = (show.fMode === "all" || (show.fMode === "sel" && i === selected));
+      for (let j = 0; j < N; j++) {
+        const A = pairArrows[i*NMAX+j];
+        if (!showPairs) { A.visible = false; continue; }
+        if (j === i) { vTmp.set(m[i]*GFIELD[0], m[i]*GFIELD[1], m[i]*GFIELD[2]); setArrow(A, vFrom, capLen(vTmp.multiplyScalar(show.fScale)), extOn); continue; }
+        const f = pairForce(i, j);
+        vTmp.set(f[0], f[1], f[2]);
+        setArrow(A, vFrom, capLen(vTmp.multiplyScalar(show.fScale)), true);
+      }
+      place(bodyLabels[i], vFrom);
+    }
+    const L = totalL(), Lm = Math.hypot(...L), kL = 4 / Lref;  // one scale for L and every L_i
+    vTmp.set(L[0], L[1], L[2]).multiplyScalar(kL); capLen(vTmp);
+    setArrow(LArrow, vO, vTmp, show.L);
+    const chainPos = vO.clone(), li = new THREE.Vector3(), bodyPos = new THREE.Vector3();
+    for (let i = 0; i < N; i++) {
+      const l = bodyL(i);
+      liLabels[i].hidden = true;
+      li.set(l[0], l[1], l[2]).multiplyScalar(kL);
+      if (show.liMode === "chain") { setArrow(LiArrows[i], chainPos, li, true); chainPos.add(li); }
+      else if (show.liMode === "body") setArrow(LiArrows[i], bodyPos.set(r[3*i], r[3*i+1], r[3*i+2]), li, true);
+      else LiArrows[i].visible = false;
+    }
+    place(oLabel, vO);
+    if (show.L && Lm) { vFrom.copy(vO).add(vTmp); place(LLabel, vFrom); } else LLabel.hidden = true;
+    const P = totalP(), Pm = Math.hypot(...P);
+    vFrom.set(cm[0], cm[1], cm[2]);
+    cmMark.position.copy(vFrom); cmMark.visible = show.P;
+    if (show.P) place(cmLabel, vFrom); else cmLabel.hidden = true;
+    vTmp.set(P[0], P[1], P[2]).multiplyScalar(show.pScale); capLen(vTmp);  // fixed linear scale: length ∝ |P|
+    setArrow(PArrow, vFrom, vTmp, show.P);
+    if (show.P && Pm) { vFrom.add(vTmp); place(PLabel, vFrom); } else PLabel.hidden = true;
+
+    controls.update();
+    renderer.render(scene, camera);
+    if (frame % 2 === 0) updateCharts();
+    if (frame % 6 === 0) updateReadouts();
+    frame++;
+    requestAnimationFrame(tick);
+  }
+
+
+  applyTheme();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  seed = 2060; setN(7);
+  resize();
+  tick();
+})();
+</script>
+</body></html>
