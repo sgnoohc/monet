@@ -234,6 +234,8 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
         <select id="fMode"><option value="net">Hidden</option><option value="sel">On the selected body</option><option value="all">On every body</option></select></div>
       <div class="row" style="grid-template-columns:auto minmax(0,1fr) 44px"><label for="fScale" style="font-family:var(--font-body);font-style:normal;font-size:13px">Force arrow scale</label>
         <input id="fScale" type="range" min="0.5" max="12" step="0.5" value="4"><output id="fScaleOut">4.0</output></div>
+      <div class="row" style="grid-template-columns:auto minmax(0,1fr) 44px"><label for="lScale" style="font-family:var(--font-body);font-style:normal;font-size:13px">L arrow scale</label>
+        <input id="lScale" type="range" min="0.02" max="4" step="0.02" value="1"><output id="lScaleOut">1.00</output></div>
       <div class="row" style="grid-template-columns:auto minmax(0,1fr) 44px"><label for="pScale" style="font-family:var(--font-body);font-style:normal;font-size:13px">P arrow scale</label>
         <input id="pScale" type="range" min="0.5" max="10" step="0.5" value="2"><output id="pScaleOut">2.0</output></div>
       <div class="row" style="grid-template-columns:auto minmax(0,1fr)"><label for="rMode" style="font-family:var(--font-body);font-style:normal;font-size:13px">Show <span class="math">r<sub>i</sub></span> for</label>
@@ -360,6 +362,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     history.length = 0; pushSample();
     resetTrails();
     setBaseline();
+    Lref = Math.hypot(...baseL) || 1;  // arrow scale fixed per system, so moving O visibly changes |L|
     baseP = totalP(); Pref = Math.hypot(...baseP) || 1;
     document.getElementById("newsys").title = "System #" + seed;
   }
@@ -375,7 +378,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
   function totalL() { const L = [0, 0, 0]; for (let i = 0; i < N; i++) { const l = bodyL(i); L[0] += l[0]; L[1] += l[1]; L[2] += l[2]; } return L; }
   let baseL = [0, 0, 0], baseP = [0, 0, 0], Pref = 1;
   function totalP() { const P = [0, 0, 0]; for (let i = 0; i < N; i++) for (let k = 0; k < 3; k++) P[k] += m[i] * v[3*i+k]; return P; }
-  function setBaseline() { baseL = totalL(); Lref = Math.hypot(...baseL) || 1; }
+  function setBaseline() { baseL = totalL(); }
 
   // history: positions and momenta every 20 steps; L about the current O is recomputed from these
   const history = [], HMAX = 900, SAMPLE_EVERY = 20;
@@ -529,7 +532,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
   const $ = id => document.getElementById(id);
   let playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
   let speed = 1, stepAcc = 0, selected = -1, ballScale = 1;  // -1: nothing selected
-  const show = { r: true, v: true, F: true, L: true, P: true, trail: true, follow: false, rMode: "all", fMode: "net", fScale: 4, pScale: 2, liMode: "off" };
+  const show = { r: true, v: true, F: true, L: true, P: true, trail: true, follow: false, rMode: "all", fMode: "net", fScale: 4, pScale: 2, liMode: "off", lScale: 1 };
   $("play").textContent = playing ? "Pause" : "Play";
   $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; };
   $("restart").onclick = () => { init(seed); };
@@ -571,6 +574,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
     standardView("3d");
   };
   $("rMode").onchange = e => { show.rMode = e.target.value; };
+  $("lScale").oninput = e => { show.lScale = +e.target.value; $("lScaleOut").textContent = show.lScale.toFixed(2); };
   $("pScale").oninput = e => { show.pScale = +e.target.value; $("pScaleOut").textContent = show.pScale.toFixed(1); };
   $("liMode").onchange = e => { show.liMode = e.target.value; };
   $("fMode").onchange = e => { show.fMode = e.target.value; };
@@ -852,7 +856,7 @@ details summary { cursor: pointer; font: 600 11px/1.2 var(--font-body); letter-s
       }
       place(bodyLabels[i], vFrom);
     }
-    const L = totalL(), Lm = Math.hypot(...L), kL = 4 / Lref;  // one scale for L and every L_i
+    const L = totalL(), Lm = Math.hypot(...L), kL = 4 * show.lScale / Lref;  // one fixed scale for L and every L_i
     vTmp.set(L[0], L[1], L[2]).multiplyScalar(kL); capLen(vTmp);
     setArrow(LArrow, vO, vTmp, show.L);
     const chainPos = vO.clone(), li = new THREE.Vector3(), bodyPos = new THREE.Vector3();
