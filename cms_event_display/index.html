@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="A 2024 CMS Open Data collision, reconstructed from RAW, drawn inside the SketchUpCMS 3D detector model.">
+<title>SketchUpCMS Event Display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syncopate:wght@400;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: the detector viewport leads at full width, an operating strip sits under it, and three readout panels (layers, objects, provenance) follow and stack on phones.
+   One committed dark look carried over from SketchUpCMS; event colours follow subsystem conventions so the legend reads like a CMS display. */
+:root{color-scheme:dark;
+  --bg:#04070B; --panel:#07101A; --ice:#DCEBFA; --ice-dim:#8FA9C4; --steel:#1B3A57; --rule:#162534; --edge:#3A5673;
+  --trk:#FFB648; --mu:#FF3D57; --ecal:#FF5C9A; --hcal:#A98BFF; --pix:#D4FF4F; --strip:#E9D7A8; --seg:#FF8A3D; --rpc:#3DF2C2; --jet:#FFE45C; --met:#FF4FF0; --vtx:#FFFFFF;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --wide:"Syncopate","Arial Black",sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;}
+*{box-sizing:border-box}
+body{margin:0}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ice);font-family:var(--body);padding-inline:16px;padding-block:14px 32px}
+.wrap{max-width:1440px;margin-inline:auto;display:flex;flex-direction:column;gap:12px}
+.head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 18px}
+.head h1{margin:0;font:700 13px/1.3 var(--wide);letter-spacing:.32em;text-transform:uppercase;text-wrap:balance}
+.head h1 span{font:400 12px var(--mono);letter-spacing:.14em;color:var(--ice-dim);margin-left:12px}
+.head p{margin:0;font:400 12px var(--mono);color:var(--ice-dim);letter-spacing:.05em}
+.frame{position:relative;width:100%;max-width:100%;aspect-ratio:16/9;max-height:calc(100vh - 150px);min-height:320px;background:#000;overflow:hidden;border-radius:2px;border:1px solid var(--rule)}
+#gl{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#gl:active{cursor:grabbing}
+#hud{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#hud text{font-family:var(--mono);paint-order:stroke;stroke:#02060B;stroke-width:3px;stroke-linejoin:round}
+.vig{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,rgba(0,0,0,0) 60%,rgba(0,0,0,.5) 100%)}
+.stamp{position:absolute;left:14px;top:12px;pointer-events:none;font:400 11px/1.6 var(--mono);color:var(--ice);letter-spacing:.03em;text-shadow:0 0 6px #000,0 0 2px #000}
+.stamp b{display:block;font:700 9.5px/1.7 var(--wide);letter-spacing:.26em;margin-bottom:2px}
+.stamp span{color:var(--ice-dim)}
+.hint{position:absolute;right:14px;bottom:10px;pointer-events:none;font:400 10.5px var(--mono);letter-spacing:.1em;color:var(--ice-dim);text-transform:uppercase;text-shadow:0 0 6px #000}
+.status{position:absolute;inset:0;display:grid;place-items:center;padding:16px;text-align:center;font:500 12px var(--mono);letter-spacing:.2em;color:var(--ice-dim);background:var(--bg)}
+.bar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.grp{display:flex;flex-wrap:wrap;align-items:center}
+.grp>span{font:500 10px var(--mono);letter-spacing:.16em;color:var(--ice-dim);text-transform:uppercase;margin-right:10px}
+.btn{font:500 11.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;background:transparent;color:var(--ice);border:1px solid var(--edge);padding:7px 11px;cursor:pointer;min-height:34px}
+.grp .btn+.btn{border-left-color:transparent}
+.btn[aria-pressed="true"]{background:var(--steel);border-color:#5B85AE}
+.btn:hover{border-color:var(--ice)}
+.btn:focus-visible,input:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
+.btn.go{border-color:var(--trk);color:var(--trk)}
+.panels{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,.9fr);gap:12px}
+@media (max-width:1060px){.panels{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.prov{grid-column:1/-1}}
+@media (max-width:700px){.panels{grid-template-columns:minmax(0,1fr)}.frame{aspect-ratio:4/5;max-height:none}}
+.card{background:var(--panel);border:1px solid var(--rule);padding:14px 14px 12px;min-width:0}
+.card h2{margin:0 0 10px;font:700 10px/1.4 var(--wide);letter-spacing:.3em;text-transform:uppercase}
+.card h3{margin:14px 0 6px;font:500 10px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ice-dim)}
+.layers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px}
+.lay{display:grid;grid-template-columns:auto 12px minmax(0,1fr) auto;align-items:center;gap:8px;padding:4px 0;font:400 12.5px var(--body);cursor:pointer}
+.lay input{margin:0;accent-color:#9CC3E6}
+.sw{width:12px;height:12px;border-radius:1px;display:inline-block}
+.lay .n{font:400 11.5px var(--mono);color:var(--ice-dim);font-variant-numeric:tabular-nums}
+.sl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;align-items:center;margin-top:10px;font:400 12px var(--body)}
+.sl output{font:500 12px var(--mono);font-variant-numeric:tabular-nums}
+.sl input{grid-column:1/-1;width:100%;accent-color:#9CC3E6;margin:0}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font:400 12px var(--mono);font-variant-numeric:tabular-nums}
+th{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ice-dim);text-align:right;padding:4px 6px;border-bottom:1px solid var(--rule);white-space:nowrap}
+td{text-align:right;padding:4px 6px;border-bottom:1px solid var(--rule);white-space:nowrap}
+th:first-child,td:first-child{text-align:left;padding-left:0}
+td .sw{vertical-align:-1px;margin-right:8px}
+.note{font:400 12.5px/1.55 var(--body);color:var(--ice-dim);margin:10px 0 0;max-width:68ch}
+.note b{color:var(--ice);font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font:400 10.5px var(--mono);border:1px solid var(--rule);padding:2px 6px;color:var(--ice-dim);overflow-wrap:anywhere}
+.chip.key{color:var(--ice);border-color:var(--edge)}
+dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 12px;font:400 12px/1.45 var(--body)}
+dt{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ice-dim);padding-top:2px}
+dd{margin:0;overflow-wrap:anywhere}
+dd code{font:400 11px var(--mono)}
+a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
+@media (max-width:520px){.layers{grid-template-columns:minmax(0,1fr)}.stamp{font-size:9.5px}.hint{display:none}}
+</style>
+</head>
+<body>
+
+<main class="wrap">
+  <header class="head">
+    <h1>SketchUpCMS<span>event overlay</span></h1>
+    <p>CMS Open Data · 2024 RAW · reconstructed with CMSSW_14_0_25</p>
+  </header>
+
+  <div class="frame" id="frame">
+    <canvas id="gl" aria-label="3D view of the CMS detector with one recorded proton-proton collision drawn inside it"></canvas>
+    <div class="vig"></div>
+    <svg id="hud" aria-hidden="true"></svg>
+    <div class="stamp" id="stamp"><b>CMS Experiment at the LHC, CERN</b></div>
+    <div class="hint">Drag to orbit · scroll to zoom · right-drag to pan</div>
+    <div class="status" id="status">LOADING DETECTOR AND EVENT</div>
+  </div>
+
+  <div class="bar">
+    <div class="grp" role="group" aria-label="View">
+      <span>View</span>
+      <button class="btn" data-view="cut" aria-pressed="true">3D cutaway</button>
+      <button class="btn" data-view="rphi" aria-pressed="false">Transverse</button>
+      <button class="btn" data-view="rhoz" aria-pressed="false">Longitudinal</button>
+    </div>
+    <div class="grp" role="group" aria-label="Detector style">
+      <span>Detector</span>
+      <button class="btn" data-style="bp" aria-pressed="true">Blueprint</button>
+      <button class="btn" data-style="live" aria-pressed="false">Color</button>
+      <button class="btn" data-style="glass" aria-pressed="false">Glass</button>
+    </div>
+    <div class="grp"><button class="btn" id="xray" aria-pressed="true" title="Show hits hidden behind the detector at reduced brightness">X-ray hits</button></div>
+    <div class="grp"><button class="btn go" id="replay">Replay collision</button></div>
+  </div>
+
+  <section class="panels">
+    <div class="card">
+      <h2>Event layers</h2>
+      <div class="layers" id="layers"></div>
+      <div class="sl"><label for="ptcut">Tracks with p<sub>T</sub> at least</label><output id="ptv" for="ptcut">1 GeV</output><input type="range" id="ptcut" min="0" max="6" step="1" value="1"></div>
+      <div class="sl"><label for="ecut">Calorimeter hits with energy at least</label><output id="ecv" for="ecut">0.5 GeV</output><input type="range" id="ecut" min="0" max="5" step="1" value="1"></div>
+      <h3>Detector parts</h3>
+      <div class="layers" id="parts"></div>
+    </div>
+    <div class="card">
+      <h2>Reconstructed objects</h2>
+      <div class="tw"><table id="objs"><thead><tr><th>Object</th><th>p<sub>T</sub> GeV</th><th>η</th><th>φ</th></tr></thead><tbody></tbody></table></div>
+      <p class="note" id="phys"></p>
+      <h3>HLT paths fired</h3>
+      <div class="chips" id="hlt"></div>
+    </div>
+    <div class="card prov">
+      <h2>Provenance</h2>
+      <dl id="prov"></dl>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script>
+/* mesh header for cms_parts.js (SketchUpCMS geometry, CMS-OUTREACH-2019-002) */
+const META={"nv": 208935, "nt": 321763, "ne": 201214, "lo": [-27.0, -7.8929524421691895, 5.963129997253418], "hi": [27.0, 7.8929524421691895, 22.36425018310547], "parts": ["static-", "tracker", "pixel", "ecal_b", "hcal_b", "solenoid", "YB-2", "YB-1", "YB0", "YB+1", "YB+2", "YE-1", "YE-2", "YE-3", "YE+1", "YE+2", "YE+3", "HF-", "HF+", "static+", "static", "inner_e-", "inner_e+"], "groups": [{"name": "Pixel tracker", "hex": "#B7E34A"}, {"name": "Silicon strip tracker", "hex": "#4FB6E6"}, {"name": "ECAL", "hex": "#5FD6B4"}, {"name": "HCAL", "hex": "#F2B84B"}, {"name": "Solenoid", "hex": "#E9ECEF"}, {"name": "Barrel muon chambers", "hex": "#AEB5BC"}, {"name": "Endcap muon chambers", "hex": "#AEB5BC"}, {"name": "Return yoke", "hex": "#D0231A"}, {"name": "Forward calorimeter (HF)", "hex": "#8A5A2B"}, {"name": "Supports", "hex": "#5E6570"}, {"name": "Beam line", "hex": "#8C939A"}, {"name": "Forward shielding", "hex": "#E07B1F"}, {"name": "Person (for scale)", "hex": "#1E2A38"}, {"name": "Foreground", "hex": "#7A828A"}]};
+
+(async function(){
+const $=id=>document.getElementById(id);
+const frame=$('frame'),canvas=$('gl'),hud=$('hud'),statusEl=$('status');
+const css=getComputedStyle(document.documentElement);
+const tok=k=>css.getPropertyValue('--'+k).trim();
+const COL=k=>new THREE.Color(tok(k));
+const reduce=!!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const ss=(a,b,t)=>{const x=clamp((t-a)/(b-a),0,1);return x*x*x*(x*(x*6-15)+10)};
+const NS='http://www.w3.org/2000/svg';
+const svg=(tag,attrs,parent)=>{const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);(parent||hud).appendChild(e);return e};
+const dphi=(a,b)=>{let d=a-b;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d};
+
+/* ---------- renderer ---------- */
+let renderer;
+try{renderer=new THREE.WebGLRenderer({canvas,antialias:true})}catch(e){statusEl.textContent='THIS VIEW NEEDS WEBGL. TRY A BROWSER WITH HARDWARE ACCELERATION ON.';return}
+renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+renderer.setClearColor(0x000000,1);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(35,16/9,0.05,3000);
+const controls=new THREE.OrbitControls(camera,canvas);
+controls.enableDamping=true;controls.dampingFactor=0.08;controls.minDistance=0.8;controls.maxDistance=140;controls.rotateSpeed=0.7;
+const composer=new THREE.EffectComposer(renderer);
+composer.addPass(new THREE.RenderPass(scene,camera));
+const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(512,256),0.8,0.45,0.62);
+composer.addPass(bloom);
+const res=new THREE.Vector2();let W=1,H=1;
+function resize(){const r=frame.getBoundingClientRect();W=Math.max(1,r.width);H=Math.max(1,r.height);
+  renderer.setSize(W,H,false);composer.setSize(W,H);camera.aspect=W/H;camera.updateProjectionMatrix();
+  renderer.getDrawingBufferSize(res);hud.setAttribute('viewBox',`0 0 ${W} ${H}`);}
+new ResizeObserver(resize).observe(frame);resize();
+
+/* ---------- load the detector mesh and the event ---------- */
+const evP=fetch('event.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json()});
+let buf;
+try{
+  await new Promise((ok,bad)=>{const sc=document.createElement('script');sc.src='cms_parts.js';sc.onload=ok;sc.onerror=bad;document.head.appendChild(sc)});
+  const bin=atob(window.CMS_MESH);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);buf=u8.buffer;window.CMS_MESH=null;
+}catch(e){statusEl.textContent='THE DETECTOR GEOMETRY DID NOT LOAD. RELOAD THE PAGE TO TRY AGAIN.';return}
+let EV;
+try{EV=await evP}catch(e){statusEl.textContent='THE EVENT FILE DID NOT LOAD. RELOAD THE PAGE TO TRY AGAIN.';return}
+
+/* ---------- detector (same packing and axes as SketchUpCMS) ---------- */
+const nv=META.nv,nt=META.nt,ne=META.ne,lo=META.lo,hi=META.hi;
+let o=0;
+const q=new Uint16Array(buf,o,nv*3);o+=nv*6;
+const pa=new Uint8Array(buf,o,nv);o+=nv;
+const ga=new Uint8Array(buf,o,nv);o+=nv;
+o+=nv;                                   // per-vertex sector index, only used by the explode animation
+const idx=new Uint32Array(buf.slice(o,o+nt*12));o+=nt*12;
+const eidx=new Uint32Array(buf.slice(o,o+ne*8));
+const pos=new Float32Array(nv*3);
+for(let i=0;i<nv;i++){
+  const x=lo[0]+q[3*i]/65535*(hi[0]-lo[0]),y=lo[1]+q[3*i+1]/65535*(hi[1]-lo[1]),z=lo[2]+q[3*i+2]/65535*(hi[2]-lo[2]);
+  pos[3*i]=x;pos[3*i+1]=z-15.0;pos[3*i+2]=-y;           // model Z-up -> scene Y-up, beam axis on the origin
+}
+const posAttr=new THREE.BufferAttribute(pos,3),pAttr=new THREE.BufferAttribute(new Float32Array(pa),1),gAttr=new THREE.BufferAttribute(new Float32Array(ga),1);
+const geo=new THREE.BufferGeometry();geo.setAttribute('position',posAttr);geo.setAttribute('p',pAttr);geo.setAttribute('g',gAttr);geo.setIndex(new THREE.BufferAttribute(idx,1));
+const egeo=new THREE.BufferGeometry();egeo.setAttribute('position',posAttr);egeo.setAttribute('p',pAttr);egeo.setAttribute('g',gAttr);egeo.setIndex(new THREE.BufferAttribute(eidx,1));
+const NP=META.parts.length,NG=META.groups.length;
+const GI=Object.fromEntries(META.groups.map((g,i)=>[g.name,i])),PI=Object.fromEntries(META.parts.map((n,i)=>[n,i]));
+const U={uGC:{value:META.groups.map(g=>new THREE.Color(g.hex))},uL:{value:new THREE.Vector3(0,1,0)},uBp:{value:1},uGlass:{value:0},uEdge:{value:0.42},
+  uHideG:{value:new Array(NG).fill(0)},uHideP:{value:new Array(NP).fill(0)},uRes:{value:res}};
+const VS_DET=`attribute float p; attribute float g; uniform float uHideG[${NG}]; uniform float uHideP[${NP}]; uniform vec3 uGC[${NG}];
+  varying vec3 vView; varying vec3 vCol;
+  void main(){ vCol=uGC[int(g+0.5)]; vec4 mv=modelViewMatrix*vec4(position,1.0); vView=mv.xyz;
+    float hid=max(uHideG[int(g+0.5)],uHideP[int(p+0.5)]);
+    gl_Position=hid>0.5?vec4(2.0,2.0,2.0,1.0):projectionMatrix*mv; }`;
+const meshMat=new THREE.ShaderMaterial({uniforms:U,vertexShader:VS_DET,
+  fragmentShader:`uniform float uBp; uniform float uGlass; uniform vec3 uL; varying vec3 vView; varying vec3 vCol;
+    void main(){
+      vec3 N=normalize(cross(dFdx(vView),dFdy(vView))); vec3 V=normalize(-vView);
+      float lam=max(dot(N,normalize(uL)),0.0); float ndv=clamp(abs(dot(N,V)),0.0,1.0);
+      vec3 live=vCol*(0.30+0.70*lam)+vec3(0.10)*pow(max(dot(reflect(-normalize(uL),N),V),0.0),24.0);
+      float fres=pow(1.0-ndv,2.0);
+      vec3 deep=vec3(0.035,0.10,0.18), steel=vec3(0.20,0.38,0.56), ice=vec3(0.86,0.93,1.0);
+      vec3 bp=mix(deep,steel,0.10+0.75*lam); bp=mix(bp,ice,fres*0.42+pow(lam,14.0)*0.18);
+      vec3 c=mix(live,bp*0.72,uBp);
+      if(uGlass>0.5) c=steel*0.035+ice*fres*0.04;
+      gl_FragColor=vec4(c,1.0);
+    }`,
+  extensions:{derivatives:true},side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1});
+const mesh=new THREE.Mesh(geo,meshMat);mesh.frustumCulled=false;scene.add(mesh);
+const edgeMat=new THREE.ShaderMaterial({uniforms:U,vertexShader:VS_DET,
+  fragmentShader:`uniform float uEdge; varying vec3 vView; void main(){ float a=uEdge*(0.30+0.70*exp(-length(vView)/45.0)); gl_FragColor=vec4(vec3(0.80,0.90,1.0)*a,1.0); }`,
+  transparent:true,depthWrite:false,blending:THREE.AdditiveBlending});
+const edges=new THREE.LineSegments(egeo,edgeMat);edges.frustumCulled=false;scene.add(edges);
+/* background gradient at the far plane */
+const bgMat=new THREE.ShaderMaterial({uniforms:U,depthWrite:false,depthTest:false,
+  vertexShader:`void main(){gl_Position=vec4(position.xy,0.9999,1.0);}`,
+  fragmentShader:`uniform float uBp; uniform vec2 uRes;
+    void main(){vec2 uv=gl_FragCoord.xy/uRes; vec3 live=mix(vec3(0.10,0.11,0.12),vec3(0.30,0.33,0.36),pow(uv.y,1.2));
+      float d=length((uv-vec2(0.5,0.58))*vec2(1.7,1.0)); vec3 bp=mix(vec3(0.08,0.17,0.27),vec3(0.008,0.026,0.05),smoothstep(0.0,1.05,d));
+      gl_FragColor=vec4(mix(live,bp,uBp),1.0);}`});
+const bg=new THREE.Mesh(new THREE.PlaneGeometry(2,2),bgMat);bg.frustumCulled=false;bg.renderOrder=-10;scene.add(bg);
+/* blueprint floor grid */
+const gp=[];for(let x=-80;x<=80;x+=2)gp.push(x,-9.05,-60,x,-9.05,60);for(let z=-60;z<=60;z+=2)gp.push(-80,-9.05,z,80,-9.05,z);
+const ggeo=new THREE.BufferGeometry();ggeo.setAttribute('position',new THREE.Float32BufferAttribute(gp,3));
+const grid=new THREE.LineSegments(ggeo,new THREE.ShaderMaterial({transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,
+  vertexShader:`varying vec3 vView; void main(){vec4 mv=modelViewMatrix*vec4(position,1.0);vView=mv.xyz;gl_Position=projectionMatrix*mv;}`,
+  fragmentShader:`varying vec3 vView; void main(){float a=exp(-length(vView)/55.0)*0.3; gl_FragColor=vec4(vec3(0.75,0.87,1.0)*a,1.0);}`}));
+scene.add(grid);
+
+/* ---------- event ---------- */
+// CMS (x, y, z) in metres -> scene (z, y, -x): the beam runs along scene x, CMS y is up, CMS +x (toward the LHC centre) is scene -z
+const S=p=>new THREE.Vector3(p[2],p[1],-p[0]);
+const dirEP=(eta,phi)=>{const th=2*Math.atan(Math.exp(-eta));return S([Math.sin(th)*Math.cos(phi),Math.sin(th)*Math.sin(phi),Math.cos(th)])};
+const EVU={uT:{value:1e3},uFlash:{value:0}};      // reveal radius in metres, and the glow on the expanding front
+const VS_EV=`attribute vec3 ec; attribute float d; attribute float k; uniform float uSize;
+  varying vec3 vC; varying float vD; varying float vK;
+  void main(){ vC=ec; vD=d; vK=k; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_PointSize=uSize; }`;
+const FS_EV=`uniform float uT; uniform float uFlash; uniform float uKmin; uniform float uI;
+  varying vec3 vC; varying float vD; varying float vK;
+  void main(){
+    if(vK<uKmin||vD>uT) discard;
+  #ifdef ROUND
+    vec2 c=gl_PointCoord-0.5; if(dot(c,c)>0.25) discard;
+  #endif
+    float lead=exp(-max(uT-vD,0.0)*1.6)*uFlash;
+    gl_FragColor=vec4(vC*uI*(1.0+2.5*lead),1.0);
+  }`;
+const KNONE={value:-1e9},KPT={value:1},KE={value:0.5};
+function evMat(kmin,I,points,size,depthTest){
+  return new THREE.ShaderMaterial({uniforms:{uT:EVU.uT,uFlash:EVU.uFlash,uKmin:kmin,uI:{value:I},uSize:{value:(size||2)*renderer.getPixelRatio()}},
+    vertexShader:VS_EV,fragmentShader:(points?'#define ROUND\n':'')+FS_EV,transparent:true,depthWrite:false,depthTest,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+}
+class Buf{
+  constructor(){this.p=[];this.c=[];this.d=[];this.k=[];this.i=[]}
+  v(v,col,k){this.p.push(v.x,v.y,v.z);this.c.push(col.r,col.g,col.b);this.d.push(v.length());this.k.push(k);return this.p.length/3-1}
+  // box from a to b with a square cross-section of side w
+  bar(a,b,w,col,k){
+    const ax=b.clone().sub(a),L=ax.length();if(L<1e-6)return;ax.divideScalar(L);
+    const t=Math.abs(ax.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0);
+    const u=new THREE.Vector3().crossVectors(ax,t).normalize().multiplyScalar(w/2),v=new THREE.Vector3().crossVectors(ax,u).normalize().multiplyScalar(w/2);
+    const n=this.p.length/3;
+    for(const e of [a,b])for(const [su,sv] of [[-1,-1],[1,-1],[1,1],[-1,1]])this.v(e.clone().addScaledVector(u,su).addScaledVector(v,sv),col,k);
+    for(const f of [[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]])this.i.push(n+f[0],n+f[1],n+f[2],n+f[0],n+f[2],n+f[3]);
+  }
+  geo(){const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(this.p,3));g.setAttribute('ec',new THREE.Float32BufferAttribute(this.c,3));
+    g.setAttribute('d',new THREE.Float32BufferAttribute(this.d,1));g.setAttribute('k',new THREE.Float32BufferAttribute(this.k,1));if(this.i.length)g.setIndex(this.i);return g}
+}
+const LAYERS=[];
+function layer(key,label,colorTok,count,parts,on=true){
+  // parts: [{b:Buf, kind:'lines'|'points'|'mesh', kmin, I, size, ghost}]
+  const objs=[];
+  for(const pt of parts){
+    if(!pt.b.p.length)continue;
+    const g=pt.b.geo();
+    for(const dt of [true,false]){
+      const m=evMat(pt.kmin||KNONE,pt.I*(dt?1:(pt.ghost??0.32)),pt.kind==='points',pt.size,dt);
+      const ob=pt.kind==='lines'?new THREE.LineSegments(g,m):pt.kind==='points'?new THREE.Points(g,m):new THREE.Mesh(g,m);
+      ob.frustumCulled=false;ob.renderOrder=dt?2:3;ob.userData.ghost=!dt;scene.add(ob);objs.push(ob);
+    }
+  }
+  const L={key,label,colorTok,count,objs,on};LAYERS.push(L);return L;
+}
+
+/* tracks: helices from the reference point to the outermost hit, brighter with pT */
+const muTrk=t=>EV.muons.some(m=>Math.abs(m.eta-t.eta)<0.02&&Math.abs(dphi(m.phi,t.phi))<0.03&&Math.abs(m.pt-t.pt)<0.2*m.pt);
+const trkB=new Buf(),cT=COL('trk');
+const tracks=EV.tracks.filter(t=>!muTrk(t));
+for(const t of tracks){
+  const c=cT.clone().multiplyScalar(0.3+0.7*Math.min(1,t.pt/4)),P=t.pts.map(S);
+  for(let i=0;i+1<P.length;i++){trkB.v(P[i],c,t.pt);trkB.v(P[i+1],c,t.pt)}
+}
+const LT=layer('trk','Tracks','trk',()=>tracks.filter(t=>t.pt>=KPT.value).length+EV.muons.length,[{b:trkB,kind:'lines',kmin:KPT,I:1,ghost:0.5}]);
+
+/* muons: tubes along the reconstructed path, tracker through the outermost station */
+const muB=new Buf(),cM=COL('mu');
+for(const m of EV.muons){
+  const P=[];for(const p of m.pts.map(S))if(!P.length||p.distanceTo(P[P.length-1])>0.03)P.push(p);
+  if(P.length<2)continue;
+  const tg=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(P,false,'centripetal'),Math.min(900,P.length*10),0.06,8,false);
+  const ps=tg.attributes.position,n0=muB.p.length/3,v=new THREE.Vector3();
+  for(let i=0;i<ps.count;i++)muB.v(v.fromBufferAttribute(ps,i),cM,1e9);
+  for(const ix of tg.index.array)muB.i.push(n0+ix);
+}
+layer('mu','Muons','mu',EV.muons.length,[{b:muB,kind:'mesh',I:1,ghost:0.75}]);
+
+/* calorimeter hits: bars standing on the cell's front face, pointing away from the collision, length set by energy */
+function caloBars(hits,w,mPerGeV,cap,col){
+  const b=new Buf();
+  for(const h of hits){const a=S(h),L=clamp(h[3]*mPerGeV,0.015,cap);b.bar(a,a.clone().addScaledVector(a.clone().normalize(),L),w,col,h[3])}
+  return b;
+}
+const cE=COL('ecal'),cH=COL('hcal');
+const ecalHits=EV.eb.concat(EV.ee),hcalHits=EV.hbhe.concat(EV.ho);
+layer('ecal','ECAL energy','ecal',()=>ecalHits.filter(h=>h[3]>=KE.value).length,
+  [{b:caloBars(EV.eb,0.035,0.06,3,cE),kind:'mesh',kmin:KE,I:0.9},{b:caloBars(EV.ee,0.04,0.06,3,cE),kind:'mesh',kmin:KE,I:0.9}]);
+layer('hcal','HCAL energy','hcal',()=>hcalHits.filter(h=>h[3]>=KE.value).length,
+  [{b:caloBars(EV.hbhe,0.11,0.05,3,cH),kind:'mesh',kmin:KE,I:0.75},{b:caloBars(EV.ho,0.25,0.05,1.5,cH),kind:'mesh',kmin:KE,I:0.75}]);
+layer('hf','Forward calorimeter (HF)','hcal',()=>EV.hf.filter(h=>h[3]>=KE.value).length,
+  [{b:caloBars(EV.hf,0.1,0.006,2.5,cH.clone().multiplyScalar(0.8)),kind:'mesh',kmin:KE,I:0.35}],false);
+
+/* tracker clusters: barycentres of pixel and strip clusters */
+const ptsBuf=(arr,col)=>{const b=new Buf();for(const p of arr)b.v(S(p),col,0);return b};
+layer('pix','Pixel clusters','pix',EV.pixel.length,[{b:ptsBuf(EV.pixel,COL('pix')),kind:'points',I:0.55,size:1.8,ghost:0.45}]);
+layer('strip','Strip clusters','strip',EV.strip.length,[{b:ptsBuf(EV.strip,COL('strip')),kind:'points',I:0.14,size:1.4,ghost:0.5}],false);
+
+/* muon chambers: DT and CSC segments as short sticks along their direction, RPC and GEM hits as points */
+const segB=new Buf(),cS=COL('seg');
+for(const sg of EV.dt.concat(EV.csc)){const c=S(sg[0]),dv=S(sg[1]).normalize();segB.bar(c.clone().addScaledVector(dv,-0.17),c.clone().addScaledVector(dv,0.17),0.05,cS,0)}
+layer('seg','DT + CSC segments','seg',EV.dt.length+EV.csc.length,[{b:segB,kind:'mesh',I:1,ghost:0.5}]);
+layer('rpc','RPC + GEM hits','rpc',EV.rpc.length+EV.gem.length,[{b:ptsBuf(EV.rpc.concat(EV.gem),COL('rpc')),kind:'points',I:0.85,size:3.5,ghost:0.5}]);
+
+/* jets: cones from the primary vertex reaching toward the calorimeter, opening ΔR = 0.4 */
+const jets=EV.jets.slice().sort((a,b)=>b.pt-a.pt);
+const jetB=new Buf(),rimB=new Buf(),cJ=COL('jet'),pv=EV.vertices.length?S(EV.vertices[0].p):new THREE.Vector3();
+const jetTip=[];
+for(const j of jets){
+  const th=2*Math.atan(Math.exp(-j.eta)),st=Math.sin(th),ct=Math.abs(Math.cos(th));
+  const L0=Math.abs(j.eta)<3?Math.min(1.8/st,3.9/ct):11.2/ct, L=L0*(0.55+0.6*Math.min(1,j.pt/200));
+  const r=L*Math.tan(0.4*st),dv=dirEP(j.eta,j.phi);
+  const cg=new THREE.ConeGeometry(r,L,40,1,true);cg.translate(0,-L/2,0);
+  const qn=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0),dv);
+  cg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(qn));cg.translate(pv.x,pv.y,pv.z);
+  const ps=cg.attributes.position,n0=jetB.p.length/3,v=new THREE.Vector3();
+  for(let i=0;i<ps.count;i++)jetB.v(v.fromBufferAttribute(ps,i),cJ,0);
+  for(const ix of cg.index.array)jetB.i.push(n0+ix);
+  const base=pv.clone().addScaledVector(dv,L),u=new THREE.Vector3().crossVectors(dv,Math.abs(dv.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0)).normalize(),w=new THREE.Vector3().crossVectors(dv,u);
+  for(let i=0;i<48;i++){const a0=i/48*2*Math.PI,a1=(i+1)/48*2*Math.PI;
+    rimB.v(base.clone().addScaledVector(u,r*Math.cos(a0)).addScaledVector(w,r*Math.sin(a0)),cJ,0);
+    rimB.v(base.clone().addScaledVector(u,r*Math.cos(a1)).addScaledVector(w,r*Math.sin(a1)),cJ,0)}
+  jetTip.push({j,p:base});
+}
+layer('jet','Jets (anti-kT 0.4)','jet',jets.length,[{b:jetB,kind:'mesh',I:0.07,ghost:1},{b:rimB,kind:'lines',I:0.6,ghost:0.5}]);
+
+/* missing transverse momentum: an arrow in the transverse plane */
+const metB=new Buf();let metTip=null;
+if(EV.met){
+  const dv=S([Math.cos(EV.met.phi),Math.sin(EV.met.phi),0]),L=1.2+Math.min(4,EV.met.pt/15),cMe=COL('met');
+  metB.bar(new THREE.Vector3(),dv.clone().multiplyScalar(L-0.35),0.06,cMe,0);
+  const hg=new THREE.ConeGeometry(0.16,0.35,16,1,false);hg.translate(0,0.175,0);
+  hg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dv)));hg.translate(dv.x*(L-0.35),dv.y*(L-0.35),dv.z*(L-0.35));
+  const ps=hg.attributes.position,n0=metB.p.length/3,v=new THREE.Vector3();
+  for(let i=0;i<ps.count;i++)metB.v(v.fromBufferAttribute(ps,i),cMe,0);
+  for(const ix of hg.index.array)metB.i.push(n0+ix);
+  metTip=dv.clone().multiplyScalar(L);
+}
+layer('met','Missing pT','met',EV.met?1:0,[{b:metB,kind:'mesh',I:0.8,ghost:0.6}]);
+
+/* vertices: the primary vertex and the pileup vertices along the beam line */
+const vtxB=new Buf(),puB=new Buf(),cV=COL('vtx');
+EV.vertices.forEach((v,i)=>(i?puB:vtxB).v(S(v.p),cV,0));
+layer('vtx','Vertices','vtx',EV.vertices.length,[{b:vtxB,kind:'points',I:1,size:7,ghost:0.6},{b:puB,kind:'points',I:0.5,size:3.5,ghost:0.6}]);
+
+/* ---------- HUD labels ---------- */
+const LBL=[];
+const sup=q=>q>0?'⁺':'⁻';
+function label(p,text,colorTok,layerKey){
+  const g=svg('g',{opacity:0});const c=tok(colorTok);
+  const dot=svg('circle',{r:2.5,fill:c},g),line=svg('path',{stroke:c,'stroke-width':1,fill:'none',opacity:.8},g),t=svg('text',{fill:c,'font-size':11.5,'letter-spacing':'.05em'},g);
+  t.textContent=text;LBL.push({p,g,dot,line,t,layerKey});
+}
+EV.muons.forEach(m=>label(S(m.pts[m.pts.length-1]),`μ${sup(m.q)} ${m.pt.toFixed(1)} GeV`,'mu','mu'));
+jetTip.filter(x=>x.j.pt>=50).forEach(x=>label(x.p,`jet ${x.j.pt.toFixed(0)} GeV`,'jet','jet'));
+if(metTip)label(metTip,`missing pT ${EV.met.pt.toFixed(1)} GeV`,'met','met');
+const V3=new THREE.Vector3();
+function drawLabels(){
+  for(const l of LBL){
+    const L=LAYERS.find(x=>x.key===l.layerKey);
+    V3.copy(l.p).project(camera);
+    const vis=L.on&&(l.layerKey!=='jet'||W>=600)&&EVU.uT.value>=l.p.length()&&V3.z<1&&Math.abs(V3.x)<1.02&&Math.abs(V3.y)<1.02;
+    l.g.setAttribute('opacity',vis?1:0);if(!vis)continue;
+    const x=(V3.x+1)/2*W,y=(1-V3.y)/2*H,dx=x>W*0.8?-1:1;
+    l.dot.setAttribute('cx',x);l.dot.setAttribute('cy',y);
+    l.line.setAttribute('d',`M${x} ${y}l${dx*14} -14h${dx*6}`);
+    l.t.setAttribute('x',x+dx*24);l.t.setAttribute('y',y-10);l.t.setAttribute('text-anchor',dx>0?'start':'end');
+  }
+}
+
+/* ---------- state: style, x-ray, views, parts ---------- */
+let style='bp',xray=true,view='cut',styleBeforeRphi='bp';
+const userHideG=new Array(NG).fill(0),viewHideG=new Array(NG).fill(0),viewHideP=new Array(NP).fill(0);
+function applyHide(){for(let i=0;i<NG;i++)U.uHideG.value[i]=Math.max(userHideG[i],viewHideG[i]);for(let i=0;i<NP;i++)U.uHideP.value[i]=viewHideP[i]}
+function applyVis(){for(const L of LAYERS)for(const ob of L.objs)ob.visible=L.on&&(!ob.userData.ghost||(xray&&style!=='glass'))}
+function setStyle(s){
+  style=s;U.uBp.value=s==='live'?0:1;U.uGlass.value=s==='glass'?1:0;
+  meshMat.transparent=s==='glass';meshMat.depthWrite=s!=='glass';meshMat.blending=s==='glass'?THREE.AdditiveBlending:THREE.NormalBlending;meshMat.needsUpdate=true;
+  U.uEdge.value=s==='bp'?0.3:s==='glass'?0.12:0.0;grid.visible=s!=='live';
+  bloom.strength=s==='live'?0.45:0.7;bloom.threshold=s==='live'?0.8:0.7;
+  document.querySelectorAll('[data-style]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.style===s));
+  $('xray').disabled=s==='glass';applyVis();
+}
+const orbit=(az,el,d,tg=[0,0,0])=>{const a=az*Math.PI/180,e=el*Math.PI/180;return [tg[0]+d*Math.cos(e)*Math.sin(a),tg[1]+d*Math.sin(e),tg[2]+d*Math.cos(e)*Math.cos(a)]};
+const VIEWS={
+  cut:{p:orbit(53.5,20.6,30),t:[0.5,0.3,0],fov:35},                           // SketchUpCMS's primary viewpoint, into the cutaway from above the +z end
+  rphi:{p:[38,0,0.0001],t:[0,0,0],fov:30,hideG:['Endcap muon chambers','Forward shielding','Supports','Person (for scale)','Foreground','Forward calorimeter (HF)'],
+        hideP:['YE-1','YE-2','YE-3','YE+1','YE+2','YE+3','HF-','HF+','static-','static+','static','inner_e-','inner_e+']},   // from the +z end along the beam: x right, y up
+  rhoz:{p:[0,0,44],t:[0,0,0],fov:34},                                            // from CMS -x, the cutaway side: z right, y up
+};
+let tween=null;
+function setView(k,instant){
+  const prev=view;view=k;const V=VIEWS[k];
+  viewHideG.fill(0);viewHideP.fill(0);(V.hideG||[]).forEach(n=>viewHideG[GI[n]]=1);(V.hideP||[]).forEach(n=>viewHideP[PI[n]]=1);applyHide();
+  if(k==='rphi'&&prev!=='rphi'){styleBeforeRphi=style;setStyle('glass')}else if(prev==='rphi'&&k!=='rphi')setStyle(styleBeforeRphi);
+  const sc=camera.aspect<1.1?1.7:1;
+  const p1=new THREE.Vector3(...V.p).sub(new THREE.Vector3(...V.t)).multiplyScalar(sc).add(new THREE.Vector3(...V.t));
+  const T={p0:camera.position.clone(),p1,t0:controls.target.clone(),t1:new THREE.Vector3(...V.t),f0:camera.fov,f1:V.fov,s:performance.now()};
+  if(instant||reduce){camera.position.copy(T.p1);controls.target.copy(T.t1);camera.fov=T.f1;camera.updateProjectionMatrix();tween=null}else tween=T;
+  document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===k));
+}
+document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
+document.querySelectorAll('[data-style]').forEach(b=>b.onclick=()=>{setStyle(b.dataset.style);if(view==='rphi')styleBeforeRphi=b.dataset.style});
+$('xray').onclick=()=>{xray=!xray;$('xray').setAttribute('aria-pressed',xray);applyVis()};
+controls.addEventListener('start',()=>{tween=null});
+
+/* replay: the event spreads out from the collision point, inner tracker first */
+let replayT0=null;
+function replay(){if(reduce){EVU.uT.value=1e3;EVU.uFlash.value=0;return}replayT0=performance.now();EVU.uT.value=0;}
+$('replay').onclick=replay;
+
+/* ---------- panels ---------- */
+const layersEl=$('layers');
+function counts(){for(const L of LAYERS)L.nEl.textContent=typeof L.count==='function'?L.count():L.count}
+for(const L of LAYERS){
+  const lab=document.createElement('label');lab.className='lay';
+  lab.innerHTML=`<input type="checkbox" id="L-${L.key}" ${L.on?'checked':''}><span class="sw" style="background:var(--${L.colorTok})"></span><span>${L.label}</span><span class="n"></span>`;
+  L.nEl=lab.querySelector('.n');lab.querySelector('input').onchange=e=>{L.on=e.target.checked;applyVis()};layersEl.appendChild(lab);
+}
+const PT=[0.5,1,2,3,5,10,20],EC=[0.3,0.5,1,2,5,10];
+const fmtG=x=>`${x} GeV`;
+$('ptcut').oninput=e=>{KPT.value=PT[+e.target.value];$('ptv').textContent=fmtG(KPT.value);counts()};
+$('ecut').oninput=e=>{KE.value=EC[+e.target.value];$('ecv').textContent=fmtG(KE.value);counts()};
+KPT.value=PT[+$('ptcut').value];KE.value=EC[+$('ecut').value];$('ptv').textContent=fmtG(KPT.value);$('ecv').textContent=fmtG(KE.value);counts();
+const DET=[
+  {label:'Tracker',groups:['Pixel tracker','Silicon strip tracker']},
+  {label:'ECAL',groups:['ECAL']},
+  {label:'HCAL',groups:['HCAL']},
+  {label:'Solenoid',groups:['Solenoid']},
+  {label:'Muon chambers',groups:['Barrel muon chambers','Endcap muon chambers']},
+  {label:'Return yoke',groups:['Return yoke']},
+  {label:'Forward region',groups:['Forward calorimeter (HF)','Forward shielding','Beam line']},
+  {label:'Supports + scale',groups:['Supports','Person (for scale)','Foreground']},
+];
+DET.forEach((d,i)=>{
+  const lab=document.createElement('label');lab.className='lay';
+  lab.innerHTML=`<input type="checkbox" id="D-${i}" checked><span class="sw" style="background:${META.groups[GI[d.groups[0]]].hex};opacity:.75"></span><span>${d.label}</span><span class="n"></span>`;
+  lab.querySelector('input').onchange=e=>{d.groups.forEach(n=>userHideG[GI[n]]=e.target.checked?0:1);applyHide()};$('parts').appendChild(lab);
+});
+
+/* objects table and the physics note */
+const tb=$('objs').querySelector('tbody');
+const row=(sw,name,pt,eta,phi)=>{const tr=document.createElement('tr');
+  tr.innerHTML=`<td><span class="sw" style="background:var(--${sw})"></span>${name}</td><td>${pt.toFixed(1)}</td><td>${eta==null?'':eta.toFixed(2)}</td><td>${phi.toFixed(2)}</td>`;tb.appendChild(tr)};
+const mus=EV.muons.slice().sort((a,b)=>b.pt-a.pt);
+mus.forEach(m=>row('mu',`muon μ${sup(m.q)}`,m.pt,m.eta,m.phi));
+EV.electrons.slice().sort((a,b)=>b.pt-a.pt).forEach(e=>row('ecal',`electron e${sup(e.q)}`,e.pt,e.eta,e.phi));
+jets.slice(0,6).forEach(j=>row('jet','jet',j.pt,j.eta,j.phi));
+if(EV.met)row('met','missing pT',EV.met.pt,null,EV.met.phi);
+const p4=(o,m)=>{const th=2*Math.atan(Math.exp(-o.eta)),p=o.pt/Math.sin(th);return [Math.hypot(p,m),o.pt*Math.cos(o.phi),o.pt*Math.sin(o.phi),p*Math.cos(th)]};
+const mass=(a,b)=>{const A=p4(a,0.10566),B=p4(b,0.10566),s=A.map((x,i)=>x+B[i]);return Math.sqrt(Math.max(0,s[0]**2-s[1]**2-s[2]**2-s[3]**2))};
+const inJet=m=>jets.find(j=>Math.hypot(m.eta-j.eta,dphi(m.phi,j.phi))<0.4);
+const os=[];for(let i=0;i<mus.length;i++)for(let j=i+1;j<mus.length;j++)if(mus[i].q*mus[j].q<0)os.push(`m(μ${sup(mus[i].q)}<sub>${i+1}</sub>μ${sup(mus[j].q)}<sub>${j+1}</sub>) = ${mass(mus[i],mus[j]).toFixed(1)} GeV`);
+const jm=mus.filter(inJet);
+$('phys').innerHTML=`<b>${mus.length} muons</b> (${mus.map(m=>m.pt.toFixed(1)).join(', ')} GeV) fired <b>HLT_TripleMu_12_10_5</b>. `+
+  (os.length?`Opposite-sign pairs: ${os.join(', ')}. `:'')+
+  (jm.length?`${jm.length===mus.length?'All':jm.length===1?'One':jm.length===2?'Two':jm.length} of them sit inside a jet (ΔR < 0.4), as muons from heavy-flavour decays do. `:'')+
+  `The leading μ⁺ heads straight into the cutaway. ${EV.vertices.length} reconstructed vertices; ${EV.tracks.filter(t=>t.pt>=1).length} tracks above 1 GeV.`;
+const keyHLT=/^HLT_TripleMu/;
+$('hlt').innerHTML=EV.hlt.map(h=>`<span class="chip${keyHLT.test(h)?' key':''}">${h}</span>`).join('');
+
+/* event stamp and provenance */
+$('stamp').innerHTML=`<b>CMS Experiment at the LHC, CERN</b>Data recorded: ${EV.time}<br><span>Run / Event / LS:</span> ${EV.run} / ${EV.event} / ${EV.lumi}<br><span>Bunch crossing</span> ${EV.bx} <span>· √s = 13.6 TeV</span>`;
+const src=EV.source;
+const prov=[
+  ['Dataset',`<code>${src.dataset}</code><br>CMS Open Data, <a href="https://opendata.cern.ch/search?q=EphemeralHLTPhysics0%20Run2024F%20RAW" target="_blank" rel="noopener">opendata.cern.ch</a>. L1-accepted collisions recorded unfiltered by the HLT; the HLT decisions are stored with each event.`],
+  ['Raw file',`<code>${src.file}</code>`],
+  ['Processing',`<code>${src.cmssw}</code>, <code>cmsDriver.py -s ${src.steps} --era ${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
+  ['Thresholds','ECAL hits ≥ 0.3 GeV, HCAL ≥ 0.8 GeV, HF ≥ 3 GeV. Tracks: high-purity <code>generalTracks</code> with p<sub>T</sub> ≥ 0.5 GeV. Jets: <code>ak4PFJetsCHS</code> p<sub>T</sub> ≥ 30 GeV. Tracker hits are pixel and strip cluster barycentres.'],
+  ['Drawing','Tracks are helices in 3.8 T from the reference point to the outermost hit. Muons follow their tracker helix to the coil, then the track extrapolation through each crossed muon chamber. Calorimeter bars grow from each cell’s front face, 6 cm per GeV in ECAL and 5 cm per GeV in HCAL.'],
+  ['Detector',`3D model from <a href="https://cds.cern.ch/record/2677903" target="_blank" rel="noopener">CMS-OUTREACH-2019-002</a>, as packed for <a href="https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn" target="_blank" rel="noopener">SketchUpCMS in Claude</a>. CMS (x, y, z) maps to model (z, y, −x) in metres, with the beam on the model axis.`],
+];
+$('prov').innerHTML=prov.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+/* ---------- main loop ---------- */
+setStyle('bp');applyHide();setView('cut',true);applyVis();
+statusEl.hidden=true;
+const light=new THREE.Vector3(-0.45,0.8,0.55).normalize();
+(function loop(now){
+  if(tween){const u=ss(0,1,(now-tween.s)/1100);
+    camera.position.lerpVectors(tween.p0,tween.p1,u);controls.target.lerpVectors(tween.t0,tween.t1,u);camera.fov=tween.f0+(tween.f1-tween.f0)*u;camera.updateProjectionMatrix();
+    if(u>=1)tween=null}
+  controls.update();camera.updateMatrixWorld();
+  if(replayT0!==null){const s=(now-replayT0)/1000,u=clamp((s-0.15)/3.2,0,1);
+    EVU.uT.value=0.02+15*u*u;EVU.uFlash.value=1-ss(3.3,4.2,s);
+    if(s>4.2){replayT0=null;EVU.uT.value=1e3;EVU.uFlash.value=0}}
+  U.uL.value.copy(light).transformDirection(camera.matrixWorldInverse);
+  composer.render();drawLabels();
+  requestAnimationFrame(loop);
+})(performance.now());
+replay();
+})();
+</script>
+</body>
+</html>

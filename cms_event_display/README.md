@@ -1,0 +1,59 @@
+# CMS Event Display
+
+One 2024 CMS Open Data collision, reconstructed from the RAW data tier, drawn inside the SketchUpCMS 3D detector model.
+
+**View:** https://sgnoohc.github.io/monet/cms_event_display/
+
+- **Event:** run 383631, lumi 415, event 994851190, recorded 2024-07-25. It fired `HLT_TripleMu_12_10_5`: three muons (μ⁺ 30.0, μ⁺ 16.1, μ⁻ 6.2 GeV), the two μ⁺ inside jets, 27 vertices.
+- **Views:** 3D cutaway, transverse (r-φ), longitudinal (r-z). The detector can be drawn as Blueprint, Color or Glass.
+- **X-ray hits** draws hits hidden behind detector material at reduced brightness. **Replay collision** plays the event outward from the interaction point.
+- **Event layers** turn each collection on or off. Sliders set the track pT and calorimeter energy thresholds. Strip clusters and HF hits start off because they wash out the tracks.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `index.html` | The page (three.js r128 from CDN) |
+| `event.json` | The event, as written by `RawVizDumper`, plus the event time and source fields |
+| `cms_parts.js` | Detector geometry: the SketchUpCMS model ([CMS-OUTREACH-2019-002](https://cds.cern.ch/record/2677903)), packed as in [SketchUpCMS in Claude](https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn) |
+| `tools/RawViz/EventDump/plugins/` | CMSSW EDAnalyzer that writes one JSON per event |
+| `tools/dump_cfg.py` | Runs only the dumper on a RECO file |
+| `tools/scan_hlt.py` | FWLite scan of `TriggerResults` to pick events |
+
+All lengths in `event.json` are in metres, in CMS global coordinates. The page maps CMS (x, y, z) to model (z, y, −x).
+
+## Making the event
+
+CMSSW_14_0_25 (`el9_amd64_gcc12`), with `tools/RawViz` copied to `$CMSSW_BASE/src/` and built with `scram b`.
+
+1. **Pick events.** The source file is `/EphemeralHLTPhysics0/Run2024F-v1/RAW`:
+
+       root://eospublic.cern.ch//eos/opendata/cms/Run2024F/EphemeralHLTPhysics0/RAW/v1/000/383/631/00000/3d004fa8-9386-49c5-b043-99dff29500d8.root
+
+   Scan its HLT decisions with:
+
+       python3 tools/scan_hlt.py <file>
+
+2. **Copy the chosen events out of RAW:**
+
+       edmCopyPickMerge inputFiles=<file> eventsToProcess=383631:994851190,... outputFile=raw_2024F_selected.root
+
+3. **Reconstruct and dump.** Generate the RECO config, then append the `RawVizDumper` EndPath from `tools/dump_cfg.py` to it:
+
+       cmsDriver.py reco -s RAW2DIGI,L1Reco,RECO --data --scenario pp --era Run3_2024 \
+           --conditions auto:run3_data_prompt --eventcontent RECO --datatier RECO \
+           --filein file:raw_2024F_selected.root --fileout file:reco.root -n -1 --no_exec
+
+   `auto:run3_data_prompt` resolves to `140X_dataRun3_Prompt_frozen_v4` and needs Frontier access.
+
+   To re-dump from an existing `reco.root`, run `cmsRun tools/dump_cfg.py` instead.
+
+The dumper thresholds are:
+
+- **Tracks:** highPurity, pT ≥ 0.5 GeV.
+- **Calorimeter hits:** ECAL ≥ 0.3 GeV, HCAL ≥ 0.8 GeV, HF ≥ 3 GeV.
+- **Objects:** electrons pT > 10 GeV, photons pT > 15 GeV, AK4 CHS jets pT > 30 GeV.
+
+Tracks are drawn as helices in 3.8 T. Muon paths follow the inner-track helix to the coil, then the track extrapolation through each matched muon chamber, because DT hits measure only one coordinate. Between the coil and the first muon station, the drawn path is a smooth interpolation, not a measured track.
+
+The SketchUpCMS model is approximate (2019 geometry), so reconstructed hit positions may not line up exactly with its surfaces.
