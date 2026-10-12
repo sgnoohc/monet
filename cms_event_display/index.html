@@ -12,7 +12,7 @@
    One committed dark look carried over from SketchUpCMS; event colours follow subsystem conventions so the legend reads like a CMS display. */
 :root{color-scheme:dark;
   --bg:#04070B; --panel:#07101A; --ice:#DCEBFA; --ice-dim:#8FA9C4; --steel:#1B3A57; --rule:#162534; --edge:#3A5673;
-  --trk:#FFB648; --mu:#FF3D57; --ecal:#FF5C9A; --hcal:#A98BFF; --pix:#D4FF4F; --strip:#E9D7A8; --seg:#FF8A3D; --rpc:#3DF2C2; --jet:#FFE45C; --met:#FF4FF0; --vtx:#FFFFFF;
+  --trk:#FFB648; --mu:#FF3D57; --ecal:#FF5C9A; --hcal:#A98BFF; --pix:#D4FF4F; --strip:#E9D7A8; --seg:#FF8A3D; --rpc:#3DF2C2; --jet:#FFE45C; --met:#FF4FF0; --hf:#8770CC; --vtx:#FFFFFF;
   --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
   --wide:"Syncopate","Arial Black",sans-serif;
   --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;}
@@ -45,8 +45,9 @@ body{background:var(--bg);color:var(--ice);font-family:var(--body);padding-inlin
 .btn:hover{border-color:var(--ice)}
 .btn:focus-visible,input:focus-visible{outline:2px solid var(--ice);outline-offset:2px}
 .btn.go{border-color:var(--trk);color:var(--trk)}
-.panels{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,.9fr);gap:12px}
-@media (max-width:1060px){.panels{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.prov{grid-column:1/-1}}
+.panels{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.85fr) minmax(0,1fr);gap:12px}
+.prov{grid-column:1/-1}
+@media (max-width:1060px){.panels{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.objs{grid-column:1/-1}}
 @media (max-width:700px){.panels{grid-template-columns:minmax(0,1fr)}.frame{aspect-ratio:4/5;max-height:none}}
 .card{background:var(--panel);border:1px solid var(--rule);padding:14px 14px 12px;min-width:0}
 .card h2{margin:0 0 10px;font:700 10px/1.4 var(--wide);letter-spacing:.3em;text-transform:uppercase}
@@ -74,6 +75,17 @@ dl{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 12px;f
 dt{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ice-dim);padding-top:2px}
 dd{margin:0;overflow-wrap:anywhere}
 dd code{font:400 11px var(--mono)}
+.fld{display:grid;gap:4px;font:400 12px var(--body)}
+select{font:400 13px var(--body);background:var(--bg);color:var(--ice);border:1px solid var(--edge);padding:6px 8px;min-height:34px;width:100%}
+.srow{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;margin-top:12px;font:400 12px var(--body)}
+.btn.sm{padding:5px 10px;min-height:30px;font-size:11px}
+.colrow{display:flex;align-items:center;gap:10px;margin-top:12px;font:400 12px var(--body)}
+.colrow label{flex:1}
+.colrow output{font:500 12px var(--mono)}
+input[type=color]{width:44px;height:30px;padding:0 2px;border:1px solid var(--edge);background:transparent;cursor:pointer}
+.acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.prov dl{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr);gap:9px 14px}
+@media (max-width:1060px){.prov dl{grid-template-columns:auto minmax(0,1fr)}}
 a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
 @media (max-width:520px){.layers{grid-template-columns:minmax(0,1fr)}.stamp{font-size:9.5px}.hint{display:none}}
 </style>
@@ -107,6 +119,7 @@ a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
       <button class="btn" data-style="bp" aria-pressed="true">Blueprint</button>
       <button class="btn" data-style="live" aria-pressed="false">Color</button>
       <button class="btn" data-style="glass" aria-pressed="false">Glass</button>
+      <button class="btn" data-style="off" aria-pressed="false">Off</button>
     </div>
     <div class="grp"><button class="btn" id="xray" aria-pressed="true" title="Show hits hidden behind the detector at reduced brightness">X-ray hits</button></div>
     <div class="grp"><button class="btn go" id="replay">Replay collision</button></div>
@@ -122,6 +135,17 @@ a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
       <div class="layers" id="parts"></div>
     </div>
     <div class="card">
+      <h2>Layer style</h2>
+      <div class="fld"><label for="sty-l">Layer</label><select id="sty-l"></select></div>
+      <div class="srow" id="sty-shape-row"><span>Shape</span><div class="grp" role="group" aria-label="Shape"><button class="btn sm" data-shape="box" aria-pressed="false">Box</button><button class="btn sm" data-shape="circle" aria-pressed="false">Circle</button></div></div>
+      <div class="sl" id="sty-size-row"><label for="sty-size">Size</label><output id="sty-size-v" for="sty-size"></output><input type="range" id="sty-size"></div>
+      <div class="sl" id="sty-len-row"><label for="sty-len">Length scale</label><output id="sty-len-v" for="sty-len"></output><input type="range" id="sty-len"></div>
+      <div class="colrow"><label for="sty-col">Color</label><output id="sty-col-v" for="sty-col"></output><input type="color" id="sty-col"></div>
+      <div class="sl"><label for="sty-a">Opacity</label><output id="sty-a-v" for="sty-a"></output><input type="range" id="sty-a" min="0" max="1" step="0.01"></div>
+      <div class="sl"><label for="sty-g">Glow</label><output id="sty-g-v" for="sty-g"></output><input type="range" id="sty-g" min="0" max="2" step="0.05"></div>
+      <div class="acts"><button class="btn sm" id="sty-reset">Reset layer</button><button class="btn sm" id="sty-reset-all">Reset all layers</button></div>
+    </div>
+    <div class="card objs">
       <h2>Reconstructed objects</h2>
       <div class="tw"><table id="objs"><thead><tr><th>Object</th><th>p<sub>T</sub> GeV</th><th>η</th><th>φ</th></tr></thead><tbody></tbody></table></div>
       <p class="note" id="phys"></p>
@@ -160,7 +184,7 @@ const NS='http://www.w3.org/2000/svg';
 const svg=(tag,attrs,parent)=>{const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);(parent||hud).appendChild(e);return e};
 const dphi=(a,b)=>{let d=a-b;while(d>Math.PI)d-=2*Math.PI;while(d<-Math.PI)d+=2*Math.PI;return d};
 
-/* ---------- renderer ---------- */
+/* ---------- renderer: the scene, plus a glow pass that only the event layers write into ---------- */
 let renderer;
 try{renderer=new THREE.WebGLRenderer({canvas,antialias:true})}catch(e){statusEl.textContent='THIS VIEW NEEDS WEBGL. TRY A BROWSER WITH HARDWARE ACCELERATION ON.';return}
 renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
@@ -169,16 +193,23 @@ const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(35,16/9,0.05,3000);
 const controls=new THREE.OrbitControls(camera,canvas);
 controls.enableDamping=true;controls.dampingFactor=0.08;controls.minDistance=0.8;controls.maxDistance=140;controls.rotateSpeed=0.7;
-const composer=new THREE.EffectComposer(renderer);
-composer.addPass(new THREE.RenderPass(scene,camera));
-const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(512,256),0.8,0.45,0.62);
-composer.addPass(bloom);
 const res=new THREE.Vector2();let W=1,H=1;
+const GP={value:0},PR={value:renderer.getPixelRatio()},RES={value:res};   // GP is 1 while the glow pass renders
+const renderPass=new THREE.RenderPass(scene,camera);
+const glowComposer=new THREE.EffectComposer(renderer);glowComposer.renderToScreen=false;
+glowComposer.addPass(renderPass);
+const bloom=new THREE.UnrealBloomPass(new THREE.Vector2(512,256),1.0,0.5,0.0);
+glowComposer.addPass(bloom);
+const composer=new THREE.EffectComposer(renderer);
+composer.addPass(renderPass);
+const mixPass=new THREE.ShaderPass(new THREE.ShaderMaterial({uniforms:{baseTexture:{value:null},glowTexture:{value:glowComposer.renderTarget2.texture}},
+  vertexShader:`varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+  fragmentShader:`uniform sampler2D baseTexture; uniform sampler2D glowTexture; varying vec2 vUv; void main(){gl_FragColor=texture2D(baseTexture,vUv)+texture2D(glowTexture,vUv);}`}),'baseTexture');
+mixPass.needsSwap=true;composer.addPass(mixPass);
 function resize(){const r=frame.getBoundingClientRect();W=Math.max(1,r.width);H=Math.max(1,r.height);
-  renderer.setSize(W,H,false);composer.setSize(W,H);camera.aspect=W/H;camera.updateProjectionMatrix();
+  renderer.setSize(W,H,false);composer.setSize(W,H);glowComposer.setSize(W,H);camera.aspect=W/H;camera.updateProjectionMatrix();
   renderer.getDrawingBufferSize(res);hud.setAttribute('viewBox',`0 0 ${W} ${H}`);}
 new ResizeObserver(resize).observe(frame);resize();
-
 /* ---------- load the detector mesh and the event ---------- */
 const evP=fetch('event.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json()});
 let buf;
@@ -209,15 +240,16 @@ const egeo=new THREE.BufferGeometry();egeo.setAttribute('position',posAttr);egeo
 const NP=META.parts.length,NG=META.groups.length;
 const GI=Object.fromEntries(META.groups.map((g,i)=>[g.name,i])),PI=Object.fromEntries(META.parts.map((n,i)=>[n,i]));
 const U={uGC:{value:META.groups.map(g=>new THREE.Color(g.hex))},uL:{value:new THREE.Vector3(0,1,0)},uBp:{value:1},uGlass:{value:0},uEdge:{value:0.42},
-  uHideG:{value:new Array(NG).fill(0)},uHideP:{value:new Array(NP).fill(0)},uRes:{value:res}};
+  uHideG:{value:new Array(NG).fill(0)},uHideP:{value:new Array(NP).fill(0)},uRes:RES,uGP:GP,uOff:{value:0}};
 const VS_DET=`attribute float p; attribute float g; uniform float uHideG[${NG}]; uniform float uHideP[${NP}]; uniform vec3 uGC[${NG}];
   varying vec3 vView; varying vec3 vCol;
   void main(){ vCol=uGC[int(g+0.5)]; vec4 mv=modelViewMatrix*vec4(position,1.0); vView=mv.xyz;
     float hid=max(uHideG[int(g+0.5)],uHideP[int(p+0.5)]);
     gl_Position=hid>0.5?vec4(2.0,2.0,2.0,1.0):projectionMatrix*mv; }`;
 const meshMat=new THREE.ShaderMaterial({uniforms:U,vertexShader:VS_DET,
-  fragmentShader:`uniform float uBp; uniform float uGlass; uniform vec3 uL; varying vec3 vView; varying vec3 vCol;
+  fragmentShader:`uniform float uBp; uniform float uGlass; uniform float uGP; uniform vec3 uL; varying vec3 vView; varying vec3 vCol;
     void main(){
+      if(uGP>0.5){gl_FragColor=vec4(0.0,0.0,0.0,1.0);return;}     // glow pass: the detector only hides what is behind it
       vec3 N=normalize(cross(dFdx(vView),dFdy(vView))); vec3 V=normalize(-vView);
       float lam=max(dot(N,normalize(uL)),0.0); float ndv=clamp(abs(dot(N,V)),0.0,1.0);
       vec3 live=vCol*(0.30+0.70*lam)+vec3(0.10)*pow(max(dot(reflect(-normalize(uL),N),V),0.0),24.0);
@@ -237,8 +269,9 @@ const edges=new THREE.LineSegments(egeo,edgeMat);edges.frustumCulled=false;scene
 /* background gradient at the far plane */
 const bgMat=new THREE.ShaderMaterial({uniforms:U,depthWrite:false,depthTest:false,
   vertexShader:`void main(){gl_Position=vec4(position.xy,0.9999,1.0);}`,
-  fragmentShader:`uniform float uBp; uniform vec2 uRes;
-    void main(){vec2 uv=gl_FragCoord.xy/uRes; vec3 live=mix(vec3(0.10,0.11,0.12),vec3(0.30,0.33,0.36),pow(uv.y,1.2));
+  fragmentShader:`uniform float uBp; uniform float uOff; uniform vec2 uRes;
+    void main(){if(uOff>0.5){gl_FragColor=vec4(0.0,0.0,0.0,1.0);return;}
+      vec2 uv=gl_FragCoord.xy/uRes; vec3 live=mix(vec3(0.10,0.11,0.12),vec3(0.30,0.33,0.36),pow(uv.y,1.2));
       float d=length((uv-vec2(0.5,0.58))*vec2(1.7,1.0)); vec3 bp=mix(vec3(0.08,0.17,0.27),vec3(0.008,0.026,0.05),smoothstep(0.0,1.05,d));
       gl_FragColor=vec4(mix(live,bp,uBp),1.0);}`});
 const bg=new THREE.Mesh(new THREE.PlaneGeometry(2,2),bgMat);bg.frustumCulled=false;bg.renderOrder=-10;scene.add(bg);
@@ -255,161 +288,253 @@ scene.add(grid);
 const S=p=>new THREE.Vector3(p[2],p[1],-p[0]);
 const dirEP=(eta,phi)=>{const th=2*Math.atan(Math.exp(-eta));return S([Math.sin(th)*Math.cos(phi),Math.sin(th)*Math.sin(phi),Math.cos(th)])};
 const EVU={uT:{value:1e3},uFlash:{value:0}};      // reveal radius in metres, and the glow on the expanding front
-const VS_EV=`attribute vec3 ec; attribute float d; attribute float k; uniform float uSize;
-  varying vec3 vC; varying float vD; varying float vK;
-  void main(){ vC=ec; vD=d; vK=k; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); gl_PointSize=uSize; }`;
-const FS_EV=`uniform float uT; uniform float uFlash; uniform float uKmin; uniform float uI;
-  varying vec3 vC; varying float vD; varying float vK;
+/* One shader for every event layer. Size, length and width are uniforms so the style controls act without rebuilding;
+   only a shape change rebuilds geometry. BAR: calorimeter towers and muon segments, TUBE: muons, CONE: jets scaled about the vertex,
+   ARROW: missing pT stretched along its direction, WIDE: lines drawn as screen-space quads so they can be wider than 1 px. */
+const VS_EV=`attribute float w; attribute float k;
+#ifdef BAR
+  attribute vec3 ax; attribute vec2 off; attribute float e; attribute float s;
+  uniform float uW; uniform float uLen; uniform float uLmin; uniform float uCap; uniform float uCtr;
+#endif
+#ifdef TUBE
+  attribute vec3 nrm; uniform float uW;
+#endif
+#ifdef CONE
+  uniform vec3 uO; uniform float uLS;
+#endif
+#ifdef ARROW
+  uniform vec3 uDir; uniform float uLS; uniform float uSZ;
+#endif
+#ifdef WIDE
+  attribute vec3 oth; attribute float side; uniform vec2 uRes; varying float vSide;
+#endif
+  uniform float uSize; uniform float uPR;
+  varying float vW; varying float vK; varying float vD; varying vec3 vView;
+  vec3 xf(vec3 p){
+#ifdef CONE
+    p=uO+(p-uO)*uLS;
+#endif
+#ifdef ARROW
+    float l=dot(p,uDir); p=uDir*l*uLS+(p-uDir*l)*uSZ;
+#endif
+    return p;
+  }
+  void main(){
+    vec3 p=position;
+#ifdef BAR
+    vec3 t=abs(ax.y)<0.9?vec3(0.0,1.0,0.0):vec3(1.0,0.0,0.0);
+    vec3 u=normalize(cross(ax,t)),v=cross(ax,u);
+    p+=ax*clamp(s*uLen,uLmin,uCap)*(e-0.5*uCtr)+(u*off.x+v*off.y)*(0.5*uW);
+#endif
+#ifdef TUBE
+    p+=nrm*uW;
+#endif
+    p=xf(p);
+    vW=w; vK=k; vD=length(p);
+    vec4 mv=modelViewMatrix*vec4(p,1.0); vView=mv.xyz;
+    gl_Position=projectionMatrix*mv;
+#ifdef WIDE
+    vec4 q=projectionMatrix*modelViewMatrix*vec4(xf(oth),1.0);
+    vec2 dir=vec2(1.0,0.0);
+    if(gl_Position.w>0.0&&q.w>0.0){vec2 d2=(q.xy/q.w-gl_Position.xy/gl_Position.w)*uRes; if(dot(d2,d2)>1e-8) dir=normalize(d2);}
+    gl_Position.xy+=vec2(-dir.y,dir.x)*side*(uSize*uPR+1.0)/uRes*gl_Position.w;
+    vSide=side;
+#endif
+    gl_PointSize=uSize*uPR;
+  }`;
+const FS_EV=`uniform float uT; uniform float uFlash; uniform float uKmin; uniform float uA; uniform float uGlow; uniform float uGP;
+  uniform vec3 uCol; uniform vec3 uL; uniform float uSize; uniform float uPR;
+  varying float vW; varying float vK; varying float vD; varying vec3 vView;
+#ifdef WIDE
+  varying float vSide;
+#endif
   void main(){
     if(vK<uKmin||vD>uT) discard;
-  #ifdef ROUND
-    vec2 c=gl_PointCoord-0.5; if(dot(c,c)>0.25) discard;
-  #endif
+    float a=uA;
+#ifdef ROUND
+    float r=length(gl_PointCoord-0.5)*2.0; if(r>1.0) discard; a*=clamp((1.0-r)*uSize*uPR*0.5+0.25,0.0,1.0);
+#endif
+#ifdef WIDE
+    a*=clamp((1.0-abs(vSide))*(uSize*uPR+1.0)*0.5,0.0,1.0);
+#endif
+    vec3 c=uCol*vW;
+#ifdef SHADE
+    vec3 N=normalize(cross(dFdx(vView),dFdy(vView)));
+    c*=0.5+0.35*abs(dot(N,uL))+0.3*abs(dot(N,normalize(-vView)));
+#endif
     float lead=exp(-max(uT-vD,0.0)*1.6)*uFlash;
-    gl_FragColor=vec4(vC*uI*(1.0+2.5*lead),1.0);
+    gl_FragColor=uGP>0.5?vec4(c*uGlow*(1.0+3.0*lead),a):vec4(c*(1.0+1.2*lead),a);
   }`;
 const KNONE={value:-1e9},KPT={value:1},KE={value:0.5};
-function evMat(kmin,I,points,size,depthTest){
-  return new THREE.ShaderMaterial({uniforms:{uT:EVU.uT,uFlash:EVU.uFlash,uKmin:kmin,uI:{value:I},uSize:{value:(size||2)*renderer.getPixelRatio()}},
-    vertexShader:VS_EV,fragmentShader:(points?'#define ROUND\n':'')+FS_EV,transparent:true,depthWrite:false,depthTest,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});
+function evMat(defs,uni,depthTest){
+  return new THREE.ShaderMaterial({defines:defs,uniforms:Object.assign({uT:EVU.uT,uFlash:EVU.uFlash,uGP:GP,uPR:PR,uRes:RES,uL:U.uL},uni),
+    vertexShader:VS_EV,fragmentShader:FS_EV,transparent:true,depthWrite:false,depthTest,blending:THREE.NormalBlending,side:THREE.DoubleSide,extensions:{derivatives:true}});
 }
+const SPEC={pt:{p:3,w:1,k:1},wide:{p:3,w:1,k:1,oth:3,side:1},bar:{p:3,w:1,k:1,ax:3,off:2,e:1,s:1},tube:{p:3,w:1,k:1,nrm:3}};
+const RING={box:[[-1,-1],[1,-1],[1,1],[-1,1]],circle:Array.from({length:12},(_,i)=>[Math.cos(i*Math.PI/6),Math.sin(i*Math.PI/6)])};
 class Buf{
-  constructor(){this.p=[];this.c=[];this.d=[];this.k=[];this.i=[]}
-  v(v,col,k){this.p.push(v.x,v.y,v.z);this.c.push(col.r,col.g,col.b);this.d.push(v.length());this.k.push(k);return this.p.length/3-1}
-  // box from a to b with a square cross-section of side w
-  bar(a,b,w,col,k){
-    const ax=b.clone().sub(a),L=ax.length();if(L<1e-6)return;ax.divideScalar(L);
-    const t=Math.abs(ax.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0);
-    const u=new THREE.Vector3().crossVectors(ax,t).normalize().multiplyScalar(w/2),v=new THREE.Vector3().crossVectors(ax,u).normalize().multiplyScalar(w/2);
-    const n=this.p.length/3;
-    for(const e of [a,b])for(const [su,sv] of [[-1,-1],[1,-1],[1,1],[-1,1]])this.v(e.clone().addScaledVector(u,su).addScaledVector(v,sv),col,k);
-    for(const f of [[0,1,2,3],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]])this.i.push(n+f[0],n+f[1],n+f[2],n+f[0],n+f[2],n+f[3]);
-  }
-  geo(){const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(this.p,3));g.setAttribute('ec',new THREE.Float32BufferAttribute(this.c,3));
-    g.setAttribute('d',new THREE.Float32BufferAttribute(this.d,1));g.setAttribute('k',new THREE.Float32BufferAttribute(this.k,1));if(this.i.length)g.setIndex(this.i);return g}
+  constructor(spec){this.spec=spec;this.a={};for(const k in spec)this.a[k]=[];this.i=[];this.n=0}
+  v(o){for(const k in this.spec){const x=o[k],A=this.a[k];if(this.spec[k]===1)A.push(x);else if(x.isVector3)A.push(x.x,x.y,x.z);else for(const y of x)A.push(y)}return this.n++}
+  // a segment from A to B as a quad that the vertex shader widens on screen
+  seg(A,B,w,k){const n=this.n;this.v({p:A,oth:B,side:1,w,k});this.v({p:A,oth:B,side:-1,w,k});this.v({p:B,oth:A,side:-1,w,k});this.v({p:B,oth:A,side:1,w,k});this.i.push(n,n+1,n+2,n+1,n+3,n+2)}
+  // a prism on anchor a along unit axis ax, square or round in section; the shader sets its width, and its length from s
+  bar(a,ax,s,w,k,shape){const R=RING[shape]||RING.box,m=R.length,n=this.n;
+    for(const e of [0,1])for(const off of R)this.v({p:a,ax,off,e,s,w,k});
+    for(let j=0;j<m;j++){const j1=(j+1)%m;this.i.push(n+j,n+j1,n+m+j1,n+j,n+m+j1,n+m+j)}
+    for(const c of [0,m])for(let j=1;j+1<m;j++)this.i.push(n+c,n+c+j,n+c+j+1)}
+  // an indexed three.js geometry, copied in as it is
+  mesh(g,w=1,k=0){const ps=g.attributes.position,n0=this.n,v=new THREE.Vector3();for(let i=0;i<ps.count;i++)this.v({p:v.fromBufferAttribute(ps,i),w,k});for(const ix of g.index.array)this.i.push(n0+ix);g.dispose()}
+  geo(){const g=new THREE.BufferGeometry();for(const k in this.spec)g.setAttribute(k==='p'?'position':k,new THREE.Float32BufferAttribute(this.a[k],this.spec[k]));if(this.i.length)g.setIndex(this.i);return g}
 }
-const LAYERS=[];
-function layer(key,label,colorTok,count,parts,on=true){
-  // parts: [{b:Buf, kind:'lines'|'points'|'mesh', kmin, I, size, ghost}]
-  const objs=[];
-  for(const pt of parts){
-    if(!pt.b.p.length)continue;
+
+/* ---------- layers and their styles ---------- */
+let style='bp',xray=true,view='cut',styleBeforeRphi='bp';
+const KEY='cms_event_display.v1';     // this viewer's styles, kept in their own browser
+let saved={};try{saved=JSON.parse(localStorage.getItem(KEY)||'{}')||{}}catch(e){}
+const LAYERS=[],LBL=[];
+function applyVis(){const see=style==='glass'||style==='off';for(const L of LAYERS)for(const ob of L.objs)ob.visible=L.on&&(!ob.userData.ghost||(xray&&!see))}
+/* A layer has a default style (def), the controls that apply to it (ui), and build(style) -> parts.
+   Each part is one geometry drawn twice: depth-tested, and as an x-ray ghost without the depth test. */
+function layer(o){
+  o.on=o.on!==false;o.objs=[];o.uCol={value:new THREE.Color()};o.uGlow={value:0};
+  o.def.color=(o.def.color||tok(o.tok)).toLowerCase();
+  const sv=(saved.layers||{})[o.key]||{};o.st=Object.assign({},o.def);
+  for(const k in o.st)if(typeof sv[k]===typeof o.st[k]&&(k!=='color'||/^#[0-9a-f]{6}$/i.test(sv[k])))o.st[k]=sv[k];
+  LAYERS.push(o);make(o);return o;
+}
+function make(L){
+  for(const ob of L.objs){scene.remove(ob);ob.material.dispose()}
+  new Set(L.objs.map(ob=>ob.geometry)).forEach(g=>g.dispose());L.objs=[];
+  for(const pt of L.build(L.st)){
+    if(!pt.b.n)continue;
     const g=pt.b.geo();
-    for(const dt of [true,false]){
-      const m=evMat(pt.kmin||KNONE,pt.I*(dt?1:(pt.ghost??0.32)),pt.kind==='points',pt.size,dt);
-      const ob=pt.kind==='lines'?new THREE.LineSegments(g,m):pt.kind==='points'?new THREE.Points(g,m):new THREE.Mesh(g,m);
-      ob.frustumCulled=false;ob.renderOrder=dt?2:3;ob.userData.ghost=!dt;scene.add(ob);objs.push(ob);
+    for(const front of [true,false]){
+      const m=evMat(Object.assign({},pt.defs),Object.assign({uKmin:pt.kmin||KNONE,uCol:L.uCol,uGlow:L.uGlow,uA:{value:1},uSize:{value:1}},pt.uni),front);
+      const ob=pt.kind==='points'?new THREE.Points(g,m):new THREE.Mesh(g,m);
+      ob.frustumCulled=false;ob.renderOrder=front?2:3;ob.userData={ghost:!front,pt};scene.add(ob);L.objs.push(ob);
     }
   }
-  const L={key,label,colorTok,count,objs,on};LAYERS.push(L);return L;
+  restyle(L);applyVis();
 }
+function restyle(L){
+  const st=L.st;L.uCol.value.set(st.color);L.uGlow.value=st.glow;
+  for(const ob of L.objs){
+    const pt=ob.userData.pt,u=ob.material.uniforms,gh=ob.userData.ghost;
+    if(pt.set)pt.set(st);
+    u.uA.value=st.alpha*(pt.aF??1)*(gh?(pt.ghost??0.32):1);
+    u.uSize.value=(st.size??1)*(pt.sF??1);
+    ob.material.depthWrite=!gh&&pt.kind==='mesh'&&u.uA.value>=0.999;     // opaque solids hide what is behind them
+  }
+  document.documentElement.style.setProperty('--'+L.tok,st.color);
+  for(const l of LBL)if(l.L===L)for(const [el,a] of [[l.dot,'fill'],[l.line,'stroke'],[l.t,'fill']])el.setAttribute(a,st.color);
+}
+const PX={min:0.5,max:6,step:0.25,u:'px'},XS={min:0.25,max:4,step:0.05,u:'x'},XL={min:0.25,max:3,step:0.05,u:'x'};
+const PTS=max=>({min:0.5,max,step:0.5,u:'px'});
 
 /* tracks: helices from the reference point to the outermost hit, brighter with pT */
 const muTrk=t=>EV.muons.some(m=>Math.abs(m.eta-t.eta)<0.02&&Math.abs(dphi(m.phi,t.phi))<0.03&&Math.abs(m.pt-t.pt)<0.2*m.pt);
-const trkB=new Buf(),cT=COL('trk');
 const tracks=EV.tracks.filter(t=>!muTrk(t));
-for(const t of tracks){
-  const c=cT.clone().multiplyScalar(0.3+0.7*Math.min(1,t.pt/4)),P=t.pts.map(S);
-  for(let i=0;i+1<P.length;i++){trkB.v(P[i],c,t.pt);trkB.v(P[i+1],c,t.pt)}
-}
-const LT=layer('trk','Tracks','trk',()=>tracks.filter(t=>t.pt>=KPT.value).length+EV.muons.length,[{b:trkB,kind:'lines',kmin:KPT,I:1,ghost:0.5}]);
+layer({key:'trk',label:'Tracks',tok:'trk',count:()=>tracks.filter(t=>t.pt>=KPT.value).length+EV.muons.length,
+  def:{size:1.25,alpha:1,glow:0.3},ui:{size:PX},
+  build:()=>{const b=new Buf(SPEC.wide);
+    for(const t of tracks){const w=0.3+0.7*Math.min(1,t.pt/4),P=t.pts.map(S);for(let i=0;i+1<P.length;i++)b.seg(P[i],P[i+1],w,t.pt)}
+    return [{b,kind:'wide',defs:{WIDE:''},kmin:KPT,ghost:0.5}]}});
 
-/* muons: tubes along the reconstructed path, tracker through the outermost station */
-const muB=new Buf(),cM=COL('mu');
-for(const m of EV.muons){
-  const P=[];for(const p of m.pts.map(S))if(!P.length||p.distanceTo(P[P.length-1])>0.03)P.push(p);
-  if(P.length<2)continue;
-  const tg=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(P,false,'centripetal'),Math.min(900,P.length*10),0.06,8,false);
-  const ps=tg.attributes.position,n0=muB.p.length/3,v=new THREE.Vector3();
-  for(let i=0;i<ps.count;i++)muB.v(v.fromBufferAttribute(ps,i),cM,1e9);
-  for(const ix of tg.index.array)muB.i.push(n0+ix);
-}
-layer('mu','Muons','mu',EV.muons.length,[{b:muB,kind:'mesh',I:1,ghost:0.75}]);
+/* muons: tubes along the reconstructed path, tracker through the outermost station; size is the tube radius */
+const muPaths=EV.muons.map(m=>{const P=[];for(const p of m.pts.map(S))if(!P.length||p.distanceTo(P[P.length-1])>0.03)P.push(p);return P}).filter(P=>P.length>=2);
+layer({key:'mu',label:'Muons',tok:'mu',count:EV.muons.length,def:{shape:'circle',size:6,alpha:1,glow:0.7},ui:{shape:1,size:{min:1,max:25,step:0.5,u:'cm'}},
+  build:st=>{const b=new Buf(SPEC.tube),c=new THREE.Vector3(),n=new THREE.Vector3();
+    for(const P of muPaths){
+      const tg=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(P,false,'centripetal'),Math.min(900,P.length*10),1,st.shape==='box'?4:12,false);
+      const ps=tg.attributes.position,nm=tg.attributes.normal,n0=b.n;
+      for(let i=0;i<ps.count;i++){n.fromBufferAttribute(nm,i);b.v({p:c.fromBufferAttribute(ps,i).sub(n),nrm:n,w:1,k:1e9})}
+      for(const ix of tg.index.array)b.i.push(n0+ix);
+      tg.dispose()}
+    const uni={uW:{value:0}};
+    return [{b,kind:'mesh',defs:{TUBE:'',SHADE:''},uni,ghost:0.75,set:st=>uni.uW.value=st.size/100}]}});
 
-/* calorimeter hits: bars standing on the cell's front face, pointing away from the collision, length set by energy */
-function caloBars(hits,w,mPerGeV,cap,col){
-  const b=new Buf();
-  for(const h of hits){const a=S(h),L=clamp(h[3]*mPerGeV,0.015,cap);b.bar(a,a.clone().addScaledVector(a.clone().normalize(),L),w,col,h[3])}
-  return b;
+/* calorimeter hits: towers standing on the cell's front face, pointing away from the collision, length set by energy */
+function caloLayer(key,label,tk,parts,def,on){
+  return layer({key,label,tok:tk,on,def,count:()=>parts.reduce((n,[h])=>n+h.filter(x=>x[3]>=KE.value).length,0),
+    ui:{shape:1,size:XS,len:key==='hf'?{min:0.1,max:5,step:0.1,u:'cmGeV'}:{min:0.5,max:30,step:0.5,u:'cmGeV'}},
+    build:st=>parts.map(([hits,w0,cap])=>{
+      const b=new Buf(SPEC.bar);for(const h of hits){const a=S(h);b.bar(a,a.clone().normalize(),h[3],1,h[3],st.shape)}
+      const uni={uW:{value:0},uLen:{value:0},uLmin:{value:0.015},uCap:{value:cap},uCtr:{value:0}};
+      return {b,kind:'mesh',defs:{BAR:'',SHADE:''},uni,kmin:KE,
+        set:st=>{uni.uW.value=w0*st.size;uni.uLen.value=st.len/100;uni.uCap.value=cap*Math.max(1,st.len/def.len)}}})});
 }
-const cE=COL('ecal'),cH=COL('hcal');
-const ecalHits=EV.eb.concat(EV.ee),hcalHits=EV.hbhe.concat(EV.ho);
-layer('ecal','ECAL energy','ecal',()=>ecalHits.filter(h=>h[3]>=KE.value).length,
-  [{b:caloBars(EV.eb,0.035,0.06,3,cE),kind:'mesh',kmin:KE,I:0.9},{b:caloBars(EV.ee,0.04,0.06,3,cE),kind:'mesh',kmin:KE,I:0.9}]);
-layer('hcal','HCAL energy','hcal',()=>hcalHits.filter(h=>h[3]>=KE.value).length,
-  [{b:caloBars(EV.hbhe,0.11,0.05,3,cH),kind:'mesh',kmin:KE,I:0.75},{b:caloBars(EV.ho,0.25,0.05,1.5,cH),kind:'mesh',kmin:KE,I:0.75}]);
-layer('hf','Forward calorimeter (HF)','hcal',()=>EV.hf.filter(h=>h[3]>=KE.value).length,
-  [{b:caloBars(EV.hf,0.1,0.006,2.5,cH.clone().multiplyScalar(0.8)),kind:'mesh',kmin:KE,I:0.35}],false);
+caloLayer('ecal','ECAL energy','ecal',[[EV.eb,0.035,3],[EV.ee,0.04,3]],{shape:'box',size:1,len:6,alpha:0.9,glow:0.45});
+caloLayer('hcal','HCAL energy','hcal',[[EV.hbhe,0.11,3],[EV.ho,0.25,1.5]],{shape:'box',size:1,len:5,alpha:0.8,glow:0.35});
+caloLayer('hf','Forward calorimeter (HF)','hf',[[EV.hf,0.1,2.5]],{shape:'box',size:1,len:0.6,alpha:0.45,glow:0.2},false);
 
 /* tracker clusters: barycentres of pixel and strip clusters */
-const ptsBuf=(arr,col)=>{const b=new Buf();for(const p of arr)b.v(S(p),col,0);return b};
-layer('pix','Pixel clusters','pix',EV.pixel.length,[{b:ptsBuf(EV.pixel,COL('pix')),kind:'points',I:0.55,size:1.8,ghost:0.45}]);
-layer('strip','Strip clusters','strip',EV.strip.length,[{b:ptsBuf(EV.strip,COL('strip')),kind:'points',I:0.14,size:1.4,ghost:0.5}],false);
+function ptsLayer(key,label,tk,arr,def,ghost,on){
+  return layer({key,label,tok:tk,on,def,count:arr.length,ui:{shape:1,size:PTS(12)},
+    build:st=>{const b=new Buf(SPEC.pt);for(const p of arr)b.v({p:S(p),w:1,k:0});return [{b,kind:'points',defs:st.shape==='circle'?{ROUND:''}:{},ghost}]}});
+}
+ptsLayer('pix','Pixel clusters','pix',EV.pixel,{shape:'circle',size:2,alpha:0.6,glow:0.25},0.45);
+ptsLayer('strip','Strip clusters','strip',EV.strip,{shape:'circle',size:1.5,alpha:0.2,glow:0},0.5,false);
 
-/* muon chambers: DT and CSC segments as short sticks along their direction, RPC and GEM hits as points */
-const segB=new Buf(),cS=COL('seg');
-for(const sg of EV.dt.concat(EV.csc)){const c=S(sg[0]),dv=S(sg[1]).normalize();segB.bar(c.clone().addScaledVector(dv,-0.17),c.clone().addScaledVector(dv,0.17),0.05,cS,0)}
-layer('seg','DT + CSC segments','seg',EV.dt.length+EV.csc.length,[{b:segB,kind:'mesh',I:1,ghost:0.5}]);
-layer('rpc','RPC + GEM hits','rpc',EV.rpc.length+EV.gem.length,[{b:ptsBuf(EV.rpc.concat(EV.gem),COL('rpc')),kind:'points',I:0.85,size:3.5,ghost:0.5}]);
+/* muon chambers: DT and CSC segments as sticks along their direction, RPC and GEM hits as points */
+const segs=EV.dt.concat(EV.csc);
+layer({key:'seg',label:'DT + CSC segments',tok:'seg',count:segs.length,def:{shape:'box',size:5,len:34,alpha:1,glow:0.5},
+  ui:{shape:1,size:{min:1,max:20,step:0.5,u:'cm'},len:{min:5,max:120,step:1,u:'cm'}},
+  build:st=>{const b=new Buf(SPEC.bar);for(const sg of segs)b.bar(S(sg[0]),S(sg[1]).normalize(),1,1,0,st.shape);
+    const uni={uW:{value:0},uLen:{value:0},uLmin:{value:0},uCap:{value:1e3},uCtr:{value:1}};
+    return [{b,kind:'mesh',defs:{BAR:'',SHADE:''},uni,ghost:0.5,set:st=>{uni.uW.value=st.size/100;uni.uLen.value=st.len/100}}]}});
+ptsLayer('rpc','RPC + GEM hits','rpc',EV.rpc.concat(EV.gem),{shape:'circle',size:3.5,alpha:0.85,glow:0.55},0.5);
 
-/* jets: cones from the primary vertex reaching toward the calorimeter, opening ΔR = 0.4 */
+/* jets: cones from the primary vertex reaching toward the calorimeter, opening ΔR = 0.4; the length scale stretches them about the vertex */
 const jets=EV.jets.slice().sort((a,b)=>b.pt-a.pt);
-const jetB=new Buf(),rimB=new Buf(),cJ=COL('jet'),pv=EV.vertices.length?S(EV.vertices[0].p):new THREE.Vector3();
-const jetTip=[];
-for(const j of jets){
-  const th=2*Math.atan(Math.exp(-j.eta)),st=Math.sin(th),ct=Math.abs(Math.cos(th));
-  const L0=Math.abs(j.eta)<3?Math.min(1.8/st,3.9/ct):11.2/ct, L=L0*(0.55+0.6*Math.min(1,j.pt/200));
-  const r=L*Math.tan(0.4*st),dv=dirEP(j.eta,j.phi);
-  const cg=new THREE.ConeGeometry(r,L,40,1,true);cg.translate(0,-L/2,0);
-  const qn=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0),dv);
-  cg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(qn));cg.translate(pv.x,pv.y,pv.z);
-  const ps=cg.attributes.position,n0=jetB.p.length/3,v=new THREE.Vector3();
-  for(let i=0;i<ps.count;i++)jetB.v(v.fromBufferAttribute(ps,i),cJ,0);
-  for(const ix of cg.index.array)jetB.i.push(n0+ix);
-  const base=pv.clone().addScaledVector(dv,L),u=new THREE.Vector3().crossVectors(dv,Math.abs(dv.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0)).normalize(),w=new THREE.Vector3().crossVectors(dv,u);
-  for(let i=0;i<48;i++){const a0=i/48*2*Math.PI,a1=(i+1)/48*2*Math.PI;
-    rimB.v(base.clone().addScaledVector(u,r*Math.cos(a0)).addScaledVector(w,r*Math.sin(a0)),cJ,0);
-    rimB.v(base.clone().addScaledVector(u,r*Math.cos(a1)).addScaledVector(w,r*Math.sin(a1)),cJ,0)}
-  jetTip.push({j,p:base});
-}
-layer('jet','Jets (anti-kT 0.4)','jet',jets.length,[{b:jetB,kind:'mesh',I:0.07,ghost:1},{b:rimB,kind:'lines',I:0.6,ghost:0.5}]);
+const pv=EV.vertices.length?S(EV.vertices[0].p):new THREE.Vector3();
+const jetGeo=jets.map(j=>{const th=2*Math.atan(Math.exp(-j.eta)),st=Math.sin(th),ct=Math.abs(Math.cos(th));
+  const L0=Math.abs(j.eta)<3?Math.min(1.8/st,3.9/ct):11.2/ct,L=L0*(0.55+0.6*Math.min(1,j.pt/200));
+  return {j,L,r:L*Math.tan(0.4*st),dv:dirEP(j.eta,j.phi)}});
+const LJ=layer({key:'jet',label:'Jets (anti-kT 0.4)',tok:'jet',count:jets.length,def:{size:1.25,len:1,alpha:0.6,glow:0.25},ui:{size:PX,len:XL},
+  build:()=>{const cone=new Buf(SPEC.pt),rim=new Buf(SPEC.wide);
+    for(const {L,r,dv} of jetGeo){
+      const cg=new THREE.ConeGeometry(r,L,40,1,true);cg.translate(0,-L/2,0);
+      cg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0),dv)));cg.translate(pv.x,pv.y,pv.z);
+      cone.mesh(cg);
+      const base=pv.clone().addScaledVector(dv,L),u=new THREE.Vector3().crossVectors(dv,Math.abs(dv.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0)).normalize(),w=new THREE.Vector3().crossVectors(dv,u);
+      const ring=i=>base.clone().addScaledVector(u,r*Math.cos(i/48*2*Math.PI)).addScaledVector(w,r*Math.sin(i/48*2*Math.PI));
+      for(let i=0;i<48;i++)rim.seg(ring(i),ring(i+1),1,0)}
+    const uni={uO:{value:pv},uLS:{value:1}},set=st=>uni.uLS.value=st.len;
+    return [{b:cone,kind:'mesh',defs:{CONE:'',SHADE:''},uni,aF:0.12,ghost:1,set},{b:rim,kind:'wide',defs:{CONE:'',WIDE:''},uni,ghost:0.5,set}]}});
 
-/* missing transverse momentum: an arrow in the transverse plane */
-const metB=new Buf();let metTip=null;
-if(EV.met){
-  const dv=S([Math.cos(EV.met.phi),Math.sin(EV.met.phi),0]),L=1.2+Math.min(4,EV.met.pt/15),cMe=COL('met');
-  metB.bar(new THREE.Vector3(),dv.clone().multiplyScalar(L-0.35),0.06,cMe,0);
-  const hg=new THREE.ConeGeometry(0.16,0.35,16,1,false);hg.translate(0,0.175,0);
-  hg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dv)));hg.translate(dv.x*(L-0.35),dv.y*(L-0.35),dv.z*(L-0.35));
-  const ps=hg.attributes.position,n0=metB.p.length/3,v=new THREE.Vector3();
-  for(let i=0;i<ps.count;i++)metB.v(v.fromBufferAttribute(ps,i),cMe,0);
-  for(const ix of hg.index.array)metB.i.push(n0+ix);
-  metTip=dv.clone().multiplyScalar(L);
-}
-layer('met','Missing pT','met',EV.met?1:0,[{b:metB,kind:'mesh',I:0.8,ghost:0.6}]);
+/* missing transverse momentum: an arrow in the transverse plane; size thickens it, the length scale stretches it */
+let metTip=null;
+const LM=layer({key:'met',label:'Missing pT',tok:'met',count:EV.met?1:0,def:{size:1,len:1,alpha:0.9,glow:0.7},ui:{size:XS,len:XL},
+  build:()=>{if(!EV.met)return [];
+    const b=new Buf(SPEC.pt),dv=S([Math.cos(EV.met.phi),Math.sin(EV.met.phi),0]),L=1.2+Math.min(4,EV.met.pt/15);
+    const rot=new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dv));
+    const sh=new THREE.CylinderGeometry(0.03,0.03,L-0.35,12,1);sh.translate(0,(L-0.35)/2,0);sh.applyMatrix4(rot);b.mesh(sh);
+    const hd=new THREE.ConeGeometry(0.16,0.35,16,1,false);hd.translate(0,L-0.175,0);hd.applyMatrix4(rot);b.mesh(hd);
+    metTip=dv.clone().multiplyScalar(L);
+    const uni={uDir:{value:dv},uLS:{value:1},uSZ:{value:1}};
+    return [{b,kind:'mesh',defs:{ARROW:'',SHADE:''},uni,ghost:0.6,set:st=>{uni.uLS.value=st.len;uni.uSZ.value=st.size}}]}});
 
 /* vertices: the primary vertex and the pileup vertices along the beam line */
-const vtxB=new Buf(),puB=new Buf(),cV=COL('vtx');
-EV.vertices.forEach((v,i)=>(i?puB:vtxB).v(S(v.p),cV,0));
-layer('vtx','Vertices','vtx',EV.vertices.length,[{b:vtxB,kind:'points',I:1,size:7,ghost:0.6},{b:puB,kind:'points',I:0.5,size:3.5,ghost:0.6}]);
+layer({key:'vtx',label:'Vertices',tok:'vtx',count:EV.vertices.length,def:{shape:'circle',size:7,alpha:1,glow:0.8},ui:{shape:1,size:PTS(20)},
+  build:st=>{const a=new Buf(SPEC.pt),b=new Buf(SPEC.pt),d=st.shape==='circle'?{ROUND:''}:{};
+    EV.vertices.forEach((v,i)=>(i?b:a).v({p:S(v.p),w:1,k:0}));
+    return [{b:a,kind:'points',defs:d,ghost:0.6},{b,kind:'points',defs:d,ghost:0.6,sF:0.5,aF:0.6}]}});
 
 /* ---------- HUD labels ---------- */
-const LBL=[];
 const sup=q=>q>0?'⁺':'⁻';
-function label(p,text,colorTok,layerKey){
-  const g=svg('g',{opacity:0});const c=tok(colorTok);
+function label(p,text,key,xf){
+  const L=LAYERS.find(x=>x.key===key),c=L.st.color,g=svg('g',{opacity:0});
   const dot=svg('circle',{r:2.5,fill:c},g),line=svg('path',{stroke:c,'stroke-width':1,fill:'none',opacity:.8},g),t=svg('text',{fill:c,'font-size':11.5,'letter-spacing':'.05em'},g);
-  t.textContent=text;LBL.push({p,g,dot,line,t,layerKey});
+  t.textContent=text;LBL.push({p,g,dot,line,t,L,xf});
 }
-EV.muons.forEach(m=>label(S(m.pts[m.pts.length-1]),`μ${sup(m.q)} ${m.pt.toFixed(1)} GeV`,'mu','mu'));
-jetTip.filter(x=>x.j.pt>=50).forEach(x=>label(x.p,`jet ${x.j.pt.toFixed(0)} GeV`,'jet','jet'));
-if(metTip)label(metTip,`missing pT ${EV.met.pt.toFixed(1)} GeV`,'met','met');
-const V3=new THREE.Vector3();
+EV.muons.forEach(m=>label(S(m.pts[m.pts.length-1]),`μ${sup(m.q)} ${m.pt.toFixed(1)} GeV`,'mu'));
+jetGeo.filter(x=>x.j.pt>=50).forEach(x=>label(pv.clone().addScaledVector(x.dv,x.L),`jet ${x.j.pt.toFixed(0)} GeV`,'jet',(p,o)=>o.copy(p).sub(pv).multiplyScalar(LJ.st.len).add(pv)));
+if(metTip)label(metTip,`missing pT ${EV.met.pt.toFixed(1)} GeV`,'met',(p,o)=>o.copy(p).multiplyScalar(LM.st.len));
+const V3=new THREE.Vector3(),V4=new THREE.Vector3();
 function drawLabels(){
   for(const l of LBL){
-    const L=LAYERS.find(x=>x.key===l.layerKey);
-    V3.copy(l.p).project(camera);
-    const vis=L.on&&(l.layerKey!=='jet'||W>=600)&&EVU.uT.value>=l.p.length()&&V3.z<1&&Math.abs(V3.x)<1.02&&Math.abs(V3.y)<1.02;
+    const p=l.xf?l.xf(l.p,V4):l.p;V3.copy(p).project(camera);
+    const vis=l.L.on&&(l.L.key!=='jet'||W>=600)&&EVU.uT.value>=p.length()&&V3.z<1&&Math.abs(V3.x)<1.02&&Math.abs(V3.y)<1.02;
     l.g.setAttribute('opacity',vis?1:0);if(!vis)continue;
     const x=(V3.x+1)/2*W,y=(1-V3.y)/2*H,dx=x>W*0.8?-1:1;
     l.dot.setAttribute('cx',x);l.dot.setAttribute('cy',y);
@@ -418,18 +543,16 @@ function drawLabels(){
   }
 }
 
-/* ---------- state: style, x-ray, views, parts ---------- */
-let style='bp',xray=true,view='cut',styleBeforeRphi='bp';
+/* ---------- detector style, x-ray, views ---------- */
 const userHideG=new Array(NG).fill(0),viewHideG=new Array(NG).fill(0),viewHideP=new Array(NP).fill(0);
 function applyHide(){for(let i=0;i<NG;i++)U.uHideG.value[i]=Math.max(userHideG[i],viewHideG[i]);for(let i=0;i<NP;i++)U.uHideP.value[i]=viewHideP[i]}
-function applyVis(){for(const L of LAYERS)for(const ob of L.objs)ob.visible=L.on&&(!ob.userData.ghost||(xray&&style!=='glass'))}
 function setStyle(s){
-  style=s;U.uBp.value=s==='live'?0:1;U.uGlass.value=s==='glass'?1:0;
+  style=s;const off=s==='off';
+  U.uBp.value=s==='live'?0:1;U.uGlass.value=s==='glass'?1:0;U.uOff.value=off?1:0;
   meshMat.transparent=s==='glass';meshMat.depthWrite=s!=='glass';meshMat.blending=s==='glass'?THREE.AdditiveBlending:THREE.NormalBlending;meshMat.needsUpdate=true;
-  U.uEdge.value=s==='bp'?0.3:s==='glass'?0.12:0.0;grid.visible=s!=='live';
-  bloom.strength=s==='live'?0.45:0.7;bloom.threshold=s==='live'?0.8:0.7;
+  mesh.visible=edges.visible=!off;U.uEdge.value=s==='bp'?0.3:s==='glass'?0.12:0.0;grid.visible=s==='bp'||s==='glass';
   document.querySelectorAll('[data-style]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.style===s));
-  $('xray').disabled=s==='glass';applyVis();
+  $('xray').disabled=s==='glass'||off;applyVis();
 }
 const orbit=(az,el,d,tg=[0,0,0])=>{const a=az*Math.PI/180,e=el*Math.PI/180;return [tg[0]+d*Math.cos(e)*Math.sin(a),tg[1]+d*Math.sin(e),tg[2]+d*Math.cos(e)*Math.cos(a)]};
 const VIEWS={
@@ -442,7 +565,7 @@ let tween=null;
 function setView(k,instant){
   const prev=view;view=k;const V=VIEWS[k];
   viewHideG.fill(0);viewHideP.fill(0);(V.hideG||[]).forEach(n=>viewHideG[GI[n]]=1);(V.hideP||[]).forEach(n=>viewHideP[PI[n]]=1);applyHide();
-  if(k==='rphi'&&prev!=='rphi'){styleBeforeRphi=style;setStyle('glass')}else if(prev==='rphi'&&k!=='rphi')setStyle(styleBeforeRphi);
+  if(k==='rphi'&&prev!=='rphi'){styleBeforeRphi=style;if(style!=='off')setStyle('glass')}else if(prev==='rphi'&&k!=='rphi')setStyle(styleBeforeRphi);
   const sc=camera.aspect<1.1?1.7:1;
   const p1=new THREE.Vector3(...V.p).sub(new THREE.Vector3(...V.t)).multiplyScalar(sc).add(new THREE.Vector3(...V.t));
   const T={p0:camera.position.clone(),p1,t0:controls.target.clone(),t1:new THREE.Vector3(...V.t),f0:camera.fov,f1:V.fov,s:performance.now()};
@@ -450,7 +573,7 @@ function setView(k,instant){
   document.querySelectorAll('[data-view]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.view===k));
 }
 document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
-document.querySelectorAll('[data-style]').forEach(b=>b.onclick=()=>{setStyle(b.dataset.style);if(view==='rphi')styleBeforeRphi=b.dataset.style});
+document.querySelectorAll('[data-style]').forEach(b=>b.onclick=()=>{setStyle(b.dataset.style);if(view==='rphi')styleBeforeRphi=b.dataset.style;save()});
 $('xray').onclick=()=>{xray=!xray;$('xray').setAttribute('aria-pressed',xray);applyVis()};
 controls.addEventListener('start',()=>{tween=null});
 
@@ -464,7 +587,7 @@ const layersEl=$('layers');
 function counts(){for(const L of LAYERS)L.nEl.textContent=typeof L.count==='function'?L.count():L.count}
 for(const L of LAYERS){
   const lab=document.createElement('label');lab.className='lay';
-  lab.innerHTML=`<input type="checkbox" id="L-${L.key}" ${L.on?'checked':''}><span class="sw" style="background:var(--${L.colorTok})"></span><span>${L.label}</span><span class="n"></span>`;
+  lab.innerHTML=`<input type="checkbox" id="L-${L.key}" ${L.on?'checked':''}><span class="sw" style="background:var(--${L.tok})"></span><span>${L.label}</span><span class="n"></span>`;
   L.nEl=lab.querySelector('.n');lab.querySelector('input').onchange=e=>{L.on=e.target.checked;applyVis()};layersEl.appendChild(lab);
 }
 const PT=[0.5,1,2,3,5,10,20],EC=[0.3,0.5,1,2,5,10];
@@ -487,6 +610,35 @@ DET.forEach((d,i)=>{
   lab.innerHTML=`<input type="checkbox" id="D-${i}" checked><span class="sw" style="background:${META.groups[GI[d.groups[0]]].hex};opacity:.75"></span><span>${d.label}</span><span class="n"></span>`;
   lab.querySelector('input').onchange=e=>{d.groups.forEach(n=>userHideG[GI[n]]=e.target.checked?0:1);applyHide()};$('parts').appendChild(lab);
 });
+
+/* layer style editor: one layer at a time; any change also turns that layer on */
+const selL=$('sty-l');LAYERS.forEach(L=>selL.add(new Option(L.label,L.key)));
+let cur=LAYERS[0];
+const FMT={px:v=>`${v} px`,cm:v=>`${v} cm`,x:v=>`×${v.toFixed(2)}`,cmGeV:v=>`${v} cm/GeV`};
+function showSty(inputs){
+  const st=cur.st,ui=cur.ui;
+  $('sty-shape-row').hidden=!ui.shape;document.querySelectorAll('[data-shape]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.shape===st.shape));
+  for(const k of ['size','len']){const sp=ui[k],el=$('sty-'+k);$(`sty-${k}-row`).hidden=!sp;if(!sp)continue;
+    if(inputs){el.min=sp.min;el.max=sp.max;el.step=sp.step;el.value=st[k]}$(`sty-${k}-v`).textContent=FMT[sp.u](st[k])}
+  if(inputs){$('sty-col').value=st.color;$('sty-a').value=st.alpha;$('sty-g').value=st.glow}
+  $('sty-col-v').textContent=st.color.toUpperCase();$('sty-a-v').textContent=Math.round(st.alpha*100)+'%';$('sty-g-v').textContent=st.glow.toFixed(2);
+}
+function edit(k,v,rebuild){
+  const L=cur;L.st[k]=v;
+  if(!L.on){L.on=true;$('L-'+L.key).checked=true}
+  rebuild?make(L):(restyle(L),applyVis());showSty(false);save();
+}
+function reset(L){const sh=L.st.shape;L.st=Object.assign({},L.def);sh!==L.st.shape?make(L):restyle(L)}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({det:view==='rphi'?styleBeforeRphi:style,layers:Object.fromEntries(LAYERS.map(L=>[L.key,L.st]))}))}catch(e){}}
+selL.onchange=()=>{cur=LAYERS.find(L=>L.key===selL.value);showSty(true)};
+document.querySelectorAll('[data-shape]').forEach(b=>b.onclick=()=>{if(cur.st.shape!==b.dataset.shape)edit('shape',b.dataset.shape,true)});
+for(const k of ['size','len'])$('sty-'+k).oninput=e=>edit(k,+e.target.value);
+$('sty-col').oninput=e=>edit('color',e.target.value);
+$('sty-a').oninput=e=>edit('alpha',+e.target.value);
+$('sty-g').oninput=e=>edit('glow',+e.target.value);
+$('sty-reset').onclick=()=>{reset(cur);showSty(true);save()};
+$('sty-reset-all').onclick=()=>{LAYERS.forEach(reset);showSty(true);save()};
+showSty(true);
 
 /* objects table and the physics note */
 const tb=$('objs').querySelector('tbody');
@@ -517,13 +669,13 @@ const prov=[
   ['Raw file',`<code>${src.file}</code>`],
   ['Processing',`<code>${src.cmssw}</code>, <code>cmsDriver.py -s ${src.steps} --era ${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
   ['Thresholds','ECAL hits ≥ 0.3 GeV, HCAL ≥ 0.8 GeV, HF ≥ 3 GeV. Tracks: high-purity <code>generalTracks</code> with p<sub>T</sub> ≥ 0.5 GeV. Jets: <code>ak4PFJetsCHS</code> p<sub>T</sub> ≥ 30 GeV. Tracker hits are pixel and strip cluster barycentres.'],
-  ['Drawing','Tracks are helices in 3.8 T from the reference point to the outermost hit. Muons follow their tracker helix to the coil, then the track extrapolation through each crossed muon chamber. Calorimeter bars grow from each cell’s front face, 6 cm per GeV in ECAL and 5 cm per GeV in HCAL.'],
+  ['Drawing','Tracks are helices in 3.8 T from the reference point to the outermost hit. Muons follow their tracker helix to the coil, then the track extrapolation through each crossed muon chamber. Calorimeter towers grow from each cell’s front face, by default 6 cm per GeV in ECAL and 5 cm per GeV in HCAL (change it under Layer style).'],
   ['Detector',`3D model from <a href="https://cds.cern.ch/record/2677903" target="_blank" rel="noopener">CMS-OUTREACH-2019-002</a>, as packed for <a href="https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn" target="_blank" rel="noopener">SketchUpCMS in Claude</a>. CMS (x, y, z) maps to model (z, y, −x) in metres, with the beam on the model axis.`],
 ];
 $('prov').innerHTML=prov.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
 
 /* ---------- main loop ---------- */
-setStyle('bp');applyHide();setView('cut',true);applyVis();
+setStyle(['bp','live','glass','off'].includes(saved.det)?saved.det:'bp');applyHide();setView('cut',true);
 statusEl.hidden=true;
 const light=new THREE.Vector3(-0.45,0.8,0.55).normalize();
 (function loop(now){
@@ -535,6 +687,10 @@ const light=new THREE.Vector3(-0.45,0.8,0.55).normalize();
     EVU.uT.value=0.02+15*u*u;EVU.uFlash.value=1-ss(3.3,4.2,s);
     if(s>4.2){replayT0=null;EVU.uT.value=1e3;EVU.uFlash.value=0}}
   U.uL.value.copy(light).transformDirection(camera.matrixWorldInverse);
+  // glow pass: event layers write their colour times their glow; the opaque detector writes black so it still hides what is behind it
+  const ev=edges.visible,gv=grid.visible;GP.value=1;edges.visible=grid.visible=bg.visible=false;
+  glowComposer.render();
+  GP.value=0;edges.visible=ev;grid.visible=gv;bg.visible=true;
   composer.render();drawLabels();
   requestAnimationFrame(loop);
 })(performance.now());

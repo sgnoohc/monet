@@ -5,9 +5,10 @@ One 2024 CMS Open Data collision, reconstructed from the RAW data tier, drawn in
 **View:** https://sgnoohc.github.io/monet/cms_event_display/
 
 - **Event:** run 383631, lumi 415, event 994851190, recorded 2024-07-25. It fired `HLT_TripleMu_12_10_5`: three muons (μ⁺ 30.0, μ⁺ 16.1, μ⁻ 6.2 GeV), the two μ⁺ inside jets, 27 vertices.
-- **Views:** 3D cutaway, transverse (r-φ), longitudinal (r-z). The detector can be drawn as Blueprint, Color or Glass.
+- **Views:** 3D cutaway, transverse (r-φ), longitudinal (r-z). The detector can be drawn as Blueprint, Color or Glass, or turned off.
 - **X-ray hits** draws hits hidden behind detector material at reduced brightness. **Replay collision** plays the event outward from the interaction point.
 - **Event layers** turn each collection on or off. Sliders set the track pT and calorimeter energy thresholds. Strip clusters and HF hits start off because they wash out the tracks.
+- **Layer style** sets, per layer: shape (box or circle), size, length scale, color, opacity and glow. Which of these apply depends on the layer: length scale is cm per GeV for calorimeter towers, stick length for muon segments, and a stretch factor for jets and missing pT. Styles are saved in the viewer's browser.
 
 ## Files
 
