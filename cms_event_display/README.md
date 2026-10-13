@@ -1,10 +1,19 @@
 # CMS Event Display
 
-One 2024 CMS Open Data collision, reconstructed from the RAW data tier, drawn inside the SketchUpCMS 3D detector model.
+Eleven 2024 CMS Open Data collisions, reconstructed from the RAW data tier, drawn inside the SketchUpCMS 3D detector model.
 
 **View:** https://sgnoohc.github.io/monet/cms_event_display/
 
-- **Event:** run 383631, lumi 415, event 994851190, recorded 2024-07-25. It fired `HLT_TripleMu_12_10_5`: three muons (μ⁺ 30.0, μ⁺ 16.1, μ⁻ 6.2 GeV), the two μ⁺ inside jets, 27 vertices.
+- **Events:** run 383631, lumis 415–416, recorded 2024-07-25. Pick one from the menu at the top or with ‹ ›. The URL hash names the event, so a link such as `#996449745` opens on it.
+
+  | Event | Trigger | Content |
+  |---|---|---|
+  | 994851190 | `HLT_TripleMu_12_10_5` | 3 muons, 30, 16, 6 GeV (the default) |
+  | 994324494 | `HLT_PFJet500` | jets 511, 250, 186 GeV |
+  | 996449745 | `HLT_PFJet500` | jets 659 and 545 GeV, m(j1 j2) 1.55 TeV |
+  | 993596241 | `HLT_PFMET120_PFMHT120_IDTight` | missing pT 153 GeV, leading jet 215 GeV |
+  | 993827196, 994004254, 995013141, 996183500, 996202011 | `HLT_IsoMu24` | one muon, 27–47 GeV |
+  | 994159267, 994603224 | `HLT_Ele32_WPTight_Gsf` | one electron, 42 GeV |
 - **Views:** 3D cutaway, transverse (r-φ), longitudinal (r-z). The detector can be drawn as Blueprint, Color or Glass, or turned off.
 - **X-ray hits** draws hits hidden behind detector material at reduced brightness. **Replay collision** plays the event outward from the interaction point.
 - **Event layers** turn each collection on or off. Sliders set the track pT and calorimeter energy thresholds. Strip clusters and HF hits start off because they wash out the tracks.
@@ -15,13 +24,14 @@ One 2024 CMS Open Data collision, reconstructed from the RAW data tier, drawn in
 | File | What it is |
 |---|---|
 | `index.html` | The page (three.js r128 from CDN) |
-| `event.json` | The event, as written by `RawVizDumper`, plus the event time and source fields |
+| `events/` | One JSON per event, as written by `RawVizDumper`, plus the event time and source fields; `index.json` lists them for the picker |
 | `cms_parts.js` | Detector geometry: the SketchUpCMS model ([CMS-OUTREACH-2019-002](https://cds.cern.ch/record/2677903)), packed as in [SketchUpCMS in Claude](https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn) |
 | `tools/RawViz/EventDump/plugins/` | CMSSW EDAnalyzer that writes one JSON per event |
 | `tools/dump_cfg.py` | Runs only the dumper on a RECO file |
 | `tools/scan_hlt.py` | FWLite scan of `TriggerResults` to pick events |
+| `tools/make_events.py` | Builds `events/` from the dumper output and the event times |
 
-All lengths in `event.json` are in metres, in CMS global coordinates. The page maps CMS (x, y, z) to model (z, y, −x).
+All lengths in the event files are in metres, in CMS global coordinates. The page maps CMS (x, y, z) to model (z, y, −x).
 
 ## Making the event
 
@@ -48,6 +58,12 @@ CMSSW_14_0_25 (`el9_amd64_gcc12`), with `tools/RawViz` copied to `$CMSSW_BASE/sr
    `auto:run3_data_prompt` resolves to `140X_dataRun3_Prompt_frozen_v4` and needs Frontier access.
 
    To re-dump from an existing `reco.root`, run `cmsRun tools/dump_cfg.py` instead.
+
+4. **Build the page's event files:**
+
+       python3 tools/make_events.py json/ event_times.json events/
+
+   `event_times.json` maps each event number to its run, lumi, bunch crossing, orbit and time, read from the RAW file's `EventAuxiliary`.
 
 The dumper thresholds are:
 

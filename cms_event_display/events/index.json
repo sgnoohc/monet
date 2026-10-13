@@ -1,0 +1,137 @@
+[
+ {
+  "event": 994851190,
+  "run": 383631,
+  "lumi": 415,
+  "file": "994851190.json",
+  "key": "HLT_TripleMu_12_10_5",
+  "label": "3 muons, 30, 16, 6 GeV",
+  "keys": [
+   "HLT_TripleMu_5_3_3_Mass3p8_DZ_v18",
+   "HLT_TripleMu_10_5_5_DZ_v20",
+   "HLT_TripleMu_12_10_5_v20"
+  ],
+  "note": "The two μ⁺ sit inside the 57 and 76 GeV jets; the leading μ⁺ heads straight into the cutaway."
+ },
+ {
+  "event": 994324494,
+  "run": 383631,
+  "lumi": 415,
+  "file": "994324494.json",
+  "key": "HLT_PFJet500",
+  "label": "Jets 511, 250, 186 GeV, m(j1 j2) 0.72 TeV",
+  "keys": [
+   "HLT_AK8PFJet500_v26",
+   "HLT_PFJet500_v31",
+   "HLT_PFHT1050_v28"
+  ]
+ },
+ {
+  "event": 996449745,
+  "run": 383631,
+  "lumi": 416,
+  "file": "996449745.json",
+  "key": "HLT_PFJet500",
+  "label": "Jets 659, 545 GeV, m(j1 j2) 1.55 TeV",
+  "keys": [
+   "HLT_AK8PFJet500_v26",
+   "HLT_PFJet500_v31",
+   "HLT_PFHT1050_v28"
+  ]
+ },
+ {
+  "event": 993596241,
+  "run": 383631,
+  "lumi": 415,
+  "file": "993596241.json",
+  "key": "HLT_PFMET120_PFMHT120_IDTight",
+  "label": "Missing pT 153 GeV, leading jet 215 GeV",
+  "keys": [
+   "HLT_PFMET120_PFMHT120_IDTight_v30"
+  ]
+ },
+ {
+  "event": 993827196,
+  "run": 383631,
+  "lumi": 415,
+  "file": "993827196.json",
+  "key": "HLT_IsoMu24",
+  "label": "Muon 27 GeV, missing pT 42 GeV",
+  "keys": [
+   "HLT_IsoMu24_v23",
+   "HLT_IsoMu24_eta2p1_v25"
+  ]
+ },
+ {
+  "event": 994004254,
+  "run": 383631,
+  "lumi": 415,
+  "file": "994004254.json",
+  "key": "HLT_IsoMu24",
+  "label": "Muon 38 GeV, missing pT 116 GeV",
+  "keys": [
+   "HLT_IsoMu24_v23",
+   "HLT_IsoMu24_eta2p1_v25"
+  ]
+ },
+ {
+  "event": 995013141,
+  "run": 383631,
+  "lumi": 415,
+  "file": "995013141.json",
+  "key": "HLT_IsoMu24",
+  "label": "Muon 33 GeV, missing pT 91 GeV",
+  "keys": [
+   "HLT_IsoMu24_v23",
+   "HLT_IsoMu24_eta2p1_v25"
+  ]
+ },
+ {
+  "event": 996183500,
+  "run": 383631,
+  "lumi": 416,
+  "file": "996183500.json",
+  "key": "HLT_IsoMu24",
+  "label": "Muon 28 GeV, missing pT 37 GeV",
+  "keys": [
+   "HLT_IsoMu24_v23",
+   "HLT_IsoMu24_eta2p1_v25"
+  ]
+ },
+ {
+  "event": 996202011,
+  "run": 383631,
+  "lumi": 416,
+  "file": "996202011.json",
+  "key": "HLT_IsoMu24",
+  "label": "Muon 47 GeV, missing pT 18 GeV",
+  "keys": [
+   "HLT_IsoMu24_v23",
+   "HLT_IsoMu24_eta2p1_v25"
+  ]
+ },
+ {
+  "event": 994159267,
+  "run": 383631,
+  "lumi": 415,
+  "file": "994159267.json",
+  "key": "HLT_Ele32_WPTight_Gsf",
+  "label": "Electron 42 GeV, missing pT 61 GeV",
+  "keys": [
+   "HLT_Ele30_WPTight_Gsf_v9",
+   "HLT_Ele32_WPTight_Gsf_v23"
+  ]
+ },
+ {
+  "event": 994603224,
+  "run": 383631,
+  "lumi": 415,
+  "file": "994603224.json",
+  "key": "HLT_Ele32_WPTight_Gsf",
+  "label": "Electron 42 GeV, missing pT 67 GeV",
+  "keys": [
+   "HLT_Ele30_WPTight_Gsf_v9",
+   "HLT_Ele32_WPTight_Gsf_v23"
+  ]
+ }
+]

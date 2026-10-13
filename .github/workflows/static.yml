@@ -40,7 +40,7 @@ jobs:
           cp -R spaceattack/. _site/
           cp -R buzzer/index.html buzzer/audio _site/buzzer/
           cp nbody_simulation/*.html _site/nbody_simulation/
-          cp cms_event_display/index.html cms_event_display/event.json cms_event_display/cms_parts.js _site/cms_event_display/
+          cp -R cms_event_display/index.html cms_event_display/cms_parts.js cms_event_display/events _site/cms_event_display/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

@@ -21,7 +21,7 @@ body{margin:0}
 [hidden]{display:none!important}
 body{background:var(--bg);color:var(--ice);font-family:var(--body);padding-inline:16px;padding-block:14px 32px}
 .wrap{max-width:1440px;margin-inline:auto;display:flex;flex-direction:column;gap:12px}
-.head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 18px}
+.head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 18px}
 .head h1{margin:0;font:700 13px/1.3 var(--wide);letter-spacing:.32em;text-transform:uppercase;text-wrap:balance}
 .head h1 span{font:400 12px var(--mono);letter-spacing:.14em;color:var(--ice-dim);margin-left:12px}
 .head p{margin:0;font:400 12px var(--mono);color:var(--ice-dim);letter-spacing:.05em}
@@ -35,6 +35,7 @@ body{background:var(--bg);color:var(--ice);font-family:var(--body);padding-inlin
 .stamp b{display:block;font:700 9.5px/1.7 var(--wide);letter-spacing:.26em;margin-bottom:2px}
 .stamp span{color:var(--ice-dim)}
 .hint{position:absolute;right:14px;bottom:10px;pointer-events:none;font:400 10.5px var(--mono);letter-spacing:.1em;color:var(--ice-dim);text-transform:uppercase;text-shadow:0 0 6px #000}
+.status.soft{background:rgba(4,7,11,.6)}
 .status{position:absolute;inset:0;display:grid;place-items:center;padding:16px;text-align:center;font:500 12px var(--mono);letter-spacing:.2em;color:var(--ice-dim);background:var(--bg)}
 .bar{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
 .grp{display:flex;flex-wrap:wrap;align-items:center}
@@ -83,6 +84,8 @@ select{font:400 13px var(--body);background:var(--bg);color:var(--ice);border:1p
 .colrow label{flex:1}
 .colrow output{font:500 12px var(--mono)}
 input[type=color]{width:44px;height:30px;padding:0 2px;border:1px solid var(--edge);background:transparent;cursor:pointer}
+.evp select{width:auto;max-width:min(440px,calc(100vw - 150px));font:400 12.5px var(--body);border-left-color:transparent;border-right-color:transparent}
+@media (max-width:700px){.evp{width:100%;flex-wrap:nowrap}.evp select{flex:1;min-width:0;max-width:none}}
 .acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .prov dl{grid-template-columns:auto minmax(0,1fr) auto minmax(0,1fr);gap:9px 14px}
 @media (max-width:1060px){.prov dl{grid-template-columns:auto minmax(0,1fr)}}
@@ -94,8 +97,13 @@ a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
 
 <main class="wrap">
   <header class="head">
-    <h1>SketchUpCMS<span>event overlay</span></h1>
-    <p>CMS Open Data · 2024 RAW · reconstructed with CMSSW_14_0_25</p>
+    <h1>SketchUpCMS<span>CMS Open Data · 2024 RAW · CMSSW_14_0_25</span></h1>
+    <div class="grp evp" role="group" aria-label="Event">
+      <span>Event</span>
+      <button class="btn" id="evprev" title="Previous event" aria-label="Previous event">‹</button>
+      <select id="evsel" aria-label="Event"></select>
+      <button class="btn" id="evnext" title="Next event" aria-label="Next event">›</button>
+    </div>
   </header>
 
   <div class="frame" id="frame">
@@ -210,8 +218,12 @@ function resize(){const r=frame.getBoundingClientRect();W=Math.max(1,r.width);H=
   renderer.setSize(W,H,false);composer.setSize(W,H);glowComposer.setSize(W,H);camera.aspect=W/H;camera.updateProjectionMatrix();
   renderer.getDrawingBufferSize(res);hud.setAttribute('viewBox',`0 0 ${W} ${H}`);}
 new ResizeObserver(resize).observe(frame);resize();
-/* ---------- load the detector mesh and the event ---------- */
-const evP=fetch('event.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json()});
+/* ---------- load the detector mesh, the event list and the first event ---------- */
+const getJSON=u=>fetch(u).then(r=>{if(!r.ok)throw new Error(r.status);return r.json()});
+const evCache=new Map();     // event file -> promise of its JSON, so revisiting an event is instant
+const loadEv=e=>{if(!evCache.has(e.file))evCache.set(e.file,getJSON('events/'+e.file).catch(err=>{evCache.delete(e.file);throw err}));return evCache.get(e.file)};
+let MAN,ENTRY;
+const evP=getJSON('events/index.json').then(m=>{MAN=m;ENTRY=MAN.find(e=>'#'+e.event===location.hash)||MAN[0];return loadEv(ENTRY)});
 let buf;
 try{
   await new Promise((ok,bad)=>{const sc=document.createElement('script');sc.src='cms_parts.js';sc.onload=ok;sc.onerror=bad;document.head.appendChild(sc)});
@@ -428,23 +440,36 @@ function restyle(L){
   document.documentElement.style.setProperty('--'+L.tok,st.color);
   for(const l of LBL)if(l.L===L)for(const [el,a] of [[l.dot,'fill'],[l.line,'stroke'],[l.t,'fill']])el.setAttribute(a,st.color);
 }
+/* per-event quantities that the layers and panels draw from; derive() refills them when the event changes */
+const D={};
+function derive(){
+  const muTrk=t=>EV.muons.some(m=>Math.abs(m.eta-t.eta)<0.02&&Math.abs(dphi(m.phi,t.phi))<0.03&&Math.abs(m.pt-t.pt)<0.2*m.pt);
+  D.tracks=EV.tracks.filter(t=>!muTrk(t));
+  D.muPaths=EV.muons.map(m=>{const P=[];for(const p of m.pts.map(S))if(!P.length||p.distanceTo(P[P.length-1])>0.03)P.push(p);return P}).filter(P=>P.length>=2);
+  D.segs=EV.dt.concat(EV.csc);
+  D.jets=EV.jets.slice().sort((a,b)=>b.pt-a.pt);
+  D.pv=EV.vertices.length?S(EV.vertices[0].p):new THREE.Vector3();
+  D.jetGeo=D.jets.map(j=>{const th=2*Math.atan(Math.exp(-j.eta)),st=Math.sin(th),ct=Math.abs(Math.cos(th));
+    const L0=Math.abs(j.eta)<3?Math.min(1.8/st,3.9/ct):11.2/ct,L=L0*(0.55+0.6*Math.min(1,j.pt/200));
+    return {j,L,r:L*Math.tan(0.4*st),dv:dirEP(j.eta,j.phi)}});
+  D.met=null;
+  if(EV.met){const dv=S([Math.cos(EV.met.phi),Math.sin(EV.met.phi),0]),L=1.2+Math.min(4,EV.met.pt/15);D.met={dv,L,tip:dv.clone().multiplyScalar(L)}}
+}
+derive();
 const PX={min:0.5,max:6,step:0.25,u:'px'},XS={min:0.25,max:4,step:0.05,u:'x'},XL={min:0.25,max:3,step:0.05,u:'x'};
 const PTS=max=>({min:0.5,max,step:0.5,u:'px'});
 
 /* tracks: helices from the reference point to the outermost hit, brighter with pT */
-const muTrk=t=>EV.muons.some(m=>Math.abs(m.eta-t.eta)<0.02&&Math.abs(dphi(m.phi,t.phi))<0.03&&Math.abs(m.pt-t.pt)<0.2*m.pt);
-const tracks=EV.tracks.filter(t=>!muTrk(t));
-layer({key:'trk',label:'Tracks',tok:'trk',count:()=>tracks.filter(t=>t.pt>=KPT.value).length+EV.muons.length,
+layer({key:'trk',label:'Tracks',tok:'trk',count:()=>D.tracks.filter(t=>t.pt>=KPT.value).length+EV.muons.length,
   def:{size:1.25,alpha:1,glow:0.3},ui:{size:PX},
   build:()=>{const b=new Buf(SPEC.wide);
-    for(const t of tracks){const w=0.3+0.7*Math.min(1,t.pt/4),P=t.pts.map(S);for(let i=0;i+1<P.length;i++)b.seg(P[i],P[i+1],w,t.pt)}
+    for(const t of D.tracks){const w=0.3+0.7*Math.min(1,t.pt/4),P=t.pts.map(S);for(let i=0;i+1<P.length;i++)b.seg(P[i],P[i+1],w,t.pt)}
     return [{b,kind:'wide',defs:{WIDE:''},kmin:KPT,ghost:0.5}]}});
 
 /* muons: tubes along the reconstructed path, tracker through the outermost station; size is the tube radius */
-const muPaths=EV.muons.map(m=>{const P=[];for(const p of m.pts.map(S))if(!P.length||p.distanceTo(P[P.length-1])>0.03)P.push(p);return P}).filter(P=>P.length>=2);
-layer({key:'mu',label:'Muons',tok:'mu',count:EV.muons.length,def:{shape:'circle',size:6,alpha:1,glow:0.7},ui:{shape:1,size:{min:1,max:25,step:0.5,u:'cm'}},
+layer({key:'mu',label:'Muons',tok:'mu',count:()=>EV.muons.length,def:{shape:'circle',size:6,alpha:1,glow:0.7},ui:{shape:1,size:{min:1,max:25,step:0.5,u:'cm'}},
   build:st=>{const b=new Buf(SPEC.tube),c=new THREE.Vector3(),n=new THREE.Vector3();
-    for(const P of muPaths){
+    for(const P of D.muPaths){
       const tg=new THREE.TubeGeometry(new THREE.CatmullRomCurve3(P,false,'centripetal'),Math.min(900,P.length*10),1,st.shape==='box'?4:12,false);
       const ps=tg.attributes.position,nm=tg.attributes.normal,n0=b.n;
       for(let i=0;i<ps.count;i++){n.fromBufferAttribute(nm,i);b.v({p:c.fromBufferAttribute(ps,i).sub(n),nrm:n,w:1,k:1e9})}
@@ -455,44 +480,39 @@ layer({key:'mu',label:'Muons',tok:'mu',count:EV.muons.length,def:{shape:'circle'
 
 /* calorimeter hits: towers standing on the cell's front face, pointing away from the collision, length set by energy */
 function caloLayer(key,label,tk,parts,def,on){
-  return layer({key,label,tok:tk,on,def,count:()=>parts.reduce((n,[h])=>n+h.filter(x=>x[3]>=KE.value).length,0),
+  return layer({key,label,tok:tk,on,def,count:()=>parts().reduce((n,[h])=>n+h.filter(x=>x[3]>=KE.value).length,0),
     ui:{shape:1,size:XS,len:key==='hf'?{min:0.1,max:5,step:0.1,u:'cmGeV'}:{min:0.5,max:30,step:0.5,u:'cmGeV'}},
-    build:st=>parts.map(([hits,w0,cap])=>{
+    build:st=>parts().map(([hits,w0,cap])=>{
       const b=new Buf(SPEC.bar);for(const h of hits){const a=S(h);b.bar(a,a.clone().normalize(),h[3],1,h[3],st.shape)}
       const uni={uW:{value:0},uLen:{value:0},uLmin:{value:0.015},uCap:{value:cap},uCtr:{value:0}};
       return {b,kind:'mesh',defs:{BAR:'',SHADE:''},uni,kmin:KE,
         set:st=>{uni.uW.value=w0*st.size;uni.uLen.value=st.len/100;uni.uCap.value=cap*Math.max(1,st.len/def.len)}}})});
 }
-caloLayer('ecal','ECAL energy','ecal',[[EV.eb,0.035,3],[EV.ee,0.04,3]],{shape:'box',size:1,len:6,alpha:0.9,glow:0.45});
-caloLayer('hcal','HCAL energy','hcal',[[EV.hbhe,0.11,3],[EV.ho,0.25,1.5]],{shape:'box',size:1,len:5,alpha:0.8,glow:0.35});
-caloLayer('hf','Forward calorimeter (HF)','hf',[[EV.hf,0.1,2.5]],{shape:'box',size:1,len:0.6,alpha:0.45,glow:0.2},false);
+caloLayer('ecal','ECAL energy','ecal',()=>[[EV.eb,0.035,3],[EV.ee,0.04,3]],{shape:'box',size:1,len:6,alpha:0.9,glow:0.45});
+caloLayer('hcal','HCAL energy','hcal',()=>[[EV.hbhe,0.11,3],[EV.ho,0.25,1.5]],{shape:'box',size:1,len:5,alpha:0.8,glow:0.35});
+caloLayer('hf','Forward calorimeter (HF)','hf',()=>[[EV.hf,0.1,2.5]],{shape:'box',size:1,len:0.6,alpha:0.45,glow:0.2},false);
 
 /* tracker clusters: barycentres of pixel and strip clusters */
 function ptsLayer(key,label,tk,arr,def,ghost,on){
-  return layer({key,label,tok:tk,on,def,count:arr.length,ui:{shape:1,size:PTS(12)},
-    build:st=>{const b=new Buf(SPEC.pt);for(const p of arr)b.v({p:S(p),w:1,k:0});return [{b,kind:'points',defs:st.shape==='circle'?{ROUND:''}:{},ghost}]}});
+  return layer({key,label,tok:tk,on,def,count:()=>arr().length,ui:{shape:1,size:PTS(12)},
+    build:st=>{const b=new Buf(SPEC.pt);for(const p of arr())b.v({p:S(p),w:1,k:0});return [{b,kind:'points',defs:st.shape==='circle'?{ROUND:''}:{},ghost}]}});
 }
-ptsLayer('pix','Pixel clusters','pix',EV.pixel,{shape:'circle',size:2,alpha:0.6,glow:0.25},0.45);
-ptsLayer('strip','Strip clusters','strip',EV.strip,{shape:'circle',size:1.5,alpha:0.2,glow:0},0.5,false);
+ptsLayer('pix','Pixel clusters','pix',()=>EV.pixel,{shape:'circle',size:2,alpha:0.6,glow:0.25},0.45);
+ptsLayer('strip','Strip clusters','strip',()=>EV.strip,{shape:'circle',size:1.5,alpha:0.2,glow:0},0.5,false);
 
 /* muon chambers: DT and CSC segments as sticks along their direction, RPC and GEM hits as points */
-const segs=EV.dt.concat(EV.csc);
-layer({key:'seg',label:'DT + CSC segments',tok:'seg',count:segs.length,def:{shape:'box',size:5,len:34,alpha:1,glow:0.5},
+layer({key:'seg',label:'DT + CSC segments',tok:'seg',count:()=>D.segs.length,def:{shape:'box',size:5,len:34,alpha:1,glow:0.5},
   ui:{shape:1,size:{min:1,max:20,step:0.5,u:'cm'},len:{min:5,max:120,step:1,u:'cm'}},
-  build:st=>{const b=new Buf(SPEC.bar);for(const sg of segs)b.bar(S(sg[0]),S(sg[1]).normalize(),1,1,0,st.shape);
+  build:st=>{const b=new Buf(SPEC.bar);for(const sg of D.segs)b.bar(S(sg[0]),S(sg[1]).normalize(),1,1,0,st.shape);
     const uni={uW:{value:0},uLen:{value:0},uLmin:{value:0},uCap:{value:1e3},uCtr:{value:1}};
     return [{b,kind:'mesh',defs:{BAR:'',SHADE:''},uni,ghost:0.5,set:st=>{uni.uW.value=st.size/100;uni.uLen.value=st.len/100}}]}});
-ptsLayer('rpc','RPC + GEM hits','rpc',EV.rpc.concat(EV.gem),{shape:'circle',size:3.5,alpha:0.85,glow:0.55},0.5);
+ptsLayer('rpc','RPC + GEM hits','rpc',()=>EV.rpc.concat(EV.gem),{shape:'circle',size:3.5,alpha:0.85,glow:0.55},0.5);
 
 /* jets: cones from the primary vertex reaching toward the calorimeter, opening ΔR = 0.4; the length scale stretches them about the vertex */
-const jets=EV.jets.slice().sort((a,b)=>b.pt-a.pt);
-const pv=EV.vertices.length?S(EV.vertices[0].p):new THREE.Vector3();
-const jetGeo=jets.map(j=>{const th=2*Math.atan(Math.exp(-j.eta)),st=Math.sin(th),ct=Math.abs(Math.cos(th));
-  const L0=Math.abs(j.eta)<3?Math.min(1.8/st,3.9/ct):11.2/ct,L=L0*(0.55+0.6*Math.min(1,j.pt/200));
-  return {j,L,r:L*Math.tan(0.4*st),dv:dirEP(j.eta,j.phi)}});
-const LJ=layer({key:'jet',label:'Jets (anti-kT 0.4)',tok:'jet',count:jets.length,def:{size:1.25,len:1,alpha:0.6,glow:0.25},ui:{size:PX,len:XL},
+const LJ=layer({key:'jet',label:'Jets (anti-kT 0.4)',tok:'jet',count:()=>D.jets.length,def:{size:1.25,len:1,alpha:0.6,glow:0.25},ui:{size:PX,len:XL},
   build:()=>{const cone=new Buf(SPEC.pt),rim=new Buf(SPEC.wide);
-    for(const {L,r,dv} of jetGeo){
+    const pv=D.pv;
+    for(const {L,r,dv} of D.jetGeo){
       const cg=new THREE.ConeGeometry(r,L,40,1,true);cg.translate(0,-L/2,0);
       cg.applyMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,-1,0),dv)));cg.translate(pv.x,pv.y,pv.z);
       cone.mesh(cg);
@@ -503,19 +523,17 @@ const LJ=layer({key:'jet',label:'Jets (anti-kT 0.4)',tok:'jet',count:jets.length
     return [{b:cone,kind:'mesh',defs:{CONE:'',SHADE:''},uni,aF:0.12,ghost:1,set},{b:rim,kind:'wide',defs:{CONE:'',WIDE:''},uni,ghost:0.5,set}]}});
 
 /* missing transverse momentum: an arrow in the transverse plane; size thickens it, the length scale stretches it */
-let metTip=null;
-const LM=layer({key:'met',label:'Missing pT',tok:'met',count:EV.met?1:0,def:{size:1,len:1,alpha:0.9,glow:0.7},ui:{size:XS,len:XL},
-  build:()=>{if(!EV.met)return [];
-    const b=new Buf(SPEC.pt),dv=S([Math.cos(EV.met.phi),Math.sin(EV.met.phi),0]),L=1.2+Math.min(4,EV.met.pt/15);
+const LM=layer({key:'met',label:'Missing pT',tok:'met',count:()=>EV.met?1:0,def:{size:1,len:1,alpha:0.9,glow:0.7},ui:{size:XS,len:XL},
+  build:()=>{if(!D.met)return [];
+    const b=new Buf(SPEC.pt),{dv,L}=D.met;
     const rot=new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),dv));
     const sh=new THREE.CylinderGeometry(0.03,0.03,L-0.35,12,1);sh.translate(0,(L-0.35)/2,0);sh.applyMatrix4(rot);b.mesh(sh);
     const hd=new THREE.ConeGeometry(0.16,0.35,16,1,false);hd.translate(0,L-0.175,0);hd.applyMatrix4(rot);b.mesh(hd);
-    metTip=dv.clone().multiplyScalar(L);
     const uni={uDir:{value:dv},uLS:{value:1},uSZ:{value:1}};
     return [{b,kind:'mesh',defs:{ARROW:'',SHADE:''},uni,ghost:0.6,set:st=>{uni.uLS.value=st.len;uni.uSZ.value=st.size}}]}});
 
 /* vertices: the primary vertex and the pileup vertices along the beam line */
-layer({key:'vtx',label:'Vertices',tok:'vtx',count:EV.vertices.length,def:{shape:'circle',size:7,alpha:1,glow:0.8},ui:{shape:1,size:PTS(20)},
+layer({key:'vtx',label:'Vertices',tok:'vtx',count:()=>EV.vertices.length,def:{shape:'circle',size:7,alpha:1,glow:0.8},ui:{shape:1,size:PTS(20)},
   build:st=>{const a=new Buf(SPEC.pt),b=new Buf(SPEC.pt),d=st.shape==='circle'?{ROUND:''}:{};
     EV.vertices.forEach((v,i)=>(i?b:a).v({p:S(v.p),w:1,k:0}));
     return [{b:a,kind:'points',defs:d,ghost:0.6},{b,kind:'points',defs:d,ghost:0.6,sF:0.5,aF:0.6}]}});
@@ -527,16 +545,20 @@ function label(p,text,key,xf){
   const dot=svg('circle',{r:2.5,fill:c},g),line=svg('path',{stroke:c,'stroke-width':1,fill:'none',opacity:.8},g),t=svg('text',{fill:c,'font-size':11.5,'letter-spacing':'.05em'},g);
   t.textContent=text;LBL.push({p,g,dot,line,t,L,xf});
 }
-EV.muons.forEach(m=>label(S(m.pts[m.pts.length-1]),`μ${sup(m.q)} ${m.pt.toFixed(1)} GeV`,'mu'));
-jetGeo.filter(x=>x.j.pt>=50).forEach(x=>label(pv.clone().addScaledVector(x.dv,x.L),`jet ${x.j.pt.toFixed(0)} GeV`,'jet',(p,o)=>o.copy(p).sub(pv).multiplyScalar(LJ.st.len).add(pv)));
-if(metTip)label(metTip,`missing pT ${EV.met.pt.toFixed(1)} GeV`,'met',(p,o)=>o.copy(p).multiplyScalar(LM.st.len));
+function buildLabels(){
+  for(const l of LBL)l.g.remove();LBL.length=0;
+  EV.muons.forEach(m=>label(S(m.pts[m.pts.length-1]),`μ${sup(m.q)} ${m.pt.toFixed(1)} GeV`,'mu'));
+  D.jetGeo.filter(x=>x.j.pt>=50).forEach(x=>label(D.pv.clone().addScaledVector(x.dv,x.L),`jet ${x.j.pt.toFixed(0)} GeV`,'jet',(p,o)=>o.copy(p).sub(D.pv).multiplyScalar(LJ.st.len).add(D.pv)));
+  if(D.met)label(D.met.tip,`missing pT ${EV.met.pt.toFixed(1)} GeV`,'met',(p,o)=>o.copy(p).multiplyScalar(LM.st.len));
+}
+buildLabels();
 const V3=new THREE.Vector3(),V4=new THREE.Vector3();
 function drawLabels(){
   for(const l of LBL){
     const p=l.xf?l.xf(l.p,V4):l.p;V3.copy(p).project(camera);
     const vis=l.L.on&&(l.L.key!=='jet'||W>=600)&&EVU.uT.value>=p.length()&&V3.z<1&&Math.abs(V3.x)<1.02&&Math.abs(V3.y)<1.02;
     l.g.setAttribute('opacity',vis?1:0);if(!vis)continue;
-    const x=(V3.x+1)/2*W,y=(1-V3.y)/2*H,dx=x>W*0.8?-1:1;
+    const x=(V3.x+1)/2*W,y=(1-V3.y)/2*H,dx=x+30+7*l.t.textContent.length>W?-1:1;
     l.dot.setAttribute('cx',x);l.dot.setAttribute('cy',y);
     l.line.setAttribute('d',`M${x} ${y}l${dx*14} -14h${dx*6}`);
     l.t.setAttribute('x',x+dx*24);l.t.setAttribute('y',y-10);l.t.setAttribute('text-anchor',dx>0?'start':'end');
@@ -640,39 +662,69 @@ $('sty-reset').onclick=()=>{reset(cur);showSty(true);save()};
 $('sty-reset-all').onclick=()=>{LAYERS.forEach(reset);showSty(true);save()};
 showSty(true);
 
-/* objects table and the physics note */
+/* objects table, physics note, HLT paths, stamp and provenance for the current event */
 const tb=$('objs').querySelector('tbody');
 const row=(sw,name,pt,eta,phi)=>{const tr=document.createElement('tr');
   tr.innerHTML=`<td><span class="sw" style="background:var(--${sw})"></span>${name}</td><td>${pt.toFixed(1)}</td><td>${eta==null?'':eta.toFixed(2)}</td><td>${phi.toFixed(2)}</td>`;tb.appendChild(tr)};
-const mus=EV.muons.slice().sort((a,b)=>b.pt-a.pt);
-mus.forEach(m=>row('mu',`muon μ${sup(m.q)}`,m.pt,m.eta,m.phi));
-EV.electrons.slice().sort((a,b)=>b.pt-a.pt).forEach(e=>row('ecal',`electron e${sup(e.q)}`,e.pt,e.eta,e.phi));
-jets.slice(0,6).forEach(j=>row('jet','jet',j.pt,j.eta,j.phi));
-if(EV.met)row('met','missing pT',EV.met.pt,null,EV.met.phi);
 const p4=(o,m)=>{const th=2*Math.atan(Math.exp(-o.eta)),p=o.pt/Math.sin(th);return [Math.hypot(p,m),o.pt*Math.cos(o.phi),o.pt*Math.sin(o.phi),p*Math.cos(th)]};
-const mass=(a,b)=>{const A=p4(a,0.10566),B=p4(b,0.10566),s=A.map((x,i)=>x+B[i]);return Math.sqrt(Math.max(0,s[0]**2-s[1]**2-s[2]**2-s[3]**2))};
-const inJet=m=>jets.find(j=>Math.hypot(m.eta-j.eta,dphi(m.phi,j.phi))<0.4);
-const os=[];for(let i=0;i<mus.length;i++)for(let j=i+1;j<mus.length;j++)if(mus[i].q*mus[j].q<0)os.push(`m(μ${sup(mus[i].q)}<sub>${i+1}</sub>μ${sup(mus[j].q)}<sub>${j+1}</sub>) = ${mass(mus[i],mus[j]).toFixed(1)} GeV`);
-const jm=mus.filter(inJet);
-$('phys').innerHTML=`<b>${mus.length} muons</b> (${mus.map(m=>m.pt.toFixed(1)).join(', ')} GeV) fired <b>HLT_TripleMu_12_10_5</b>. `+
-  (os.length?`Opposite-sign pairs: ${os.join(', ')}. `:'')+
-  (jm.length?`${jm.length===mus.length?'All':jm.length===1?'One':jm.length===2?'Two':jm.length} of them sit inside a jet (ΔR < 0.4), as muons from heavy-flavour decays do. `:'')+
-  `The leading μ⁺ heads straight into the cutaway. ${EV.vertices.length} reconstructed vertices; ${EV.tracks.filter(t=>t.pt>=1).length} tracks above 1 GeV.`;
-const keyHLT=/^HLT_TripleMu/;
-$('hlt').innerHTML=EV.hlt.map(h=>`<span class="chip${keyHLT.test(h)?' key':''}">${h}</span>`).join('');
+const minv=(A,B)=>{const s=A.map((x,i)=>x+B[i]);return Math.sqrt(Math.max(0,s[0]**2-s[1]**2-s[2]**2-s[3]**2))};
+const jp4=j=>[j.e,j.pt*Math.cos(j.phi),j.pt*Math.sin(j.phi),j.pt*Math.sinh(j.eta)];
+const fmtM=m=>m>=1000?`${(m/1000).toFixed(2)} TeV`:`${m.toFixed(1)} GeV`;
+const byPt=a=>a.slice().sort((x,y)=>y.pt-x.pt);
+function leptons(list,sym,m,name){
+  if(!list.length)return '';
+  let s=`<b>${list.length} ${name}${list.length>1?'s':''}</b> (${list.map(x=>x.pt.toFixed(1)).join(', ')} GeV). `;
+  const os=[];for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length;j++)if(list[i].q*list[j].q<0)
+    os.push(`m(${sym}${sup(list[i].q)}<sub>${i+1}</sub>${sym}${sup(list[j].q)}<sub>${j+1}</sub>) = ${minv(p4(list[i],m),p4(list[j],m)).toFixed(1)} GeV`);
+  if(os.length)s+=`Opposite-sign pair${os.length>1?'s':''}: ${os.join(', ')}. `;
+  return s;
+}
+function fillEvent(){
+  const mus=byPt(EV.muons),els=byPt(EV.electrons),J=D.jets;
+  tb.innerHTML='';
+  mus.forEach(m=>row('mu',`muon μ${sup(m.q)}`,m.pt,m.eta,m.phi));
+  els.forEach(e=>row('ecal',`electron e${sup(e.q)}`,e.pt,e.eta,e.phi));
+  J.slice(0,6).forEach(j=>row('jet','jet',j.pt,j.eta,j.phi));
+  if(EV.met)row('met','missing pT',EV.met.pt,null,EV.met.phi);
+  $('phys').innerHTML=`<b>${ENTRY.key}</b> fired. `+leptons(mus,'μ',0.10566,'muon')+leptons(els,'e',0.000511,'electron')+
+    (J.length?`${J.length} jet${J.length>1?'s':''} above 30 GeV${J.length>1&&J[1].pt>=100?`; the leading two have m(j<sub>1</sub>j<sub>2</sub>) = ${fmtM(minv(jp4(J[0]),jp4(J[1])))}`:''}. `:'')+
+    (EV.met?`Missing p<sub>T</sub> ${EV.met.pt.toFixed(1)} GeV. `:'')+(ENTRY.note?ENTRY.note+' ':'')+
+    `${EV.vertices.length} reconstructed vertices; ${EV.tracks.filter(t=>t.pt>=1).length} tracks above 1 GeV.`;
+  $('hlt').innerHTML=EV.hlt.map(h=>`<span class="chip${ENTRY.keys.includes(h)?' key':''}">${h}</span>`).join('');
+  $('stamp').innerHTML=`<b>CMS Experiment at the LHC, CERN</b>Data recorded: ${EV.time}<br><span>Run / Event / LS:</span> ${EV.run} / ${EV.event} / ${EV.lumi}<br><span>Bunch crossing</span> ${EV.bx} <span>· √s = 13.6 TeV</span>`;
+  const src=EV.source;
+  const prov=[
+    ['Dataset',`<code>${src.dataset}</code><br>CMS Open Data, <a href="https://opendata.cern.ch/search?q=EphemeralHLTPhysics0%20Run2024F%20RAW" target="_blank" rel="noopener">opendata.cern.ch</a>. L1-accepted collisions recorded unfiltered by the HLT; the HLT decisions are stored with each event.`],
+    ['Raw file',`<code>${src.file}</code>`],
+    ['Processing',`<code>${src.cmssw}</code>, <code>cmsDriver.py -s ${src.steps} --era ${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
+    ['Thresholds','ECAL hits ≥ 0.3 GeV, HCAL ≥ 0.8 GeV, HF ≥ 3 GeV. Tracks: high-purity <code>generalTracks</code> with p<sub>T</sub> ≥ 0.5 GeV. Jets: <code>ak4PFJetsCHS</code> p<sub>T</sub> ≥ 30 GeV. Tracker hits are pixel and strip cluster barycentres.'],
+    ['Drawing','Tracks are helices in 3.8 T from the reference point to the outermost hit. Muons follow their tracker helix to the coil, then the track extrapolation through each crossed muon chamber. Calorimeter towers grow from each cell’s front face, by default 6 cm per GeV in ECAL and 5 cm per GeV in HCAL (change it under Layer style).'],
+    ['Detector',`3D model from <a href="https://cds.cern.ch/record/2677903" target="_blank" rel="noopener">CMS-OUTREACH-2019-002</a>, as packed for <a href="https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn" target="_blank" rel="noopener">SketchUpCMS in Claude</a>. CMS (x, y, z) maps to model (z, y, −x) in metres, with the beam on the model axis.`],
+  ];
+  $('prov').innerHTML=prov.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+}
+fillEvent();
 
-/* event stamp and provenance */
-$('stamp').innerHTML=`<b>CMS Experiment at the LHC, CERN</b>Data recorded: ${EV.time}<br><span>Run / Event / LS:</span> ${EV.run} / ${EV.event} / ${EV.lumi}<br><span>Bunch crossing</span> ${EV.bx} <span>· √s = 13.6 TeV</span>`;
-const src=EV.source;
-const prov=[
-  ['Dataset',`<code>${src.dataset}</code><br>CMS Open Data, <a href="https://opendata.cern.ch/search?q=EphemeralHLTPhysics0%20Run2024F%20RAW" target="_blank" rel="noopener">opendata.cern.ch</a>. L1-accepted collisions recorded unfiltered by the HLT; the HLT decisions are stored with each event.`],
-  ['Raw file',`<code>${src.file}</code>`],
-  ['Processing',`<code>${src.cmssw}</code>, <code>cmsDriver.py -s ${src.steps} --era ${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
-  ['Thresholds','ECAL hits ≥ 0.3 GeV, HCAL ≥ 0.8 GeV, HF ≥ 3 GeV. Tracks: high-purity <code>generalTracks</code> with p<sub>T</sub> ≥ 0.5 GeV. Jets: <code>ak4PFJetsCHS</code> p<sub>T</sub> ≥ 30 GeV. Tracker hits are pixel and strip cluster barycentres.'],
-  ['Drawing','Tracks are helices in 3.8 T from the reference point to the outermost hit. Muons follow their tracker helix to the coil, then the track extrapolation through each crossed muon chamber. Calorimeter towers grow from each cell’s front face, by default 6 cm per GeV in ECAL and 5 cm per GeV in HCAL (change it under Layer style).'],
-  ['Detector',`3D model from <a href="https://cds.cern.ch/record/2677903" target="_blank" rel="noopener">CMS-OUTREACH-2019-002</a>, as packed for <a href="https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn" target="_blank" rel="noopener">SketchUpCMS in Claude</a>. CMS (x, y, z) maps to model (z, y, −x) in metres, with the beam on the model axis.`],
-];
-$('prov').innerHTML=prov.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+/* event picker: the URL hash names the event, so a link opens on it */
+const evSel=$('evsel');
+MAN.forEach(e=>evSel.add(new Option(`${e.label} (${e.key.replace(/^HLT_/,'')})`,e.event)));
+evSel.value=ENTRY.event;
+let evReq=0,statusT=0;
+async function pickEvent(entry){
+  const req=++evReq;evSel.value=entry.event;clearTimeout(statusT);
+  statusEl.classList.add('soft');statusEl.textContent='LOADING EVENT';statusEl.hidden=false;
+  let ev;
+  try{ev=await loadEv(entry)}catch(e){
+    if(req!==evReq)return;
+    evSel.value=ENTRY.event;statusEl.textContent='THAT EVENT DID NOT LOAD. PICK IT AGAIN TO RETRY.';statusT=setTimeout(()=>{statusEl.hidden=true},3000);return}
+  if(req!==evReq)return;      // a later pick replaced this one
+  EV=ev;ENTRY=entry;derive();LAYERS.forEach(make);buildLabels();counts();fillEvent();
+  statusEl.hidden=true;history.replaceState(null,'','#'+entry.event);replay();
+}
+const step=d=>{const i=MAN.findIndex(e=>String(e.event)===evSel.value);pickEvent(MAN[(i+d+MAN.length)%MAN.length])};
+evSel.onchange=()=>pickEvent(MAN.find(e=>String(e.event)===evSel.value));
+$('evprev').onclick=()=>step(-1);$('evnext').onclick=()=>step(1);
+addEventListener('hashchange',()=>{const e=MAN.find(x=>'#'+x.event===location.hash);if(e&&e!==ENTRY)pickEvent(e)});
 
 /* ---------- main loop ---------- */
 setStyle(['bp','live','glass','off'].includes(saved.det)?saved.det:'bp');applyHide();setView('cut',true);
