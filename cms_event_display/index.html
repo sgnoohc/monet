@@ -97,7 +97,7 @@ a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
 
 <main class="wrap">
   <header class="head">
-    <h1>SketchUpCMS<span>CMS Open Data · 2024 RAW · CMSSW_14_0_25</span></h1>
+    <h1>SketchUpCMS<span>CMS Open Data 2024 and simulation · CMSSW_14_0_25</span></h1>
     <div class="grp evp" role="group" aria-label="Event">
       <span>Event</span>
       <button class="btn" id="evprev" title="Previous event" aria-label="Previous event">‹</button>
@@ -107,7 +107,7 @@ a{color:var(--ice);text-decoration-color:var(--edge);text-underline-offset:2px}
   </header>
 
   <div class="frame" id="frame">
-    <canvas id="gl" aria-label="3D view of the CMS detector with one recorded proton-proton collision drawn inside it"></canvas>
+    <canvas id="gl" aria-label="3D view of the CMS detector with one proton-proton collision drawn inside it"></canvas>
     <div class="vig"></div>
     <svg id="hud" aria-hidden="true"></svg>
     <div class="stamp" id="stamp"><b>CMS Experiment at the LHC, CERN</b></div>
@@ -223,7 +223,7 @@ const getJSON=u=>fetch(u).then(r=>{if(!r.ok)throw new Error(r.status);return r.j
 const evCache=new Map();     // event file -> promise of its JSON, so revisiting an event is instant
 const loadEv=e=>{if(!evCache.has(e.file))evCache.set(e.file,getJSON('events/'+e.file).catch(err=>{evCache.delete(e.file);throw err}));return evCache.get(e.file)};
 let MAN,ENTRY;
-const evP=getJSON('events/index.json').then(m=>{MAN=m;ENTRY=MAN.find(e=>'#'+e.event===location.hash)||MAN[0];return loadEv(ENTRY)});
+const evP=getJSON('events/index.json').then(m=>{MAN=m;ENTRY=MAN.find(e=>'#'+e.id===location.hash)||MAN[0];return loadEv(ENTRY)});
 let buf;
 try{
   await new Promise((ok,bad)=>{const sc=document.createElement('script');sc.src='cms_parts.js';sc.onload=ok;sc.onerror=bad;document.head.appendChild(sc)});
@@ -667,7 +667,7 @@ const tb=$('objs').querySelector('tbody');
 const row=(sw,name,pt,eta,phi)=>{const tr=document.createElement('tr');
   tr.innerHTML=`<td><span class="sw" style="background:var(--${sw})"></span>${name}</td><td>${pt.toFixed(1)}</td><td>${eta==null?'':eta.toFixed(2)}</td><td>${phi.toFixed(2)}</td>`;tb.appendChild(tr)};
 const p4=(o,m)=>{const th=2*Math.atan(Math.exp(-o.eta)),p=o.pt/Math.sin(th);return [Math.hypot(p,m),o.pt*Math.cos(o.phi),o.pt*Math.sin(o.phi),p*Math.cos(th)]};
-const minv=(A,B)=>{const s=A.map((x,i)=>x+B[i]);return Math.sqrt(Math.max(0,s[0]**2-s[1]**2-s[2]**2-s[3]**2))};
+const msum=vs=>{const s=vs.reduce((a,v)=>a.map((x,i)=>x+v[i]),[0,0,0,0]);return Math.sqrt(Math.max(0,s[0]**2-s[1]**2-s[2]**2-s[3]**2))},minv=(A,B)=>msum([A,B]);
 const jp4=j=>[j.e,j.pt*Math.cos(j.phi),j.pt*Math.sin(j.phi),j.pt*Math.sinh(j.eta)];
 const fmtM=m=>m>=1000?`${(m/1000).toFixed(2)} TeV`:`${m.toFixed(1)} GeV`;
 const byPt=a=>a.slice().sort((x,y)=>y.pt-x.pt);
@@ -680,23 +680,34 @@ function leptons(list,sym,m,name){
   return s;
 }
 function fillEvent(){
-  const mus=byPt(EV.muons),els=byPt(EV.electrons),J=D.jets;
+  const sim=EV.source.kind==='sim',mus=byPt(EV.muons),els=byPt(EV.electrons),phs=ENTRY.photons?byPt(EV.photons):[],J=D.jets;
   tb.innerHTML='';
   mus.forEach(m=>row('mu',`muon μ${sup(m.q)}`,m.pt,m.eta,m.phi));
   els.forEach(e=>row('ecal',`electron e${sup(e.q)}`,e.pt,e.eta,e.phi));
+  phs.forEach(g=>row('ecal','photon γ',g.pt,g.eta,g.phi));
+  // four leptons with zero total charge: their mass; two or more listed photons: the leading pair's mass
+  const L4=mus.map(o=>({o,m:0.10566})).concat(els.map(o=>({o,m:0.000511}))).sort((a,b)=>b.o.pt-a.o.pt).slice(0,4);
+  const m4l=L4.length===4&&L4.reduce((q,x)=>q+x.o.q,0)===0?`m(4ℓ) = ${msum(L4.map(x=>p4(x.o,x.m))).toFixed(1)} GeV. `:'';
+  const gg=phs.length?`<b>${phs.length} photon${phs.length>1?'s':''}</b> (${phs.map(g=>g.pt.toFixed(1)).join(', ')} GeV)${phs.length>1?`, m(γ<sub>1</sub>γ<sub>2</sub>) = ${minv(p4(phs[0],0),p4(phs[1],0)).toFixed(1)} GeV`:''}. `:'';
   J.slice(0,6).forEach(j=>row('jet','jet',j.pt,j.eta,j.phi));
   if(EV.met)row('met','missing pT',EV.met.pt,null,EV.met.phi);
-  $('phys').innerHTML=`<b>${ENTRY.key}</b> fired. `+leptons(mus,'μ',0.10566,'muon')+leptons(els,'e',0.000511,'electron')+
-    (J.length?`${J.length} jet${J.length>1?'s':''} above 30 GeV${J.length>1&&J[1].pt>=100?`; the leading two have m(j<sub>1</sub>j<sub>2</sub>) = ${fmtM(minv(jp4(J[0]),jp4(J[1])))}`:''}. `:'')+
+  $('phys').innerHTML=(sim?`Simulated <b>${ENTRY.truth}</b>. `:`<b>${ENTRY.key}</b> fired. `)+leptons(mus,'μ',0.10566,'muon')+leptons(els,'e',0.000511,'electron')+m4l+gg+
+    (J.length?`${J.length} jet${J.length>1?'s':''} above 30 GeV${!sim&&J.length>1&&J[1].pt>=100?`; the leading two have m(j<sub>1</sub>j<sub>2</sub>) = ${fmtM(minv(jp4(J[0]),jp4(J[1])))}`:''}. `:'')+
     (EV.met?`Missing p<sub>T</sub> ${EV.met.pt.toFixed(1)} GeV. `:'')+(ENTRY.note?ENTRY.note+' ':'')+
-    `${EV.vertices.length} reconstructed vertices; ${EV.tracks.filter(t=>t.pt>=1).length} tracks above 1 GeV.`;
+    `${EV.vertices.length} reconstructed ${EV.vertices.length===1?'vertex':'vertices'}; ${EV.tracks.filter(t=>t.pt>=1).length} tracks above 1 GeV.`;
   $('hlt').innerHTML=EV.hlt.map(h=>`<span class="chip${ENTRY.keys.includes(h)?' key':''}">${h}</span>`).join('');
-  $('stamp').innerHTML=`<b>CMS Experiment at the LHC, CERN</b>Data recorded: ${EV.time}<br><span>Run / Event / LS:</span> ${EV.run} / ${EV.event} / ${EV.lumi}<br><span>Bunch crossing</span> ${EV.bx} <span>· √s = 13.6 TeV</span>`;
+  $('stamp').innerHTML=sim?`<b>CMS Simulation</b>${ENTRY.truth}<br><span>Event</span> ${EV.lumi}:${EV.event} <span>· no pileup · √s = 13.6 TeV</span>`
+    :`<b>CMS Experiment at the LHC, CERN</b>Data recorded: ${EV.time}<br><span>Run / Event / LS:</span> ${EV.run} / ${EV.event} / ${EV.lumi}<br><span>Bunch crossing</span> ${EV.bx} <span>· √s = 13.6 TeV</span>`;
   const src=EV.source;
   const prov=[
-    ['Dataset',`<code>${src.dataset}</code><br>CMS Open Data, <a href="https://opendata.cern.ch/search?q=EphemeralHLTPhysics0%20Run2024F%20RAW" target="_blank" rel="noopener">opendata.cern.ch</a>. L1-accepted collisions recorded unfiltered by the HLT; the HLT decisions are stored with each event.`],
-    ['Raw file',`<code>${src.file}</code>`],
-    ['Processing',`<code>${src.cmssw}</code>, <code>cmsDriver.py -s ${src.steps} --era ${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
+    ...(sim?[
+      ['Sample',`${ENTRY.sample}, generated for this page with ${src.generator}. No pileup collisions were added.`],
+      ['Processing',`<code>${src.cmssw}</code>: <code>${src.steps.join('</code>, then <code>')}</code>; era <code>${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
+    ]:[
+      ['Dataset',`<code>${src.dataset}</code><br>CMS Open Data, <a href="https://opendata.cern.ch/search?q=EphemeralHLTPhysics0%20Run2024F%20RAW" target="_blank" rel="noopener">opendata.cern.ch</a>. L1-accepted collisions recorded unfiltered by the HLT; the HLT decisions are stored with each event.`],
+      ['Raw file',`<code>${src.file}</code>`],
+      ['Processing',`<code>${src.cmssw}</code>, <code>cmsDriver.py -s ${src.steps} --era ${src.era}</code>, global tag <code>${src.gt}</code>. Hits and objects were written in global coordinates by a small EDAnalyzer.`],
+    ]),
     ['Thresholds','ECAL hits ≥ 0.3 GeV, HCAL ≥ 0.8 GeV, HF ≥ 3 GeV. Tracks: high-purity <code>generalTracks</code> with p<sub>T</sub> ≥ 0.5 GeV. Jets: <code>ak4PFJetsCHS</code> p<sub>T</sub> ≥ 30 GeV. Tracker hits are pixel and strip cluster barycentres.'],
     ['Drawing','Tracks are helices in 3.8 T from the reference point to the outermost hit. Muons follow their tracker helix to the coil, then the track extrapolation through each crossed muon chamber. Calorimeter towers grow from each cell’s front face, by default 6 cm per GeV in ECAL and 5 cm per GeV in HCAL (change it under Layer style).'],
     ['Detector',`3D model from <a href="https://cds.cern.ch/record/2677903" target="_blank" rel="noopener">CMS-OUTREACH-2019-002</a>, as packed for <a href="https://claude.ai/artifact/Qm1yr7yEPr33qXEKVyLCFn" target="_blank" rel="noopener">SketchUpCMS in Claude</a>. CMS (x, y, z) maps to model (z, y, −x) in metres, with the beam on the model axis.`],
@@ -707,24 +718,28 @@ fillEvent();
 
 /* event picker: the URL hash names the event, so a link opens on it */
 const evSel=$('evsel');
-MAN.forEach(e=>evSel.add(new Option(`${e.label} (${e.key.replace(/^HLT_/,'')})`,e.event)));
-evSel.value=ENTRY.event;
+for(const [kind,name] of [['data','Recorded · run 383631'],['sim','Simulated · no pileup']]){
+  const g=document.createElement('optgroup');g.label=name;
+  MAN.filter(e=>e.kind===kind).forEach(e=>g.appendChild(new Option(kind==='sim'?e.label:`${e.label} (${e.key.replace(/^HLT_/,'')})`,e.id)));
+  if(g.children.length)evSel.appendChild(g);
+}
+evSel.value=ENTRY.id;
 let evReq=0,statusT=0;
 async function pickEvent(entry){
-  const req=++evReq;evSel.value=entry.event;clearTimeout(statusT);
+  const req=++evReq;evSel.value=entry.id;clearTimeout(statusT);
   statusEl.classList.add('soft');statusEl.textContent='LOADING EVENT';statusEl.hidden=false;
   let ev;
   try{ev=await loadEv(entry)}catch(e){
     if(req!==evReq)return;
-    evSel.value=ENTRY.event;statusEl.textContent='THAT EVENT DID NOT LOAD. PICK IT AGAIN TO RETRY.';statusT=setTimeout(()=>{statusEl.hidden=true},3000);return}
+    evSel.value=ENTRY.id;statusEl.textContent='THAT EVENT DID NOT LOAD. PICK IT AGAIN TO RETRY.';statusT=setTimeout(()=>{statusEl.hidden=true},3000);return}
   if(req!==evReq)return;      // a later pick replaced this one
   EV=ev;ENTRY=entry;derive();LAYERS.forEach(make);buildLabels();counts();fillEvent();
-  statusEl.hidden=true;history.replaceState(null,'','#'+entry.event);replay();
+  statusEl.hidden=true;history.replaceState(null,'','#'+entry.id);replay();
 }
-const step=d=>{const i=MAN.findIndex(e=>String(e.event)===evSel.value);pickEvent(MAN[(i+d+MAN.length)%MAN.length])};
-evSel.onchange=()=>pickEvent(MAN.find(e=>String(e.event)===evSel.value));
+const step=d=>{const i=MAN.findIndex(e=>e.id===evSel.value);pickEvent(MAN[(i+d+MAN.length)%MAN.length])};
+evSel.onchange=()=>pickEvent(MAN.find(e=>e.id===evSel.value));
 $('evprev').onclick=()=>step(-1);$('evnext').onclick=()=>step(1);
-addEventListener('hashchange',()=>{const e=MAN.find(x=>'#'+x.event===location.hash);if(e&&e!==ENTRY)pickEvent(e)});
+addEventListener('hashchange',()=>{const e=MAN.find(x=>'#'+x.id===location.hash);if(e&&e!==ENTRY)pickEvent(e)});
 
 /* ---------- main loop ---------- */
 setStyle(['bp','live','glass','off'].includes(saved.det)?saved.det:'bp');applyHide();setView('cut',true);

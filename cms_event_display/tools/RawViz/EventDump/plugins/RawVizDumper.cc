@@ -27,6 +27,7 @@
 #include "DataFormats/JetReco/interface/PFJet.h"
 #include "DataFormats/METReco/interface/PFMET.h"
 #include "DataFormats/METReco/interface/PFMETCollection.h"
+#include "DataFormats/HepMCCandidate/interface/GenParticle.h"
 #include "DataFormats/EcalRecHit/interface/EcalRecHitCollections.h"
 #include "DataFormats/HcalRecHit/interface/HcalRecHitCollections.h"
 #include "DataFormats/SiPixelCluster/interface/SiPixelCluster.h"
@@ -127,6 +128,7 @@ public:
         cscT_(consumes(edm::InputTag("cscSegments"))),
         rpcT_(consumes(edm::InputTag("rpcRecHits"))),
         gemT_(consumes(edm::InputTag("gemRecHits"))),
+        genT_(consumes(edm::InputTag("genParticles"))),
         tkGeoT_(esConsumes()),
         glGeoT_(esConsumes()),
         caloGeoT_(esConsumes()) {}
@@ -251,6 +253,22 @@ public:
       j.s << '}';
     }
 
+    // generator truth, simulation only: the hard-process particles after the incoming partons
+    if (auto h = e.getHandle(genT_); h.isValid()) {
+      j.s << ",\"gen\":[";
+      bool first = true;
+      for (const auto& p : *h) {
+        if (!p.isHardProcess() || p.status() == 21) continue;
+        j.s << (first ? "" : ",") << "{\"id\":" << p.pdgId() << ",\"st\":" << p.status() << ",\"pt\":"; j.v(p.pt());
+        j.s << ",\"eta\":"; j.v(p.pt() > 1e-3 ? p.eta() : 0.);
+        j.s << ",\"phi\":"; j.v(p.phi());
+        j.s << ",\"m\":"; j.v(p.mass());
+        j.s << ",\"mo\":" << (p.numberOfMothers() ? p.mother(0)->pdgId() : 0) << '}';
+        first = false;
+      }
+      j.s << ']';
+    }
+
     // calorimeter rechits: [x,y,z, E, eta, phi] at the cell centre
     auto calo = [&](const char* key, const auto& h, double emin) {
       j.s << ",\"" << key << "\":[";
@@ -369,6 +387,7 @@ private:
   const edm::EDGetTokenT<CSCSegmentCollection> cscT_;
   const edm::EDGetTokenT<RPCRecHitCollection> rpcT_;
   const edm::EDGetTokenT<GEMRecHitCollection> gemT_;
+  const edm::EDGetTokenT<reco::GenParticleCollection> genT_;
   const edm::ESGetToken<TrackerGeometry, TrackerDigiGeometryRecord> tkGeoT_;
   const edm::ESGetToken<GlobalTrackingGeometry, GlobalTrackingGeometryRecord> glGeoT_;
   const edm::ESGetToken<CaloGeometry, CaloGeometryRecord> caloGeoT_;

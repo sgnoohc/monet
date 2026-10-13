@@ -1,5 +1,7 @@
 [
  {
+  "id": "994851190",
+  "kind": "data",
   "event": 994851190,
   "run": 383631,
   "lumi": 415,
@@ -14,6 +16,8 @@
   "note": "The two μ⁺ sit inside the 57 and 76 GeV jets; the leading μ⁺ heads straight into the cutaway."
  },
  {
+  "id": "994324494",
+  "kind": "data",
   "event": 994324494,
   "run": 383631,
   "lumi": 415,
@@ -27,6 +31,8 @@
   ]
  },
  {
+  "id": "996449745",
+  "kind": "data",
   "event": 996449745,
   "run": 383631,
   "lumi": 416,
@@ -40,6 +46,8 @@
   ]
  },
  {
+  "id": "993596241",
+  "kind": "data",
   "event": 993596241,
   "run": 383631,
   "lumi": 415,
@@ -51,6 +59,8 @@
   ]
  },
  {
+  "id": "993827196",
+  "kind": "data",
   "event": 993827196,
   "run": 383631,
   "lumi": 415,
@@ -63,6 +73,8 @@
   ]
  },
  {
+  "id": "994004254",
+  "kind": "data",
   "event": 994004254,
   "run": 383631,
   "lumi": 415,
@@ -75,6 +87,8 @@
   ]
  },
  {
+  "id": "995013141",
+  "kind": "data",
   "event": 995013141,
   "run": 383631,
   "lumi": 415,
@@ -87,6 +101,8 @@
   ]
  },
  {
+  "id": "996183500",
+  "kind": "data",
   "event": 996183500,
   "run": 383631,
   "lumi": 416,
@@ -99,6 +115,8 @@
   ]
  },
  {
+  "id": "996202011",
+  "kind": "data",
   "event": 996202011,
   "run": 383631,
   "lumi": 416,
@@ -111,6 +129,8 @@
   ]
  },
  {
+  "id": "994159267",
+  "kind": "data",
   "event": 994159267,
   "run": 383631,
   "lumi": 415,
@@ -123,6 +143,8 @@
   ]
  },
  {
+  "id": "994603224",
+  "kind": "data",
   "event": 994603224,
   "run": 383631,
   "lumi": 415,
@@ -133,5 +155,110 @@
    "HLT_Ele30_WPTight_Gsf_v9",
    "HLT_Ele32_WPTight_Gsf_v23"
   ]
+ },
+ {
+  "id": "sim-hzz4l-13",
+  "kind": "sim",
+  "event": 13,
+  "run": 1,
+  "lumi": 1,
+  "file": "sim_hzz4l_13.json",
+  "label": "H → ZZ* → 4μ",
+  "truth": "gg → H → ZZ* → 4μ",
+  "sample": "gg → H(125) → ZZ* → 4ℓ with ℓ = e or μ",
+  "note": "Generator level: m(Z₁) = 79.9 GeV, m(Z₂) = 26.7 GeV.",
+  "photons": false,
+  "keys": [
+   "HLT_IsoMu24_v24",
+   "HLT_IsoMu24_eta2p1_v26",
+   "HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass3p8_v16",
+   "HLT_TripleMu_5_3_3_Mass3p8_DZ_v19",
+   "HLT_TripleMu_10_5_5_DZ_v21",
+   "HLT_TripleMu_12_10_5_v21"
+  ]
+ },
+ {
+  "id": "sim-hzz4l-6",
+  "kind": "sim",
+  "event": 6,
+  "run": 1,
+  "lumi": 1,
+  "file": "sim_hzz4l_6.json",
+  "label": "H → ZZ* → 2e2μ",
+  "truth": "gg → H → ZZ* → 2e2μ",
+  "sample": "gg → H(125) → ZZ* → 4ℓ with ℓ = e or μ",
+  "note": "Generator level: m(Z₁) = 89.5 GeV, m(Z₂) = 13.7 GeV.",
+  "photons": false,
+  "keys": [
+   "HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass3p8_v16",
+   "HLT_Ele23_Ele12_CaloIdL_TrackIdL_IsoVL_v28"
+  ]
+ },
+ {
+  "id": "sim-hgg-8",
+  "kind": "sim",
+  "event": 8,
+  "run": 1,
+  "lumi": 2,
+  "file": "sim_hgg_8.json",
+  "label": "H → γγ",
+  "truth": "gg → H → γγ",
+  "sample": "gg → H(125) → γγ",
+  "note": "Generator level: photons with pT 63.6 and 59.7 GeV.",
+  "photons": true,
+  "keys": [
+   "HLT_Diphoton30_22_R9Id_OR_IsoCaloId_AND_HE_R9Id_Mass90_v22"
+  ]
+ },
+ {
+  "id": "sim-ttbar-10",
+  "kind": "sim",
+  "event": 10,
+  "run": 1,
+  "lumi": 3,
+  "file": "sim_ttbar_10.json",
+  "label": "tt̄, lepton+jets, W → μν",
+  "truth": "tt̄ → bW⁺ b̄W⁻, lepton+jets, W → μν",
+  "sample": "tt̄ with m(t) = 172.5 GeV, W → quarks, e or μ",
+  "note": "Generator level: m(tt̄) = 695 GeV.",
+  "photons": false,
+  "keys": [
+   "HLT_IsoMu24_v24",
+   "HLT_IsoMu24_eta2p1_v26"
+  ]
+ },
+ {
+  "id": "sim-zll-2",
+  "kind": "sim",
+  "event": 2,
+  "run": 1,
+  "lumi": 4,
+  "file": "sim_zll_2.json",
+  "label": "Z → μμ",
+  "truth": "qq̄ → Z → μ⁺μ⁻",
+  "sample": "qq̄ → Z → ee or μμ",
+  "note": "Generator level: m(Z) = 103.4 GeV.",
+  "photons": false,
+  "keys": [
+   "HLT_Mu37_TkMu27_v16",
+   "HLT_IsoMu24_v24",
+   "HLT_IsoMu24_eta2p1_v26",
+   "HLT_Mu17_TrkIsoVVL_Mu8_TrkIsoVVL_DZ_Mass3p8_v16",
+   "HLT_Mu50_v24"
+  ]
+ },
+ {
+  "id": "sim-zll-5",
+  "kind": "sim",
+  "event": 5,
+  "run": 1,
+  "lumi": 4,
+  "file": "sim_zll_5.json",
+  "label": "Z → ee",
+  "truth": "qq̄ → Z → e⁺e⁻",
+  "sample": "qq̄ → Z → ee or μμ",
+  "note": "Generator level: m(Z) = 91.4 GeV.",
+  "photons": false,
+  "keys": []
  }
 ]
