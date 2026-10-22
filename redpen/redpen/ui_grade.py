@@ -192,6 +192,7 @@ details.srest summary{cursor:pointer;font-size:11.5px;color:var(--mut);margin:14
 #cdlg .crow{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:12.5px}
 #cdlg label{display:flex;gap:6px;align-items:center;color:var(--mut)}
 #cdlg input{width:80px}
+#cdlg .hide{display:none}
 .cprev{margin-top:8px;font-size:12.5px;font-variant-numeric:tabular-nums;color:var(--mut)}
 .cprev b{color:var(--ink);font-weight:600}
 /* ---- stats ---- */
@@ -287,7 +288,7 @@ if(!S.qmode)S.qmode={};        // pid -> 'pct' | 'text'
 const PCTS=[100,90,80,70,60,50,40,30,20,10,0], PCT_DEFAULT=[0,50,100];
 // Marks typed before the percentage picker existed stay as they were.
 PARTS.forEach(p=>{if(!S.qmode[p.id])S.qmode[p.id]=(S.chips[p.id]||'').trim()?'text':'pct';});
-const half=x=>Math.round(x*2)/2;          // scores move in half points
+const mark=x=>Math.round(x*100)/100;      // scores move in hundredths
 const pctsOf=pid=>S.pcts[pid]||PCT_DEFAULT;
 function typed(pid){
   const mx=+S.max[pid]||0, raw=(S.chips[pid]||'').trim();
@@ -296,12 +297,12 @@ function typed(pid){
 }
 // The quick-mark buttons for one part.  Anything above the part's points is
 // dropped, not clipped, so lowering the points never invents a value nobody
-// typed; percentages land on the nearest half point.
+// typed; percentages land on the nearest hundredth, so 30% of 1 point is 0.3.
 function chipVals(pid){
   const mx=+S.max[pid]||0;
   let v=S.qmode[pid]==='text'?typed(pid):pctsOf(pid).map(p=>mx*p/100);
   if(!v.length)v=[0,Math.round(mx)/2,mx];
-  return [...new Set(v.map(half))].sort((a,b)=>a-b);
+  return [...new Set(v.map(mark))].sort((a,b)=>a-b);
 }
 function paintPicker(pid){
   const box=$('.qm[data-pid="'+pid+'"]'), mx=+S.max[pid]||0, on=pctsOf(pid);
@@ -310,7 +311,7 @@ function paintPicker(pid){
     +`<button data-mode="text" class="${mode==='text'?'on':''}">custom</button></span>`
     +(mode==='pct'
       ? '<span class="pcts">'+PCTS.map(p=>`<button data-pct="${p}" class="${on.includes(p)?'on':''}"`
-          +` title="${p}% = ${half(mx*p/100)} of ${mx}">${p}%</button>`).join('')+'</span>'
+          +` title="${p}% = ${mark(mx*p/100)} of ${mx}">${p}%</button>`).join('')+'</span>'
       : `<input type="text" placeholder="0, 5, 10, 12, ${mx}" value="${String(S.chips[pid]||'').replace(/"/g,'&quot;')}">`);
   const inp=$('input',box); if(inp)markBad(pid,inp);
 }
@@ -403,7 +404,7 @@ DATA.forEach(s=>{
 });
 let cur=0, focusPart=0, T=null, SIM=null;   // SIM: the similar-answers drawer
 const maxTotal=()=>PARTS.reduce((a,p)=>a+(+S.max[p.id]||0),0);
-const total=k=>PARTS.reduce((a,p)=>a+(+S.score[k][p.id]||0),0);
+const total=k=>mark(PARTS.reduce((a,p)=>a+(+S.score[k][p.id]||0),0));
 const touched=k=>!!S.touched[k];
 /* ---- final curve -------------------------------------------------------
    A squeeze toward full marks: every total keeps the same fraction K of its
@@ -453,7 +454,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden&&T)saveNow(
 
 function setScore(k,pid,v,flag=true){
   const mx=+S.max[pid]||0;
-  v=Math.max(0,Math.min(mx,Math.round((+v||0)*2)/2));
+  v=Math.max(0,Math.min(mx,mark(+v||0)));
   S.score[k][pid]=v; if(flag)S.touched[k]=true;
   const card=$('#s_'+k);
   const inp=$('#in_'+k+'_'+pid,card); if(inp)inp.value=v;
@@ -819,10 +820,40 @@ function cscale(v){
   if(cstep())x=cup()?Math.ceil(x/cstep()-1e-9)*cstep():Math.round(x/cstep()+1e-9)*cstep();
   return Math.round(x*1e4)/1e4;
 }
+// Served by the app (/q/<id>/files/…) the gradebook can be changed from here:
+// the app stores it in the config and rebuilds this page on the next visit.
+const APPQ=(location.pathname.match(/^\/q\/([^/]+)\/files\//)||[])[1];
+const NATIVE=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.redpen);
+async function setBook(path){
+  const r=await fetch('/q/'+APPQ+'/gradebook',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
+  const j=await r.json();
+  if(!j.ok){$('#cbooknote').textContent=j.error;return;}
+  saveNow();
+  try{sessionStorage.setItem('redpen_canvas_reopen',
+    j.cleared?'Using the roster again.':j.students+' students in '+j.roster+'.'
+      +(j.existing?'':' '+(j.warn||'It has no column "'+j.column+'".')));}catch(e){}
+  location.href='/q/'+APPQ+'/grading';            // rebuilt against the new file
+}
+async function pickBook(){
+  let p;
+  if(NATIVE){
+    try{p=((await window.webkit.messageHandlers.redpen.postMessage(
+      {op:'files',exts:['csv'],message:'Choose the Canvas gradebook export'}))||[])[0];}
+    catch(e){p=null;}
+  }else p=prompt('Path to the Canvas gradebook export (CSV):');
+  if(p&&p.trim())setBook(p.trim());
+}
 function openCanvas(){
-  if(!CANVAS.roster.length)
+  if(!CANVAS.roster.length&&!APPQ)
     return alert('No roster was loaded with this page, so there are no Canvas '
                 +'ids to upload against. Rebuild with: redpen grade');
+  $('#cbook').classList.toggle('hide',!APPQ); $('#cbooknote').textContent='';
+  $('#cbookname').innerHTML=CANVAS.book
+    ?'Students and column from <b>'+esc(CANVAS.book)+'</b>'+(CANVAS.from==='roster'?' (the roster)':'')
+    :'No roster or gradebook set';
+  $('#cbookroster').style.display=CANVAS.from==='roster'?'none':'';
+  $('#cgo').disabled=!CANVAS.roster.length;
   $('#ccol').textContent='Into the column "'+CANVAS.column+'"'
     +(CANVAS.existing?'':' — Canvas has no such assignment yet, so importing would create it.');
   const t=ctarget(); $('#ctot').value=t; $('#cfac').value=+(t/(maxTotal()||1)).toPrecision(6);
@@ -1213,6 +1244,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   $('#cpaper').addEventListener('click',()=>{S.canvas.outOf=maxTotal();
     $('#ctot').value=S.canvas.outOf;$('#cfac').value=1;paintCanvas();save();});
   $('#ccancel').addEventListener('click',cclose);
+  $('#cbookpick').addEventListener('click',pickBook);
+  $('#cbookroster').addEventListener('click',()=>setBook(''));
   $('#cgo').addEventListener('click',()=>{cclose();exportCanvas();});
   $('#cdlg').addEventListener('click',e=>{if(e.target.id==='cdlg')cclose();});
   $('#savef').addEventListener('click',saveFile);
@@ -1384,5 +1417,10 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   if(STALE){S.autoStamp=AUTO_STAMP;save();}
   applyMax(); go(0,false);
+  // Back from choosing a gradebook: reopen the dialog it was chosen in.
+  let back=null;
+  try{back=sessionStorage.getItem('redpen_canvas_reopen');
+      sessionStorage.removeItem('redpen_canvas_reopen');}catch(e){}
+  if(back!=null){openCanvas();$('#cbooknote').textContent=back;}
 });
 """

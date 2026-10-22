@@ -175,8 +175,9 @@ def _spawn(q, kind):
     return _sub[key]
 
 
-def set_roster(q, body):
-    """Point the grading config at the class list.
+def set_roster(q, body, key="roster"):
+    """Point the grading config at the class list, or (key="canvas_gradebook")
+    at the gradebook export the Canvas CSV is built against.
 
     Read before it is stored, so a wrong file is refused here rather than
     failing later inside the split with a scan already half-processed.
@@ -184,6 +185,11 @@ def set_roster(q, body):
     given = (body.get("path") or "").strip()
     if not q["config"]:
         return {"ok": False, "error": "no grading config yet — build the quiz first"}
+    if not given and key == "canvas_gradebook":
+        cfg = config.load(q["config"])          # cleared: back to the roster
+        cfg.pop(key, None)
+        config.save(cfg)
+        return {"ok": True, "roster": "", "students": 0, "cleared": True}
     if not given:
         return {"ok": False, "error": "choose the roster CSV"}
     path = os.path.realpath(os.path.expanduser(given))
@@ -200,9 +206,18 @@ def set_roster(q, body):
     # the course folder can move as a whole; absolute when it is somewhere else.
     rel = os.path.relpath(path, os.path.realpath(cfg["_dir"]))
     climbs = len([s for s in rel.split(os.sep) if s == os.pardir])
-    cfg["roster"] = rel if climbs <= 3 else path
+    cfg[key] = rel if climbs <= 3 else path
     config.save(cfg)
-    return {"ok": True, "roster": cfg["roster"], "students": len(roster)}
+    out = {"ok": True, "roster": cfg[key], "students": len(roster)}
+    if key == "canvas_gradebook":
+        # Whether the assignment is in it yet decides if the import updates
+        # that column or creates a new one, so say which now.
+        want = cfg.get("canvas_assignment") or cfg["title"]
+        try:
+            out["column"], out["existing"] = canvas.column(path, want)
+        except canvas.CanvasError as err:
+            out["column"], out["existing"], out["warn"] = want, False, str(err)
+    return out
 
 
 class Job(list):
@@ -536,6 +551,8 @@ class _H(BaseHTTPRequestHandler):
             return self._json(composer.post(_doc(q), body, preview=what == "preview"))
         if what == "roster":
             return self._json(set_roster(q, body))
+        if what == "gradebook":
+            return self._json(set_roster(q, body, "canvas_gradebook"))
         if what == "step":
             return self._json({"ok": True, "job": start_step(q, parts[3], body)})
         self._json({"ok": False, "error": "not found"})

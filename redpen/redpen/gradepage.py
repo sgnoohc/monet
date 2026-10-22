@@ -34,12 +34,19 @@ def load_auto(out_dir):
 def _canvas(cfg, roster):
     """What the page needs to write a Canvas gradebook upload.
 
-    The identity columns come from the roster rather than the sheets, because
-    Canvas matches on its own ids; the page only supplies the score.
+    The identity columns come from the gradebook export rather than the
+    sheets, because Canvas matches on its own ids; the page only supplies the
+    score.  A gradebook set at the grade step is newer than the roster, so a
+    student added since the split is in it; without one this is the roster.
     """
     want = cfg.get("canvas_assignment") or cfg["title"]
     existing = False
-    book, _ = canvas.gradebook(cfg, config.path_of)
+    book, src = canvas.gradebook(cfg, config.path_of)
+    try:
+        roster = matching.load_roster(book, cfg["roster_name_column"],
+                                      cfg["roster_id_column"]) or roster
+    except OSError:
+        pass
     try:
         col, existing = canvas.column(book, want)
     except (OSError, canvas.CanvasError):
@@ -52,6 +59,7 @@ def _canvas(cfg, roster):
     except (OSError, ValueError, TypeError):
         pts = None
     return {"column": col, "existing": existing, "points": pts,
+            "book": os.path.basename(book or ""), "from": src,
             "outOf": None if out_of is None else float(out_of),
             "step": float(cfg.get("canvas_round") or 0),
             "roster": [{"n": r["display"], "i": r.get("id", ""),
@@ -108,7 +116,7 @@ def build(cfg, out_dir, dest=None, log=print):
 <div class="shots">{shots}</div>
 <div class="sc"><div class="spin">
  <button data-pid="{e(p['id'])}" data-step="-1">−</button>
- <input type="number" id="in_{e(k)}_{e(p['id'])}" data-pid="{e(p['id'])}" step="0.5"
+ <input type="number" id="in_{e(k)}_{e(p['id'])}" data-pid="{e(p['id'])}" step="any"
         min="0" max="{_num(mx)}" value="{_num(start)}">
  <button data-pid="{e(p['id'])}" data-step="1">+</button>
  <span class="of of_{e(p['id'])}">/ {_num(mx)}</span></div>
@@ -273,6 +281,10 @@ def build(cfg, out_dir, dest=None, log=print):
 <div id="cdlg"><div class="box">
  <h3>Export for Canvas</h3>
  <p class="hint" id="ccol"></p>
+ <div class="crow hide" id="cbook"><span id="cbookname" class="muted"></span><span class="grow"></span>
+  <button id="cbookpick" title="A gradebook export taken after the assignment was made in Canvas">Choose gradebook…</button>
+  <button id="cbookroster" title="Take the students and the column from the roster again">Use roster</button></div>
+ <p class="hint" id="cbooknote"></p>
  <div class="crow"><label>Canvas total <input type="number" id="ctot" min="0" step="any"></label>
   <label>scale factor × <input type="number" id="cfac" min="0" step="any"></label></div>
  <div class="crow"><label>round to <select id="cstep"><option value="0">no rounding</option>
