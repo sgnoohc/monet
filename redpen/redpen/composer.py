@@ -21,13 +21,14 @@ def preview_dir(doc):
 def build_page(doc, base=""):
     """The composer page.  `base` mounts it under a prefix inside the app."""
     state = {"doc": {k: v for k, v in doc.items() if not k.startswith("_")},
-             "base": base}
+             "base": base, "mtime": _mtime(doc)}
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Compose — {doc['title']}</title><style>{CSS}</style></head><body>
 <div class="bar"><strong>Composer</strong>
  <span class="muted">{os.path.basename(doc['_path'])}</span>
  <span class="grow"></span>
+ <button id="reload" title="read the source file again, for edits made outside the composer">Reload from file</button>
  <span class="muted">target</span><input type="number" id="target" min="0" step="5" value="{_target(doc)}">
  <button class="pri" id="build" title="write the PDFs and the grading config">Build</button>
  <span id="msg" class="muted"></span></div>
@@ -138,6 +139,10 @@ class _H(BaseHTTPRequestHandler):
         stem = _stem(doc)
         if path in ("/", "/index.html"):
             return self._send(200, build_page(doc))
+        if path == "/source":
+            return self._json(200, reload(doc))
+        if path == "/mtime":
+            return self._json(200, {"mtime": _mtime(doc)})
         if path == "/pdf/quiz":
             return self._file(os.path.join(d, f"{stem}.pdf"), "application/pdf")
         if path == "/pdf/key":
@@ -180,11 +185,42 @@ class _H(BaseHTTPRequestHandler):
 _backed_up = set()
 
 
+def _mtime(doc):
+    try:
+        return os.path.getmtime(doc["_path"])
+    except OSError:
+        return None
+
+
+def reload(doc):
+    """Read the source again from disk, in place, for the page's Reload."""
+    try:
+        fresh = quizdoc.load(doc["_path"])
+    except (OSError, ValueError, quizdoc.QuizError) as err:
+        return {"ok": False, "error": f"could not read {os.path.basename(doc['_path'])}: {err}"}
+    doc.clear()
+    doc.update(fresh)
+    return {"ok": True, "doc": {k: v for k, v in doc.items() if not k.startswith("_")},
+            "mtime": _mtime(doc)}
+
+
 def post(doc, raw, preview=True):
     """Save the edited source and rebuild.  Shared by the standalone composer
-    and the app window, so both behave identically."""
+    and the app window, so both behave identically.
+
+    The page sends the file's mtime as it last knew it (`_seen`).  If the file
+    has changed since -- edited by hand, synced in -- nothing is written: the
+    page's copy is older than the file, and saving it would undo those edits.
+    """
+    raw = dict(raw)
+    seen = raw.pop("_seen", None)
+    now = _mtime(doc)
+    if seen is not None and now is not None and now != seen:
+        return {"ok": False, "stale": True,
+                "error": f"{os.path.basename(doc['_path'])} changed on disk — "
+                         "Reload from file to pick up those edits"}
     keep = {k: v for k, v in doc.items() if k.startswith("_")}
-    merged = dict(raw)
+    merged = {k: v for k, v in raw.items() if not k.startswith("_")}
     merged.update(keep)
 
     # Half an equation is not a mistake, it is someone mid-sentence.  A
@@ -204,11 +240,16 @@ def post(doc, raw, preview=True):
         if os.path.exists(src):
             shutil.copy2(src, src + ".bak")
         _backed_up.add(src)
+    # Unchanged content is not rewritten, so a reload's first preview leaves
+    # the hand-edited file exactly as it was.
+    same = merged == doc and os.path.exists(src)
     doc.clear()
     doc.update(merged)
-    quizdoc.save(doc)
+    if not same:
+        quizdoc.save(doc)
+    mtime = _mtime(doc)
     if pending and preview:
-        return {"ok": True, "pending": f"{pending[0]}: {pending[1]}"}
+        return {"ok": True, "pending": f"{pending[0]}: {pending[1]}", "mtime": mtime}
 
     log = []
     try:
@@ -219,8 +260,8 @@ def post(doc, raw, preview=True):
             typstbuild.generate(doc, preview_dir(doc), log=lambda *a: None)
             log.append(f"wrote {os.path.basename(r['config'])}")
     except Exception as err:            # a Typst error is a typo, not a crash
-        return {"ok": False, "error": str(err).strip()}
-    return {"ok": True, "zones": r["zones"], "pages": r["pages"],
+        return {"ok": False, "error": str(err).strip(), "mtime": mtime}
+    return {"ok": True, "zones": r["zones"], "pages": r["pages"], "mtime": mtime,
             "log": [l.strip() for l in log if l.strip()]}
 
 

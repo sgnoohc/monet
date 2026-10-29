@@ -99,6 +99,46 @@ def path_of(cfg, key):
     return v if os.path.isabs(v) else os.path.normpath(os.path.join(cfg["_dir"], v))
 
 
+def store_name(title):
+    """The grading page's file stem and browser-storage key for a quiz."""
+    return "".join(c if c.isalnum() else "_" for c in title or "").strip("_") or "quiz"
+
+
+# Which grading config the students/ folder beside it was split for.  Quizzes
+# that share a folder share its split output, so without this every quiz in
+# the folder looked scanned as soon as one of them was.
+SPLIT_MARK = "split.json"
+
+
+def split_owner(out_dir):
+    """Basename of the config the last split in `out_dir` used, or None."""
+    try:
+        with open(os.path.join(out_dir, SPLIT_MARK)) as f:
+            return json.load(f).get("config") or None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def mark_split(cfg, out_dir):
+    with open(os.path.join(out_dir, SPLIT_MARK), "w") as f:
+        json.dump({"config": os.path.basename(cfg["_path"])}, f)
+        f.write("\n")
+
+
+def split_is_for(cfg, out_dir):
+    """Whether the split output in `out_dir` belongs to this quiz.
+
+    A split made before the marker existed is taken to be this quiz's when it
+    is the only config there, or when its grading page was built.
+    """
+    if not os.path.exists(os.path.join(out_dir, "split_report.csv")):
+        return False
+    owner = split_owner(out_dir)
+    if owner:
+        return owner == os.path.basename(cfg["_path"])
+    return os.path.exists(os.path.join(out_dir, store_name(cfg.get("title")) + "_grading.html"))
+
+
 def new(template, pages, title=None, dpi=200):
     cfg = copy.deepcopy(DEFAULTS)
     cfg["template"] = template

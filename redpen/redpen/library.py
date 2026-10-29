@@ -7,6 +7,8 @@ and there is no second copy to get out of step.
 """
 import glob, hashlib, json, os, time
 
+from . import config
+
 APP = "redpen"
 SETTINGS = {
     "folders": [],          # absolute paths the sidebar lists quizzes from
@@ -123,7 +125,8 @@ def scan_folder(folder):
             "parts": len(parts),
             "points": round(sum(float(p.get("points", 0)) for p in parts), 2),
             "roster": cmeta.get("roster") or "",
-            "graded": os.path.isdir(os.path.join(folder, "students")),
+            "graded": bool(cfg) and config.split_is_for(
+                {"_path": cfg, "title": cmeta.get("title") or stem}, folder),
             "authored": bool(src),
             "mtime": max([os.path.getmtime(p) for p in (src, cfg) if p] or [0]),
         })

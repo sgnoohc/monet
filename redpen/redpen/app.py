@@ -153,6 +153,12 @@ def sync_rubric(q, cfg, log):
     return cfg
 
 
+def _other_split(cfg):
+    """The other quiz the split output beside this config belongs to, if any."""
+    owner = config.split_owner(cfg["_dir"])
+    return owner if owner and owner != os.path.basename(cfg["_path"]) else None
+
+
 def _spawn(q, kind):
     """Start one of the existing editors on its own port, once per quiz."""
     key = (q["id"], kind)
@@ -328,6 +334,9 @@ def run_step(q, name, body, log=None):
         # shows the text each verdict came from and every mark stays yours.
         if not os.path.exists(os.path.join(cfg["_dir"], "split_report.csv")):
             return {"log": ["nothing split yet — run Scan first"]}
+        if _other_split(cfg):
+            return {"log": [f"the sheets in this folder were split for {_other_split(cfg)}"
+                            " — run Scan for this quiz first"]}
         missing = [p["id"] for p in cfg["parts"] if p.get("auto", True) and not p.get("key")]
         if missing:
             log.append(f"warning: no answer key for {', '.join(missing)} — "
@@ -443,6 +452,11 @@ class _H(BaseHTTPRequestHandler):
                 return self._send(200, _notice("Nothing split yet",
                                   "Run <b>Scan</b> first; the grading page is built "
                                   "from the sheets it cuts out."))
+            if _other_split(cfg):
+                return self._send(200, _notice("Not scanned yet",
+                                  f"The sheets in this folder were split for "
+                                  f"<b>{_other_split(cfg)}</b>. Run <b>Scan</b> for this "
+                                  "quiz first."))
             if not cfg["parts"]:
                 return self._send(200, _notice("No graded parts",
                                   "Build the quiz, or set the parts in <b>Zones</b>."))
@@ -467,6 +481,18 @@ class _H(BaseHTTPRequestHandler):
             if not q["src"]:
                 return self._send(404, "this quiz has no source")
             return self._send(200, composer.build_page(_doc(q), base=f"/q/{q['id']}"))
+        if what == "mtime":
+            # Polled by the composer page to notice edits made outside it.
+            try:
+                return self._json({"mtime": os.path.getmtime(q["src"])} if q["src"] else {})
+            except OSError:
+                return self._json({})
+        if what == "source":
+            if not q["src"]:
+                return self._json({"ok": False, "error": "this quiz has no source"})
+            r = composer.reload(_doc(q))
+            _mtimes[q["id"]] = r.get("mtime")
+            return self._json(r)
         d = composer.preview_dir(_doc(q)) if q["src"] else None
         if what == "pdf" and d:
             name = f"{q['stem']}.pdf" if parts[3] == "quiz" else f"{q['stem']}-key.pdf"

@@ -106,6 +106,7 @@ def write_outputs(cfg, sheets, out_dir, log=print):
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
+    config.mark_split(cfg, out_dir)
     return rows
 
 

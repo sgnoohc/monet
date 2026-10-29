@@ -165,7 +165,7 @@ def build(cfg, out_dir, dest=None, log=print):
           "".join(f'<option value="{e(r["display"])}">' for r in roster) + "</datalist>"
           '<datalist id="roster_ids">' +
           "".join(f'<option value="{e(r["id"])}">' for r in roster if r["id"]) + "</datalist>")
-    store = "".join(c if c.isalnum() else "_" for c in cfg["title"]).strip("_") or "quiz"
+    store = config.store_name(cfg["title"])
     stamp = hashlib.sha1(json.dumps(
         {k: {pid: pv.get("verdict") for pid, pv in v.items()} for k, v in auto.items()},
         sort_keys=True).encode()).hexdigest()[:12] if auto else ""

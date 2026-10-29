@@ -122,6 +122,22 @@ JS = r"""
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 const LETTERS="abcdefghijklmnopqrstuvwxyz";
 let DOC=STATE.doc, VER=0, ZONES=[], PAGES=1, dirty=false;
+// The source file's mtime as this page last saw it.  Sent with every save, so
+// the server refuses to overwrite a file that was edited behind our back.
+let SEEN=STATE.mtime;
+const body=()=>JSON.stringify(Object.assign({},DOC,{_seen:SEEN}));
+// A save refused because the file changed on disk: say so, and offer Reload.
+// It also holds the watcher off, so the edit that was refused is not then
+// silently replaced by the file -- that is the user's call, via Reload.
+let held=false;
+function stale(j){
+  if(!j.stale) return false;
+  held=true;
+  $("#status").innerHTML='<span class="w">'+esc(j.error)+'</span>\n'
+    +'<button class="pri" data-reload>Reload from file</button>';
+  $("#msg").textContent="not saved";
+  return true;
+}
 // ?view=zones deep-links a pane, which is also how the pane is checked
 // without a human in front of it.
 let VIEW=new URLSearchParams(location.search).get("view")||"quiz";
@@ -506,7 +522,7 @@ document.addEventListener("click",e=>{
 
 // ---- preview -----------------------------------------------------
 let timer=null, running=false, again=false;
-function touch(){dirty=true; clearTimeout(timer); timer=setTimeout(preview,450);}
+function touch(){dirty=true; clearTimeout(timer); timer=setTimeout(()=>{timer=null;preview();},450);}
 
 async function preview(){
   if(running){again=true;return;}
@@ -514,9 +530,11 @@ async function preview(){
   $("#msg").innerHTML='<span class="spin"></span>';
   try{
     const r=await fetch(BASE+"/preview",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(DOC)});
+      body:body()});
     const j=await r.json();
-    if(j.pending){
+    if(j.mtime!=null) SEEN=j.mtime;
+    if(stale(j)){}
+    else if(j.pending){
       // The previous preview stays on screen: it is still the last thing that
       // compiled, and blanking it mid-equation would be worse than stale.
       $("#status").innerHTML='<span class="muted">still typing — '+esc(j.pending)+"</span>";
@@ -577,13 +595,55 @@ $$(".tabs button").forEach(b=>b.addEventListener("click",()=>{
 $("#build").addEventListener("click",async()=>{
   $("#msg").innerHTML='<span class="spin"></span>';
   const r=await fetch(BASE+"/build",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(DOC)});
+    body:body()});
   const j=await r.json();
+  if(j.mtime!=null) SEEN=j.mtime;
+  if(stale(j)) return;
   $("#status").innerHTML=(j.log||[esc(j.error)]).map(l=>
     `<span class="${/warning|error/.test(l)?"w":"k"}">${esc(l)}</span>`).join("\n");
   $("#msg").textContent=j.ok?"built":"build failed";
   if(j.ok){ZONES=j.zones;PAGES=j.pages;VER++;paint();}
 });
+
+// Reload from file: take the source as it is on disk now, for edits made in
+// a text editor.  Everything typed here was already saved on the last pause,
+// so only a change still waiting for that pause can be lost -- and that is
+// asked about first.
+async function reload(auto){
+  if(timer&&$("#msg").textContent!=="saved"&&dirty&&
+     !confirm("A change typed here in the last moment has not been saved yet. "
+              +"Reload from the file anyway and drop it?")) return;
+  clearTimeout(timer); timer=null;
+  $("#msg").innerHTML='<span class="spin"></span>';
+  const j=await (await fetch(BASE+"/source",{cache:"no-store"})).json();
+  if(!j.ok){ $("#status").innerHTML='<span class="w">'+esc(j.error)+"</span>";
+             $("#msg").textContent="reload failed"; return; }
+  DOC=j.doc; SEEN=j.mtime;
+  $$("[data-doc]").forEach(el=>{ const v=DOC[el.dataset.doc];
+    el.value=v==null?"":v; if(el.tagName==="TEXTAREA") grow(el); });
+  $("#target").value=DOC.target==null?100:DOC.target;
+  render(); dirty=false; held=false;
+  $("#status").innerHTML='<span class="k">'+(auto?"file changed on disk — reloaded":"reloaded from file")+"</span>";
+  preview();
+}
+$("#reload").addEventListener("click",()=>reload());
+document.addEventListener("click",e=>{ if(e.target.closest("[data-reload]")) reload(); });
+
+// Watch the source file, so an edit made in a text editor (or synced in)
+// appears here without pressing Reload.  Only the mtime is asked for, which is
+// cheap.  Nothing is swapped in while a change typed here is waiting to be
+// saved or is being saved: that save is then refused as stale, and Reload
+// stays the user's choice.
+let watching=false;
+setInterval(async()=>{
+  if(watching||running||timer||held||document.hidden) return;
+  watching=true;
+  try{
+    const j=await (await fetch(BASE+"/mtime",{cache:"no-store"})).json();
+    if(j.mtime!=null&&j.mtime!==SEEN&&!running&&!timer&&!held) await reload(true);
+  }catch(err){}
+  watching=false;
+},1500);
 
 $$("[data-doc]").forEach(el=>el.addEventListener("input",()=>{
   if(el.dataset.doc==="pages") render();
