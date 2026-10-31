@@ -1,0 +1,6 @@
+node_modules/
+# Recordings and what's made from them name other players: they stay on this machine.
+recordings/
+reports/
+history/
+*.mcpr
