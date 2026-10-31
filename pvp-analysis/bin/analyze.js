@@ -136,7 +136,8 @@ for (const file of inputs.flatMap(recordings)) {
   }
 }
 
-// The reports: everything in the history (on the chosen servers), recordings deleted since included.
+// The reports: everything in the history (on the chosen servers), recordings deleted since included:
+// the dashboard (every fight's replay in it), the Markdown report and the numbers.
 const entries = history.all().filter(e => onServer(e.meta.serverName));
 const fightCount = entries.reduce((n, e) => n + e.fights.length, 0);
 fs.mkdirSync(out, { recursive: true });
@@ -146,6 +147,12 @@ const write = (name, text) => {
   fs.renameSync(temp, path.join(out, name));
 };
 write('index.html', dashboard(entries, { generated: new Date(runAt) }));
+// (Fights' views are in index.html now: no more pages of their own, which a sandboxed browser couldn't open.)
+const oldPages = path.join(out, 'fights');
+if (fs.existsSync(oldPages)) {
+  for (const f of fs.readdirSync(oldPages)) if (/^[0-9a-f]+-\d+\.html$/.test(f)) fs.rmSync(path.join(oldPages, f));
+  if (!fs.readdirSync(oldPages).length) fs.rmdirSync(oldPages);
+}
 write('report.md', report(entries));
 write('fights.json', JSON.stringify(entries, null, 2));
 console.log(`${added} new recording${added === 1 ? '' : 's'}, ${updated} analysed again, ${kept} already in the history`

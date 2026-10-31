@@ -1,5 +1,6 @@
 // Follows the players in a recording, packet by packet, and writes down what they do: their
-// movement (a sample per move), swings, hits (from damage events, which name the attacker), crits
+// movement (a sample per move, and a track of where they were and which way they looked), swings
+// (with how far each player was), hits (from damage events, which name the attacker), crits
 // (the crit animation on the one hit), sweeps (the sweep particles), sounds near them (shields,
 // eating, drinking), blocks placed near them, deaths and totems, plus titles and chat for telling
 // fights apart.
@@ -30,6 +31,8 @@ const SOUNDS = {
   'entity.ender_pearl.throw': 'pearl',
   'item.bucket.empty': 'water',
 };
+/** A track sample's flags. */
+const FLAGS = { onGround: 1, sprinting: 2, sneaking: 4, usingItem: 8, blocking: 16 };
 const PLACED = new Set(['cobweb', 'water', 'oak_log', 'cobblestone', 'oak_planks']);
 
 /** Plain text of a chat or title component (prismarine passes some on as NBT). */
@@ -60,6 +63,25 @@ class World {
     this.events = [];
     /** Everyone seen, by server and entity id (ids start over on each server): { name, self }. */
     this.known = new Map();
+    /** By "server:id": [time, x, y, z, yaw (where they look), flags (World.FLAGS)] at every change. */
+    this.tracks = new Map();
+    /** By "server:id": [time, item in the main hand] at every change. */
+    this.held = new Map();
+  }
+
+  /** Write down where a player is, which way they look and what they're doing, if it changed. */
+  track(time, p) {
+    const key = `${this.server}:${p.id}`;
+    if (!this.tracks.has(key)) this.tracks.set(key, []);
+    const using = p.usingItem ? (p.offHandUse ? p.offHand : p.mainHand) : null;
+    const flags = (p.onGround ? FLAGS.onGround : 0) | (p.sprinting ? FLAGS.sprinting : 0) | (p.sneaking ? FLAGS.sneaking : 0)
+      | (p.usingItem ? FLAGS.usingItem : 0) | (using === 'shield' ? FLAGS.blocking : 0);
+    const yaw = p.look !== null ? p.look : p.yaw;
+    const t = this.tracks.get(key);
+    const last = t[t.length - 1];
+    if (last && last[1] === p.x && last[2] === p.y && last[3] === p.z && last[4] === yaw && last[5] === flags) return;
+    if (last && last[0] === time) t.pop();
+    t.push([time, p.x, p.y, p.z, yaw, flags]);
   }
 
   emit(time, type, fields) {
@@ -122,12 +144,13 @@ class World {
         if (this.selfUuid && params.objectUUID === this.selfUuid) this.selfId = params.entityId;
         const p = {
           id: params.entityId, uuid: params.objectUUID, name: this.names.get(params.objectUUID) || params.objectUUID,
-          self: params.entityId === this.selfId, x: params.x, y: params.y, z: params.z, yaw: 0, pitch: 0, vy: 0,
+          self: params.entityId === this.selfId, x: params.x, y: params.y, z: params.z, yaw: 0, look: null, pitch: 0, vy: 0,
           onGround: true, sprinting: false, sneaking: false, usingItem: false, offHandUse: false, health: null,
           mainHand: null, offHand: null,
         };
         this.players.set(p.id, p);
         this.known.set(`${this.server}:${p.id}`, { name: p.name, self: p.self });
+        this.track(time, p);
         return;
       }
       case 'entity_destroy':
@@ -143,7 +166,17 @@ class World {
       }
       case 'entity_look': {
         const p = this.players.get(params.entityId);
-        if (p) p.yaw = params.yaw * 360 / 256;
+        if (!p) return;
+        p.yaw = params.yaw * 360 / 256;
+        this.track(time, p);
+        return;
+      }
+      case 'entity_head_rotation': {
+        // Where a player looks (their body turns after their head).
+        const p = this.players.get(params.entityId);
+        if (!p) return;
+        p.look = params.headYaw * 360 / 256;
+        this.track(time, p);
         return;
       }
       case 'sync_entity_position':
@@ -169,6 +202,7 @@ class World {
             this.emit(time, 'health', { player: p.id, health: m.value });
           }
         }
+        this.track(time, p);
         return;
       }
       case 'update_health': {
@@ -187,12 +221,21 @@ class World {
           if (e.slot === 0) p.mainHand = item;
           else if (e.slot === 1) p.offHand = item;
         }
+        const key = `${this.server}:${p.id}`;
+        if (!this.held.has(key)) this.held.set(key, []);
+        const held = this.held.get(key);
+        if (!held.length || held[held.length - 1][1] !== p.mainHand) held.push([time, p.mainHand]);
         return;
       }
       case 'animation': {
         const p = this.players.get(params.entityId);
         if (!p) return;
-        if (params.animation === 0) this.emit(time, 'swing', { player: p.id });
+        if (params.animation === 0) {
+          // How far everyone near was, from this player's eyes, and what the player was doing.
+          const near = [];
+          for (const o of this.players.values()) if (o !== p && Math.hypot(o.x - p.x, o.z - p.z) < 10) near.push({ id: o.id, reach: World.reach(p, o) });
+          this.emit(time, 'swing', { player: p.id, a: World.snapshot(p), near });
+        }
         else if (params.animation === 4) this.emit(time, 'critAnimation', { victim: p.id });
         return;
       }
@@ -242,6 +285,14 @@ class World {
         this.emit(time, 'block', { block, x, y, z, player: p ? p.id : null });
         return;
       }
+      case 'acknowledge_player_digging':
+        // The server answering the recording player's placing or breaking a block (its arm swings too).
+        if (this.selfId !== null) this.emit(time, 'blockWork', { player: this.selfId });
+        return;
+      case 'block_break_animation':
+        // Someone breaking a block (a cobweb, say): the animation names them.
+        if (this.players.has(params.entityId)) this.emit(time, 'blockWork', { player: params.entityId });
+        return;
       case 'set_title_text':
         this.emit(time, 'title', { text: text(params.text) });
         return;
@@ -263,6 +314,7 @@ class World {
     if (yaw256 !== null && yaw256 !== undefined) p.yaw = yaw256 * 360 / 256;
     if (yawDegrees !== undefined) p.yaw = yawDegrees;
     this.emit(time, 'pos', { player: p.id, x, y, z, onGround, sprinting: p.sprinting });
+    this.track(time, p);
   }
 
   blockName(state) {
@@ -284,4 +336,4 @@ class World {
   }
 }
 
-module.exports = { World, text };
+module.exports = { World, FLAGS, text };

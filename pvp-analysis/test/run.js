@@ -15,6 +15,7 @@ const { World } = require('../src/world');
 const { fightsIn } = require('../src/fights');
 const { report } = require('../src/report');
 const { dashboard, fightsForPage } = require('../src/dashboard');
+const { fightData } = require('../src/fightpage');
 const { History } = require('../src/history');
 
 const VERSION = '1.21.11';
@@ -172,9 +173,34 @@ test('fights: a timeline of every hit, by whom, what kind, from how far', () => 
   const f = fightsIn(fight())[0];
   assert.deepStrictEqual(f.timeline.map(h => [h.by, h.kind]),
     [[0, 'sprint'], [0, 'crit'], [1, 'sweep'], [0, 'other'], [0, 'other'], [0, 'other']]);
-  assert.strictEqual(f.timeline[0].t, 0);
+  assert.strictEqual(f.timeline[0].t, 3000, 'from the start of the window, 3 s before the first hit');
   assert.ok(Math.abs(f.timeline[0].reach - 2.7) < 1e-9);
   assert.ok(f.seconds >= f.durationMs / 1000);
+});
+
+test('fights: every swing, what it was meant as and what came of it', () => {
+  const f = fightsIn(fight())[0];
+  const [alice, bob] = f.players;
+  // Alice: a sprint hit, then a double click 40 ms later (Bob still invulnerable: too early), a crit
+  // from a jump, then three more hits while she's still in the air as far as the recording knows.
+  assert.deepStrictEqual(f.swings.filter(s => s.by === 0).map(s => [s.try, s.outcome, s.kind]), [
+    ['sprint', 'hit', 'sprint'], ['sprint', 'early', null], ['crit', 'hit', 'crit'],
+    ['crit', 'hit', 'other'], ['crit', 'hit', 'other'], ['crit', 'hit', 'other']]);
+  assert.strictEqual(f.swings[1].charged, false, 'a click 40 ms after the last isn\'t charged');
+  assert.deepStrictEqual(alice.outcomes, { hit: 5, blocked: 0, early: 1, far: 0, miss: 0 });
+  assert.deepStrictEqual([alice.tries.sprint.tries, alice.tries.sprint.landed, alice.tries.crit.tries, alice.tries.crit.as.crit], [2, 1, 4, 1]);
+  assert.strictEqual(alice.accuracy, 5 / 6);
+  assert.deepStrictEqual([bob.tries.ground.tries, bob.tries.ground.as.sweep], [1, 1]);
+});
+
+test('fights: where both were, a sample a tick, from the start of the window', () => {
+  const f = fightsIn(fight())[0];
+  const { step, players } = f.tracks;
+  assert.strictEqual(step, 50);
+  assert.strictEqual(players[0].length, Math.floor(f.windowMs / step) + 1);
+  const atFirstHit = players[0][Math.floor(f.timeline[0].t / step)];
+  assert.deepStrictEqual(atFirstHit.slice(0, 3), [0.5, 64, 0.5]);
+  assert.ok(atFirstHit[4] & f.tracks.flags.sprinting, 'sprinting at her first hit');
 });
 
 test('history: kept per recording, by session; read back oldest first', () => {
@@ -209,14 +235,26 @@ test('dashboard: one page, the fights in it, names that can\'t break out of it',
   const entry = { id: 'x', file: 'test.mcpr', meta: { serverName: 'test', date: 5000, duration: 4000 }, added: 7, fights };
   const page = dashboard([entry], { generated: new Date(7) });
   assert.ok(page.startsWith('<!doctype html>'));
-  assert.strictEqual(page.split('</script>').length - 1, 2, 'only the page\'s own two scripts end');
+  assert.strictEqual(page.split('</script>').length - 1, 3, 'only the page\'s own scripts end: its data, a fight\'s, its script');
   assert.ok(!/<script[^>]+src=/.test(page), 'no outside scripts');
   const json = page.match(/<script type="application\/json" id="data">(.*?)<\/script>/s)[1];
   const data = JSON.parse(json);
   assert.strictEqual(data.fights.length, 1);
   assert.strictEqual(data.fights[0].players[1].name, '</script><b>Bob');
   const [f] = fightsForPage([entry]);
-  assert.deepStrictEqual([f.result, f.selfIndex, f.date, f.added, f.timeline.length], ['win', 0, 5000 + fights[0].startMs, 7, 6]);
+  assert.deepStrictEqual([f.result, f.selfIndex, f.date, f.added, f.page], ['win', 0, 5000 + fights[0].startMs, 7, '#fight=x-1']);
+  assert.ok(!('tracks' in f) && !('swings' in f), 'the overview\'s list leaves the replays to the fights\' own data');
+  const replay = JSON.parse(page.match(/<script type="application\/json" id="replay-x-1">(.*?)<\/script>/s)[1]);
+  assert.strictEqual(replay.players[1].name, '</script><b>Bob', 'each fight\'s replay is in the page too');
+  assert.ok(page.includes('<template id="fight-template">'));
+});
+
+test('fight view: what a fight\'s replay needs', () => {
+  const fights = fightsIn(fight());
+  const entry = { id: 'x', file: 'test.mcpr', meta: { serverName: 'test', date: 5000, duration: 4000 }, fights };
+  const data = fightData(entry, 0);
+  assert.deepStrictEqual([data.title, data.id, data.result, data.lead, data.swings.length, data.tracks.players.length],
+    ['Fight vs Bob', 'x-1', 'win', 3000, 7, 2]);
 });
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');

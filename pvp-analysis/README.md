@@ -48,12 +48,20 @@ recording's file is named for the recording, so copying never makes doubles.
 
 It writes, in `reports/`:
 
-- **`index.html`**, the dashboard (one file, works offline, light and dark): headline numbers with
-  the change since the last session; how each measure moves over time, you against your opponents,
-  a point per recording (or per day: there's a switch, and it moves to days once there are three);
-  how your hits land (crits, sprint hits, sweeps); reach at hits; every fight, with its hit timeline
-  and everything measured, both sides; and how each opponent fights. Fights new in the latest run are
-  marked. Every chart has a table under it.
+- **`index.html`**, the dashboard (works offline, light and dark): headline numbers with the change
+  since the last session; **what you tried and what landed** (your swings by kind of try, and where
+  they went: landed, too early, out of reach, missed, shield); how your hits land (crits, sprint
+  hits, sweeps); reach at hits; one measure at a time over time, you against your opponents, a point
+  per recording or per day; the fights; and how each opponent fights. Fights new in the latest run
+  are marked. Every chart has a table under it.
+  **Replay ›** on a fight opens its view in the same page (Back returns): a **replay** from above
+  (both players, which way they look, trails, every hit and swing, blocks placed; it follows the
+  fight, or shows the whole area; play, pause, step a tick at a time), with the distance between
+  you, every swing on a timeline and both players' health along the same clock (click any of them
+  to go there); the fight's numbers side by side; what each of you tried and what landed.
+
+  It's all one file on purpose: a browser installed as a Flatpak (as on a Steam Deck) that opens a
+  local file is given just that file, and couldn't open a second one beside it.
 - `report.md`, the same as text: a table per fight, both fighters side by side, then your totals.
 - `fights.json`, every number, for analysis of your own.
 
@@ -84,7 +92,10 @@ are left out. The winner is whoever didn't die, or your VICTORY / DEFEAT title.
 | Sweeps | the sweep particles, at the attacker |
 | Sprint hits | the attacker was sprinting (their sprint flag) at the hit |
 | Reach | from the attacker's eyes to the nearest point of the other's hitbox at the hit: what the server checks (3 blocks in survival) |
-| Clicks | arm swings: CPS over the fight and in its best second, double clicks (two swings within 60 ms), swings that hit |
+| Clicks | arm swings: CPS over the fight and in its best second, double clicks (two swings within 60 ms) |
+| Tries | each swing, by what the swinger was doing: falling and not sprinting (a crit try), sprinting (a sprint hit), going up in a jump (too early to crit), on the ground; and whether the weapon was fully charged (its cooldown since the last swing) |
+| What came of them | the hit it made (its kind), or why not: too early (the other was still invulnerable, half a second after being hit), out of reach (over 3 blocks, eyes to hitbox), a shield, or missed in reach. Swings that place or break a block (the server's acknowledgement, or the break animation) or empty a bucket aren't attacks |
+| Replay | both players' positions, look direction and state (on the ground, sprinting, sneaking, shield up) a tick at a time, what they held, and their health |
 | Combos | hits in a row without being hit back: the longest, and how many of 3 or more |
 | Movement | distance kept, sideways speed relative to the other player (strafing), time sprinting, jumps, sprint resets (w-taps) |
 | Items | golden apples eaten, potions drunk, pearls, totems, shield blocks (sounds at the player), blocks placed near them (cobwebs, water, logs) |
@@ -116,7 +127,9 @@ Recordings name everyone in them, and so do the history and the reports: `record
 | `src/world.js` | follows the players and writes down what they do |
 | `src/fights.js` | fights, and each fighter's numbers |
 | `src/history.js` | the history: an analysis per recording, in `history/` |
-| `src/dashboard.js` | the dashboard: the fights as JSON in one HTML page that draws its own charts (SVG) |
+| `src/page.js` | what the pages share: the page around the data, colours, and the charts both pages draw (SVG, in the browser) |
+| `src/dashboard.js` | the dashboard page: the overview, and which view to show |
+| `src/fightpage.js` | a fight's view, in the same page: the replay, and the charts along the fight |
 | `src/report.js` | the Markdown report |
 | `data/registries-1.21.11.json` | the ids the server sends (sounds, entity types, items, particles, block states), from the vanilla server's own data generator: minecraft-data's sound table for 1.21.11 is one off |
 | `tools/make-registries.sh` | makes that file for a Minecraft version, from its server jar |
