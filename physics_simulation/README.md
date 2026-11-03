@@ -50,16 +50,15 @@ A rigid body built from small pieces dm spins about a vertical axis through O. C
 
 Live: https://sgnoohc.github.io/monet/physics_simulation/waves.html
 
-One displacement s(x, t) drawn three ways, stacked with a shared x axis:
+Choose **Transverse**, **Longitudinal**, or **Both**. All views use the same displacement s(x, t):
 
-- Transverse: beads on a string displaced up and down
-- Longitudinal: a column of particles displaced left and right, shaded by density, with compressions (C) and rarefactions (R) labeled
-- A graph of s against x, with the excess density −∂s/∂x as a dashed curve (it peaks at the compressions, a quarter wavelength from the displacement peaks)
+- Transverse: 32 beads on a string moving up and down
+- Longitudinal: one row of 32 particles moving left and right, shaded where they bunch up, with compressions (C) and rarefactions (R) labeled
 
-Click any particle to track it in all three bands. Its velocity arrow and readouts show that it only oscillates about x₀, with top speed ωA, while the pattern moves at v = fλ.
+Click a particle to follow it (red). It only oscillates about its own spot while the wave moves on.
 
-- Sine wave or single Gaussian pulse, traveling right or left
-- Sliders for A, λ and f, with v, T, k and ω shown
-- Step ⅛ T at a time to follow one particle through a period
-- Optional velocity arrows on every particle, equilibrium positions, wavelength brackets
-- Amplitude is capped so kA < 1 and particles in the longitudinal band never pass each other
+- Sine wave or single pulse, moving left or right; sliders for A, λ and f, with v = fλ and T shown
+- Step ⅛ T at a time
+- Off by default: the wavelength bracket, velocity arrows on every particle, and a graph of s against x with the density curve, which peaks at the compressions
+- Vertical displacement is drawn up to 3× the horizontal scale so the transverse wave is easy to see
+- Amplitude is capped so kA < 1, so neighbouring particles never pass each other
