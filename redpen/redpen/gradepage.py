@@ -266,6 +266,17 @@ def build(cfg, out_dir, dest=None, log=print):
    <span><i style="background:var(--sq1)"></i>partial</span>
    <span><i style="background:var(--sq2)"></i>full marks</span></div>
   <table id="stparts"></table></div>
+ <div class="parts"><h3>Discrimination</h3>
+  <div class="cap" style="font-size:12px;color:var(--mut);margin-bottom:6px">Does a part
+   separate the strong from the weak? Each row compares the top 27% of students by total
+   with the bottom 27%: <b>D</b> is the gap between the two groups' mean scores on the part,
+   as a fraction of its marks (−1 … 1). <b>r</b> is the correlation of the part with the
+   rest of the paper (the total without this part). Roughly, D ≥ 0.4 is a good
+   separator, 0.2 – 0.4 fair, below 0.2 weak, and a negative D means the weaker students
+   did better here: worth checking the key.</div>
+  <div class="legend"><span><i style="background:var(--sq0)"></i>bottom 27% mean</span>
+   <span><i style="background:var(--sq2)"></i>top 27% mean</span></div>
+  <table id="stdisc"></table></div>
  <div class="parts"><h3>Common mistakes</h3>
   <div class="cap" style="font-size:12px;color:var(--mut);margin-bottom:6px">From the notes
    on each part, most frequent first. Click a name to go to that answer.</div>

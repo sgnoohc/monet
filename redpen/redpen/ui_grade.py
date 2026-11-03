@@ -267,6 +267,15 @@ details.srest summary{cursor:pointer;font-size:11.5px;color:var(--mut);margin:14
 .stack span:last-child{border-radius:0 4px 4px 0}
 .stack span:only-child{border-radius:4px}
 .stack .z{background:var(--sq0)}.stack .p{background:var(--sq1)}.stack .f{background:var(--sq2)}
+.dumb{position:relative;height:12px;min-width:120px;background:var(--line2);border-radius:4px}
+.dumb .bar{position:absolute;top:4px;height:4px;background:var(--sq1);border-radius:2px}
+.dumb .bar.neg{background:var(--no)}
+.dumb i{position:absolute;top:1px;width:10px;height:10px;border-radius:50%;margin-left:-5px}
+.dumb .lo{background:var(--sq0);box-shadow:0 0 0 1px var(--sq1)}.dumb .hi{background:var(--sq2)}
+.dq{font-size:11.5px;padding:1px 7px;border-radius:99px;border:1px solid var(--line)}
+.dq.good{border-color:var(--ok);color:var(--ok)}
+.dq.neg{border-color:var(--no);color:var(--no)}
+.dq.weak{color:var(--mut)}
 details.tbl{margin-top:8px;font-size:12.5px}
 details.tbl summary{cursor:pointer;color:var(--mut)}
 details.tbl table{border-collapse:collapse;margin-top:6px}
@@ -1006,7 +1015,7 @@ function renderStats(){
   if(!sheets.length){
     $('#sttiles').innerHTML='';$('#sthist').innerHTML='';$('#stparts').innerHTML='';
     $('#stbin').textContent='No sheets reviewed yet.';$('#sttable').innerHTML='';
-    $('#stmist').innerHTML='';return;
+    $('#stmist').innerHTML='';$('#stdisc').innerHTML='';return;
   }
   renderCurve();
   // with the curve on, everything below describes the curved totals
@@ -1109,7 +1118,49 @@ function renderStats(){
       +`<td><div class="stack">${seg('z',r.z,r.n,'scored zero')}${seg('p',r.part,r.n,'partial credit')}${seg('f',r.f,r.n,'full marks')}</div></td>`
       +`<td class="n">${r.z}</td><td class="n">${r.f}</td></tr>`).join('');
   renderMistakes(sheets);
+  renderDiscrim(sheets);
   $$('#stparts [data-tip]').forEach(el=>{
+    el.addEventListener('mousemove',ev=>tip(el.dataset.tip,ev));
+    el.addEventListener('mouseleave',()=>tip(null));
+  });
+}
+// Item discrimination, by the classic upper/lower-group method: rank by raw
+// total (the curve keeps the order, its rounding would only add ties), take
+// the top and bottom 27%, and compare their mean on each part.  r is the
+// part against the rest of the paper, so a part is not credited for
+// correlating with itself.
+function renderDiscrim(sheets){
+  const box=$('#stdisc'), n=sheets.length, g=Math.round(.27*n);
+  if(g<2){box.innerHTML='<tr><td class="muted">Needs at least 6 sheets.</td></tr>';return;}
+  const ranked=sheets.map(s=>({s,t:total(s.k)})).sort((a,b)=>b.t-a.t);
+  const top=ranked.slice(0,g), bot=ranked.slice(n-g);
+  const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+  const corr=(x,y)=>{const mx=mean(x),my=mean(y);let sxy=0,sxx=0,syy=0;
+    x.forEach((v,i)=>{sxy+=(v-mx)*(y[i]-my);sxx+=(v-mx)**2;syy+=(y[i]-my)**2;});
+    return sxx>1e-12&&syy>1e-12?sxy/Math.sqrt(sxx*syy):null;};
+  const sc=(s,p)=>+S.score[s.k][p.id]||0;
+  const P=x=>Math.round(100*x)+'%';
+  box.innerHTML='<tr><th>Part</th><th class="n">bottom</th><th style="width:34%">bottom → top 27%</th>'
+    +'<th class="n">top</th><th class="n">D</th><th class="n">r</th><th></th></tr>'
+    +PARTS.map(p=>{
+      const mx=+S.max[p.id]||0;
+      if(!mx)return `<tr><td>${esc(p.label)}</td><td colspan="6" class="muted">no marks</td></tr>`;
+      const hi=mean(top.map(o=>sc(o.s,p)))/mx, lo=mean(bot.map(o=>sc(o.s,p)))/mx, D=hi-lo;
+      const r=corr(sheets.map(s=>sc(s,p)),sheets.map(s=>total(s.k)-sc(s,p)));
+      const [cls,word]=D<-.05?['neg','reversed']:D>=.4?['good','good']:D>=.2?['','fair']:['weak','weak'];
+      const a=Math.max(0,Math.min(1,Math.min(hi,lo))), b=Math.max(0,Math.min(1,Math.max(hi,lo)));
+      const t=`<b>top ${g}</b>: ${fmt(hi*mx,2)} of ${fmt(mx)} (${P(hi)})<br>`
+        +`<b>bottom ${g}</b>: ${fmt(lo*mx,2)} of ${fmt(mx)} (${P(lo)})`;
+      return `<tr><td>${esc(p.label)}</td><td class="n">${P(lo)}</td>`
+        +`<td><div class="dumb" data-tip="${t.replace(/"/g,'&quot;')}">`
+        +`<span class="bar${D<0?' neg':''}" style="left:${100*a}%;width:${100*(b-a)}%"></span>`
+        +`<i class="lo" style="left:${100*Math.min(1,lo)}%"></i><i class="hi" style="left:${100*Math.min(1,hi)}%"></i></div></td>`
+        +`<td class="n">${P(hi)}</td><td class="n"><b>${fmt(D,2)}</b></td>`
+        +`<td class="n">${r==null?'—':fmt(r,2)}</td><td><span class="dq ${cls}">${word}</span></td></tr>`;
+    }).join('')
+    +(n<20?`<tr><td colspan="7" class="muted" style="font-size:11.5px">Only ${n} sheets, ${g} per group: `
+      +'read these as rough.</td></tr>':'');
+  $$('#stdisc [data-tip]').forEach(el=>{
     el.addEventListener('mousemove',ev=>tip(el.dataset.tip,ev));
     el.addEventListener('mouseleave',()=>tip(null));
   });
