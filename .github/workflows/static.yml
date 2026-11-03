@@ -36,10 +36,13 @@ jobs:
       - name: Assemble site
         # spaceattack stays at the site root; other web apps get their own path
         run: |
-          mkdir -p _site/buzzer _site/nbody_simulation _site/cms_event_display
+          mkdir -p _site/buzzer _site/physics_simulation _site/nbody_simulation _site/cms_event_display
           cp -R spaceattack/. _site/
           cp -R buzzer/index.html buzzer/audio _site/buzzer/
-          cp nbody_simulation/*.html _site/nbody_simulation/
+          cp physics_simulation/*.html _site/physics_simulation/
+          # old links from before the move
+          echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=../physics_simulation/nbody.html"><a href="../physics_simulation/nbody.html">Moved</a>' > _site/nbody_simulation/index.html
+          echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0; url=../physics_simulation/rigid_body.html"><a href="../physics_simulation/rigid_body.html">Moved</a>' > _site/nbody_simulation/rigid_body.html
           cp -R cms_event_display/index.html cms_event_display/cms_parts.js cms_event_display/events _site/cms_event_display/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

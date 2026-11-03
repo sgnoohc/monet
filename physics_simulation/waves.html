@@ -1,0 +1,582 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0}</style></head><body>
+<title>Transverse and Longitudinal Waves</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Public+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Same lab-bench layout as nbody.html: one canvas on the left with three stacked bands, instrument panel on the right. */
+:root {
+  --bg: #eef1ed;
+  --surface: #ffffff;
+  --stage: #fafbf9;
+  --ink: #161b18;
+  --muted: #5b645e;
+  --line: #d6ddd7;
+  --faint: #c4cdc6;
+  --accent: #4a3aa7;     /* headings, controls */
+  --track: #c3352b;      /* the tracked particle */
+  --vel: #0b6e8a;        /* particle velocity */
+  --wave: #2f7a57;       /* the pattern: crests, compressions, wave speed v */
+  --dens: rgba(74, 58, 167, 0.16);   /* compression shading */
+  --rare: rgba(11, 110, 138, 0.07);  /* rarefaction shading */
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d110f; --surface: #151a17; --stage: #090c0a; --ink: #e8ece9; --muted: #9aa49d;
+    --line: #29322c; --faint: #313b34; --accent: #9a8ff0; --track: #ef6a5e; --vel: #4fb8d8; --wave: #56b98a;
+    --dens: rgba(154, 143, 240, 0.22); --rare: rgba(79, 184, 216, 0.07);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d110f; --surface: #151a17; --stage: #090c0a; --ink: #e8ece9; --muted: #9aa49d;
+  --line: #29322c; --faint: #313b34; --accent: #9a8ff0; --track: #ef6a5e; --vel: #4fb8d8; --wave: #56b98a;
+  --dens: rgba(154, 143, 240, 0.22); --rare: rgba(79, 184, 216, 0.07);
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+.app {
+  height: 100%; box-sizing: border-box;
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px; padding: 14px 16px;
+}
+header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1; margin: 0; letter-spacing: -0.01em; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+button {
+  font: 500 13px/1 var(--font-body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); min-width: 74px; }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; margin-left: -1px; }
+.seg button:first-child { border-radius: 7px 0 0 7px; margin-left: 0; }
+.seg button:last-child { border-radius: 0 7px 7px 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); position: relative; }
+.speed { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.speed output { font-family: var(--font-mono); color: var(--ink); min-width: 3.2em; }
+input[type="range"] { accent-color: var(--accent); }
+a.navlink { color: var(--accent); font-size: 13px; text-decoration: none; border-bottom: 1px solid currentColor; }
+
+.stage { position: relative; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--stage); }
+#view { position: absolute; inset: 0; display: block; width: 100%; height: 100%; cursor: pointer; touch-action: manipulation; }
+.hint { position: absolute; right: 12px; bottom: 8px; font-size: 12px; color: var(--muted); pointer-events: none; }
+
+aside { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+h2 { font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; display: flex; justify-content: space-between; gap: 8px; }
+h2 .math { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--ink); }
+.math { font-family: var(--font-display); font-style: italic; font-size: 1.15em; }
+.row { display: grid; grid-template-columns: 26px minmax(0, 1fr) 64px; align-items: center; gap: 8px; }
+.row label { font-family: var(--font-display); font-style: italic; font-size: 18px; }
+.row output, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.row output { text-align: right; }
+.line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.readout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.cell { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 7px; background: var(--bg); min-width: 0; }
+.cell .k { font-size: 12px; color: var(--muted); }
+.cell .k .math { color: var(--ink); }
+.cell .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+.cell.hl .val { color: var(--track); }
+.cell.wv .val { color: var(--wave); }
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; }
+.toggles label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.toggles input { accent-color: var(--accent); }
+.note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.notes { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.notes p { margin: 0; }
+.eq { font-family: var(--font-display); font-size: 18px; line-height: 1.5; padding: 4px 10px; background: var(--bg); border-radius: 6px; overflow-x: auto; white-space: nowrap; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: 0; margin-right: 4px; }
+
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .stage { height: 78svh; min-height: 520px; }
+  aside { overflow: visible; }
+  .hint { display: none; }
+}
+</style>
+
+<div class="app">
+  <header>
+    <h1>Transverse and longitudinal waves</h1>
+    <div class="controls">
+      <button id="play" class="primary" type="button">Pause</button>
+      <button id="step" type="button" title="Advance one eighth of a period">Step ⅛ T</button>
+      <button id="reset" type="button">Reset</button>
+      <div class="speed"><label for="speed">Speed</label><input id="speed" type="range" min="0.1" max="2" step="0.1" value="1"><output id="speedOut">1.0×</output></div>
+      <a class="navlink" href="nbody.html">N-body simulation</a>
+      <a class="navlink" href="rigid_body.html">Rigid body rotation</a>
+      <a class="navlink" href="./">All simulations</a>
+    </div>
+  </header>
+
+  <div class="stage">
+    <canvas id="view" aria-label="A transverse wave on a string, a longitudinal wave in a column of particles, and a graph of displacement versus position"></canvas>
+    <div class="hint">Click a particle to track it · space to pause</div>
+  </div>
+
+  <aside>
+    <section>
+      <h2>Wave <span class="math" id="formula">s(x, t) = A sin(kx − ωt)</span></h2>
+      <div class="line">
+        <span>Shape</span>
+        <div class="seg" role="group" aria-label="Wave shape">
+          <button type="button" data-shape="sine" aria-pressed="true">Sine wave</button>
+          <button type="button" data-shape="pulse" aria-pressed="false">Single pulse</button>
+        </div>
+      </div>
+      <div class="line">
+        <span>Travels</span>
+        <div class="seg" role="group" aria-label="Direction of travel">
+          <button type="button" data-dir="1" aria-pressed="true">to the right →</button>
+          <button type="button" data-dir="-1" aria-pressed="false">← to the left</button>
+        </div>
+      </div>
+      <div class="row"><label for="amp">A</label><input id="amp" type="range" min="0.05" max="0.3" step="0.01" value="0.2"><output id="ampOut"></output></div>
+      <div class="row"><label for="lam">λ</label><input id="lam" type="range" min="2" max="8" step="0.1" value="3.2"><output id="lamOut"></output></div>
+      <div class="row"><label for="freq">f</label><input id="freq" type="range" min="0.1" max="1.5" step="0.05" value="0.4"><output id="freqOut"></output></div>
+      <div class="readout">
+        <div class="cell wv"><span class="k">Wave speed <span class="math">v = fλ</span></span><span class="val" id="vOut"></span></div>
+        <div class="cell"><span class="k">Period <span class="math">T = 1/f</span></span><span class="val" id="TOut"></span></div>
+        <div class="cell"><span class="k">Wave number <span class="math">k = 2π/λ</span></span><span class="val" id="kOut"></span></div>
+        <div class="cell"><span class="k">Angular freq. <span class="math">ω = 2πf</span></span><span class="val" id="wOut"></span></div>
+      </div>
+      <p class="note" id="lamNote">In pulse mode λ sets the pulse width and f sets how fast it travels, through v = fλ.</p>
+    </section>
+
+    <section>
+      <h2>Tracked particle <span class="math"><span class="sw" style="background:var(--track)"></span>x<sub>0</sub> = <span id="x0Out"></span></span></h2>
+      <div class="readout">
+        <div class="cell hl"><span class="k">Displacement <span class="math">s</span></span><span class="val" id="sOut"></span></div>
+        <div class="cell hl"><span class="k">Particle velocity <span class="math">∂s/∂t</span></span><span class="val" id="uOut"></span></div>
+        <div class="cell"><span class="k">Max particle speed <span class="math">ωA</span></span><span class="val" id="umaxOut"></span></div>
+        <div class="cell wv"><span class="k">Wave speed <span class="math">v</span></span><span class="val" id="v2Out"></span></div>
+      </div>
+      <p class="note">The same number s is drawn two ways: up and down on the string, left and right in the column. The particle only oscillates about x<sub>0</sub>; it never travels with the wave. Its speed ωA has nothing to do with the wave speed v.</p>
+    </section>
+
+    <section>
+      <h2>Show</h2>
+      <div class="toggles">
+        <label><input id="tVel" type="checkbox"> Velocity of every particle</label>
+        <label><input id="tShade" type="checkbox" checked> Density shading</label>
+        <label><input id="tMarks" type="checkbox" checked> Crests, C and R labels</label>
+        <label><input id="tLam" type="checkbox" checked> Wavelength λ</label>
+        <label><input id="tEq" type="checkbox"> Equilibrium positions</label>
+        <label><input id="tDens" type="checkbox" checked> Density curve on the graph</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>What to notice</h2>
+      <div class="notes">
+        <p><b>Transverse:</b> each particle moves perpendicular to the direction the wave travels. Examples: a wave on a string, light and other electromagnetic waves, S waves in an earthquake.</p>
+        <p><b>Longitudinal:</b> each particle moves along the direction the wave travels, so the particles bunch up (compressions, C) and spread out (rarefactions, R). Examples: sound, a pushed Slinky, P waves.</p>
+        <div class="eq">s(x, t) = A sin(kx − ωt),&nbsp;&nbsp; v = λ/T = fλ = ω/k</div>
+        <p>Both bands use the same s(x, t). Turn the longitudinal displacement 90° and you get the transverse picture: the bottom graph is that picture for both.</p>
+        <p>A compression is not at a crest of the graph. It sits where s crosses zero going down, because there the particle on the left has moved right and the particle on the right has moved left. The relative density is 1 − ∂s/∂x (to first order), a quarter wavelength from the displacement peaks.</p>
+        <p>Freeze the wave and step by T/8: the tracked particle returns to the same place after T, while the pattern has moved one wavelength.</p>
+      </div>
+    </section>
+  </aside>
+</div>
+
+<script>
+(() => {
+  const W = 8;              // width of the medium shown, metres
+  const NCOL = 64;          // particles along x
+  const DX = W / NCOL;
+  const NROW = 7;           // rows of particles in the longitudinal band
+  const AMAX = 0.3;
+
+  const $ = id => document.getElementById(id);
+  const canvas = $("view");
+  const ctx = canvas.getContext("2d");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const state = {
+    shape: "sine", dir: 1, A: 0.2, lam: 3.2, f: 0.4, speed: 1,
+    theta: 0,       // accumulated ωt, so changing f does not make the pattern jump
+    travel: 0,      // distance the pulse has travelled
+    t: 0, playing: !reduce, track: 20,
+  };
+  const show = { vel: false, shade: true, marks: true, lam: true, eq: false, dens: true };
+
+  // Fixed jitter so the longitudinal band looks like a gas but each column still moves as one.
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const jitter = [];
+  for (let r = 0; r < NROW; r++) { jitter.push([]); for (let c = 0; c < NCOL; c++) jitter[r].push({ x: (rnd() - 0.5) * 0.45, y: (rnd() - 0.5) * 0.5 }); }
+
+  const x0 = i => (i + 0.5) * DX;
+  const k = () => 2 * Math.PI / state.lam;
+  const omega = () => 2 * Math.PI * state.f;
+  const v = () => state.f * state.lam;
+  const sigma = () => state.lam / 5;
+
+  function pulseCenter() {
+    const m = 4 * sigma(), span = W + 2 * m;
+    const d = ((state.travel % span) + span) % span;
+    return state.dir > 0 ? -m + d : W + m - d;
+  }
+  // Returns displacement s, slope ∂s/∂x and particle velocity ∂s/∂t at equilibrium position x.
+  function field(x) {
+    const A = state.A, d = state.dir;
+    if (state.shape === "sine") {
+      const ph = k() * x - d * state.theta;
+      return { s: A * Math.sin(ph), sx: A * k() * Math.cos(ph), st: -d * omega() * A * Math.cos(ph) };
+    }
+    const u = x - pulseCenter(), sg = sigma();
+    const g = Math.exp(-u * u / (2 * sg * sg));
+    const fp = -u / (sg * sg) * g;
+    return { s: A * g, sx: A * fp, st: -d * v() * A * fp };
+  }
+
+  // ---------- colors ----------
+  let C = {};
+  function readColors() {
+    const cs = getComputedStyle(document.documentElement);
+    for (const n of ["stage", "ink", "muted", "line", "faint", "accent", "track", "vel", "wave", "dens", "rare", "font-display", "font-body", "font-mono"]) C[n] = cs.getPropertyValue("--" + n).trim();
+  }
+  readColors();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readColors(); draw(); });
+
+  // ---------- layout ----------
+  let cw = 0, ch = 0, L = {};
+  function resize() {
+    const r = canvas.getBoundingClientRect(), dpr = Math.min(devicePixelRatio || 1, 2);
+    cw = r.width; ch = r.height;
+    canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const left = cw < 500 ? 16 : 28, right = cw < 500 ? 16 : 28, top = 10, gap = 10;
+    const avail = ch - top - 10 - 2 * gap;
+    const sx = (cw - left - right) / W;
+    // transverse band needs no more height than its true-scale amplitude plus labels
+    const h1 = Math.min(avail * 0.31, 2 * AMAX * sx + 80), h2 = (avail - h1) * 0.53, h3 = avail - h1 - h2;
+    L = {
+      left, right, sx,
+      b1: { y: top, h: h1 }, b2: { y: top + h1 + gap, h: h2 }, b3: { y: top + h1 + h2 + 2 * gap, h: h3 },
+    };
+    // Transverse uses true geometry (same scale both ways) unless the band is too short for it.
+    L.sy1 = Math.min(sx, (h1 / 2 - 34) / AMAX);
+    L.sy3 = (h3 / 2 - 30) / AMAX;
+    draw();
+  }
+  const X = x => L.left + x * L.sx;
+  const toWorldX = px => (px - L.left) / L.sx;
+
+  // ---------- drawing helpers ----------
+  function arrow(x1, y1, x2, y2, color, w = 2, head = 7) {
+    const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+    if (len < 1.5) return;
+    const ux = dx / len, uy = dy / len, h = Math.min(head, len * 0.6);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = w; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2 - ux * h * 0.8, y2 - uy * h * 0.8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - ux * h - uy * h * 0.5, y2 - uy * h + ux * h * 0.5);
+    ctx.lineTo(x2 - ux * h + uy * h * 0.5, y2 - uy * h - ux * h * 0.5);
+    ctx.closePath(); ctx.fill();
+  }
+  function text(str, x, y, { font = "body", size = 12, color = C.muted, align = "left", base = "alphabetic", italic = false, weight = 400 } = {}) {
+    const fam = font === "math" ? C["font-display"] : font === "mono" ? C["font-mono"] : C["font-body"];
+    ctx.font = `${italic ? "italic " : ""}${weight} ${size}px ${fam}`;
+    ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = base;
+    ctx.fillText(str, x, y);
+  }
+  function bandTitle(b, title, sub) {
+    text(title, L.left, b.y + 14, { color: C.ink, weight: 600, size: 12.5 });
+    const w = ctx.measureText(title).width;
+    if (cw > 520) text(sub, L.left + w + 10, b.y + 14, { size: 12 });
+  }
+  function lambdaBracket(xa, y, label) {
+    const xb = xa + state.lam;
+    if (X(xb) > cw - 4) return false;
+    const pa = X(xa), pb = X(xb);
+    ctx.strokeStyle = C.wave; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(pa, y - 5); ctx.lineTo(pa, y + 5); ctx.moveTo(pb, y - 5); ctx.lineTo(pb, y + 5); ctx.stroke();
+    const mid = (pa + pb) / 2;
+    ctx.beginPath(); ctx.moveTo(pa, y); ctx.lineTo(mid - 12, y); ctx.moveTo(mid + 12, y); ctx.lineTo(pb, y); ctx.stroke();
+    text(label, mid, y + 1, { font: "math", italic: true, size: 18, color: C.wave, align: "center", base: "middle" });
+    return true;
+  }
+  // Equilibrium positions where the phase kx − dθ equals target + 2πn, inside [0, W].
+  function phasePoints(target) {
+    const out = [], kk = k();
+    const n0 = Math.floor((-target - state.dir * state.theta) / (2 * Math.PI));
+    for (let n = n0; ; n++) {
+      const x = (target + 2 * Math.PI * n + state.dir * state.theta) / kk;
+      if (x > W) break;
+      if (x >= 0) out.push(x);
+    }
+    return out;
+  }
+  function waveArrow(px, y) {
+    const len = 34 * state.dir;
+    arrow(px - len / 2, y, px + len / 2, y, C.wave, 2.2, 8);
+    text(`v = ${v().toFixed(2)} m/s`, px + (state.dir > 0 ? len / 2 + 6 : len / 2 - 6), y + 1, { font: "mono", size: 11.5, color: C.wave, align: state.dir > 0 ? "left" : "right", base: "middle" });
+  }
+  const VSCALE = 0.32; // seconds: a particle-velocity arrow shows how far it would go in this time
+
+  // ---------- frame ----------
+  function draw() {
+    if (!cw) return;
+    ctx.clearRect(0, 0, cw, ch);
+    const F = []; for (let i = 0; i < NCOL; i++) F.push(field(x0(i)));
+    const ti = state.track, tx = x0(ti), tf = F[ti];
+
+    // Tracked equilibrium line through all three bands
+    ctx.save(); ctx.setLineDash([3, 4]); ctx.strokeStyle = C.track; ctx.globalAlpha = 0.55; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(tx), L.b1.y + 22); ctx.lineTo(X(tx), L.b3.y + L.b3.h); ctx.stroke(); ctx.restore();
+
+    drawTransverse(F, ti);
+    drawLongitudinal(F, ti);
+    drawGraph(F, ti);
+
+    // band separators
+    ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+    for (const b of [L.b2, L.b3]) { ctx.beginPath(); ctx.moveTo(0, b.y - 5); ctx.lineTo(cw, b.y - 5); ctx.stroke(); }
+  }
+
+  function drawTransverse(F, ti) {
+    const b = L.b1, yc = b.y + b.h / 2 + 10, sy = L.sy1;
+    bandTitle(b, "Transverse", "particles move up and down, perpendicular to the direction of travel");
+
+    ctx.save(); ctx.setLineDash([2, 5]); ctx.strokeStyle = C.faint; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(0), yc); ctx.lineTo(X(W), yc); ctx.stroke(); ctx.restore();
+
+    // string: sample finely between beads
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (let j = 0; j <= 400; j++) { const x = W * j / 400, s = field(x).s; j ? ctx.lineTo(X(x), yc - s * sy) : ctx.moveTo(X(x), yc - s * sy); }
+    ctx.stroke();
+
+    if (show.eq) {
+      ctx.fillStyle = C.faint;
+      for (let i = 0; i < NCOL; i++) { ctx.beginPath(); ctx.arc(X(x0(i)), yc, 1.6, 0, 7); ctx.fill(); }
+    }
+    for (let i = 0; i < NCOL; i++) {
+      if (i === ti) continue;
+      ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(X(x0(i)), yc - F[i].s * sy, 2.6, 0, 7); ctx.fill();
+    }
+    if (show.vel) for (let i = 1; i < NCOL; i += 3) {
+      if (i === ti) continue;
+      const px = X(x0(i)), py = yc - F[i].s * sy;
+      arrow(px, py, px, py - F[i].st * VSCALE * sy, C.vel, 1.4, 5);
+    }
+
+    // tracked bead: range of motion, velocity, dot
+    const px = X(x0(ti)), py = yc - F[ti].s * sy;
+    ctx.strokeStyle = C.track; ctx.globalAlpha = 0.35; ctx.lineWidth = 6; ctx.lineCap = "round";
+    const lo = state.shape === "pulse" ? 0 : -state.A;
+    ctx.beginPath(); ctx.moveTo(px, yc - state.A * sy); ctx.lineTo(px, yc - lo * sy); ctx.stroke(); ctx.globalAlpha = 1;
+    arrow(px, py, px, py - F[ti].st * VSCALE * sy, C.vel, 2.2, 7);
+    ctx.fillStyle = C.track; ctx.beginPath(); ctx.arc(px, py, 6, 0, 7); ctx.fill();
+    ctx.strokeStyle = C.stage; ctx.lineWidth = 1.5; ctx.stroke();
+
+    // pattern markers
+    const topY = yc - AMAX * sy - 10;
+    if (state.shape === "sine") {
+      const crests = phasePoints(Math.PI / 2);
+      if (show.marks) for (const x of crests) {
+        const cx = X(x), cy = yc - state.A * sy - 6;
+        ctx.fillStyle = C.wave; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - 5, cy - 8); ctx.lineTo(cx + 5, cy - 8); ctx.closePath(); ctx.fill();
+      }
+      if (show.lam && crests.length) lambdaBracket(crests[0], topY - 4, "λ");
+      const lead = crests.length ? (state.dir > 0 ? crests[crests.length - 1] : crests[0]) : W / 2;
+      if (show.marks) waveArrow(Math.min(Math.max(X(lead), 60), cw - 140), yc + AMAX * sy + 18);
+    } else {
+      const c = pulseCenter();
+      if (show.marks && c > -0.5 && c < W + 0.5) {
+        const cx = X(c), cy = yc - state.A * sy - 6;
+        ctx.fillStyle = C.wave; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - 5, cy - 8); ctx.lineTo(cx + 5, cy - 8); ctx.closePath(); ctx.fill();
+        waveArrow(Math.min(Math.max(cx, 60), cw - 140), yc + AMAX * sy + 18);
+      }
+    }
+  }
+
+  function drawLongitudinal(F, ti) {
+    const b = L.b2;
+    bandTitle(b, "Longitudinal", "particles move left and right, along the direction of travel");
+    const top = b.y + 40, bot = b.y + b.h - 22, rh = (bot - top) / NROW;
+
+    if (show.shade) {
+      // relative density ≈ 1 − ∂s/∂x, shaded per vertical strip
+      const strips = 160;
+      for (let j = 0; j < strips; j++) {
+        const xa = W * j / strips, sx = field(xa + W / strips / 2).sx;
+        const a = Math.min(1, Math.abs(sx) / 0.9);
+        ctx.globalAlpha = a; ctx.fillStyle = sx < 0 ? C.dens : C.rare;
+        const pa = Math.round(X(xa)), pb = Math.round(X(xa + W / strips));
+        ctx.fillRect(pa, top - 4, pb - pa, bot - top + 8);
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (show.eq) {
+      ctx.strokeStyle = C.faint; ctx.lineWidth = 1;
+      for (let i = 0; i < NCOL; i++) { ctx.beginPath(); ctx.moveTo(X(x0(i)), bot + 4); ctx.lineTo(X(x0(i)), bot + 9); ctx.stroke(); }
+    }
+    for (let r = 0; r < NROW; r++) for (let i = 0; i < NCOL; i++) {
+      if (i === ti) continue;
+      const j = jitter[r][i];
+      const px = X(x0(i) + F[i].s + j.x * DX), py = top + (r + 0.5 + j.y) * rh;
+      ctx.fillStyle = C.ink; ctx.beginPath(); ctx.arc(px, py, 2.4, 0, 7); ctx.fill();
+    }
+    if (show.vel) for (let i = 1; i < NCOL; i += 3) {
+      if (i === ti) continue;
+      const px = X(x0(i) + F[i].s), py = bot + 14;
+      arrow(px, py, px + F[i].st * VSCALE * L.sx, py, C.vel, 1.4, 5);
+    }
+
+    // tracked column
+    const s = F[ti].s, st = F[ti].st;
+    const cx = X(x0(ti));
+    ctx.strokeStyle = C.track; ctx.globalAlpha = 0.35; ctx.lineWidth = 6; ctx.lineCap = "round";
+    const lo = state.shape === "pulse" ? 0 : -state.A;
+    ctx.beginPath(); ctx.moveTo(cx + lo * L.sx, bot + 14); ctx.lineTo(cx + state.A * L.sx, bot + 14); ctx.stroke(); ctx.globalAlpha = 1;
+    for (let r = 0; r < NROW; r++) {
+      const j = jitter[r][ti];
+      const px = X(x0(ti) + s + j.x * DX), py = top + (r + 0.5 + j.y) * rh;
+      ctx.fillStyle = C.track; ctx.beginPath(); ctx.arc(px, py, r === (NROW >> 1) ? 5.5 : 3.6, 0, 7); ctx.fill();
+    }
+    const mx = X(x0(ti) + s);
+    arrow(mx, bot + 14, mx + st * VSCALE * L.sx, bot + 14, C.vel, 2.2, 7);
+    ctx.fillStyle = C.track; ctx.beginPath(); ctx.arc(mx, bot + 14, 4, 0, 7); ctx.fill();
+
+    if (show.marks) {
+      let comps, rares;
+      if (state.shape === "sine") { comps = phasePoints(Math.PI); rares = phasePoints(0); }
+      else { const c = pulseCenter(), sg = sigma(); comps = [c + sg]; rares = [c - sg]; }
+      for (const x of comps) if (x >= 0 && x <= W) text("C", X(x), top - 6, { weight: 600, size: 12, color: C.accent, align: "center" });
+      for (const x of rares) if (x >= 0 && x <= W) text("R", X(x), top - 6, { weight: 600, size: 12, color: C.vel, align: "center" });
+      if (state.shape === "sine" && show.lam && comps.length) {
+        // put λ between compressions only if the first one leaves room
+        const ok = lambdaBracket(comps[0], bot + 4, "");
+        if (ok) text("λ", X(comps[0] + state.lam / 2), bot + 5, { font: "math", italic: true, size: 18, color: C.wave, align: "center", base: "middle" });
+      }
+    }
+  }
+
+  function drawGraph(F, ti) {
+    const b = L.b3, yc = b.y + b.h / 2 + 2, sy = L.sy3;
+    bandTitle(b, "Graph of s(x, t)", "the same displacement for both bands, plotted up the page");
+    // axes
+    ctx.strokeStyle = C.muted; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(X(0), yc); ctx.lineTo(X(W) + 6, yc); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(0), yc - AMAX * sy - 4); ctx.lineTo(X(0), yc + AMAX * sy + 4); ctx.stroke();
+    text("x", X(W) + 8, yc - 4, { font: "math", italic: true, size: 16, color: C.muted, align: "right", base: "bottom" });
+    text("s", X(0) + 6, yc - AMAX * sy + 4, { font: "math", italic: true, size: 16, color: C.muted, base: "middle" });
+    ctx.save(); ctx.setLineDash([2, 4]); ctx.strokeStyle = C.faint;
+    for (const sgn of [1, -1]) { ctx.beginPath(); ctx.moveTo(X(0), yc - sgn * state.A * sy); ctx.lineTo(X(W), yc - sgn * state.A * sy); ctx.stroke(); }
+    ctx.restore();
+    text("+A", X(0) - 4, yc - state.A * sy, { font: "mono", size: 10, align: "right", base: "middle" });
+    text("−A", X(0) - 4, yc + state.A * sy, { font: "mono", size: 10, align: "right", base: "middle" });
+
+    const n = 400;
+    if (show.dens) {
+      // excess density −∂s/∂x, scaled by 1/k so a sine wave's curve has the same height as s
+      const scale = 1 / k();
+      ctx.save(); ctx.setLineDash([6, 4]); ctx.strokeStyle = C.accent; ctx.lineWidth = 1.5; ctx.beginPath();
+      for (let j = 0; j <= n; j++) { const x = W * j / n, d = -field(x).sx * scale; j ? ctx.lineTo(X(x), yc - d * sy) : ctx.moveTo(X(x), yc - d * sy); }
+      ctx.stroke(); ctx.restore();
+    }
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 2; ctx.beginPath();
+    for (let j = 0; j <= n; j++) { const x = W * j / n, s = field(x).s; j ? ctx.lineTo(X(x), yc - s * sy) : ctx.moveTo(X(x), yc - s * sy); }
+    ctx.stroke();
+
+    const px = X(x0(ti)), py = yc - F[ti].s * sy;
+    ctx.fillStyle = C.track; ctx.beginPath(); ctx.arc(px, py, 5, 0, 7); ctx.fill();
+
+    // legend
+    const ly = b.y + b.h - 6;
+    ctx.strokeStyle = C.ink; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(L.left + 2, ly - 4); ctx.lineTo(L.left + 22, ly - 4); ctx.stroke();
+    text("displacement s", L.left + 28, ly, { size: 11.5 });
+    if (show.dens) {
+      const lx = L.left + 140;
+      ctx.save(); ctx.setLineDash([6, 4]); ctx.strokeStyle = C.accent; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(lx, ly - 4); ctx.lineTo(lx + 22, ly - 4); ctx.stroke(); ctx.restore();
+      text(cw > 560 ? "excess density −∂s/∂x (peaks at C)" : "density −∂s/∂x", lx + 28, ly, { size: 11.5, color: C.accent });
+    }
+  }
+
+  // ---------- readouts ----------
+  const fmt = (x, d = 2) => (Math.abs(x) < 0.5 * 10 ** -d ? 0 : x).toFixed(d).replace("-", "−");
+  function readouts() {
+    const tf = field(x0(state.track));
+    $("x0Out").textContent = x0(state.track).toFixed(2) + " m";
+    $("sOut").textContent = fmt(tf.s, 3) + " m";
+    $("uOut").textContent = fmt(tf.st, 2) + " m/s";
+    $("umaxOut").textContent = state.shape === "sine" ? (omega() * state.A).toFixed(2) + " m/s" : "—";
+    $("v2Out").textContent = v().toFixed(2) + " m/s";
+  }
+  function params() {
+    $("ampOut").textContent = state.A.toFixed(2) + " m";
+    $("lamOut").textContent = state.lam.toFixed(1) + " m";
+    $("freqOut").textContent = state.f.toFixed(2) + " Hz";
+    $("vOut").textContent = v().toFixed(2) + " m/s";
+    $("TOut").textContent = (1 / state.f).toFixed(2) + " s";
+    $("kOut").textContent = k().toFixed(2) + " rad/m";
+    $("wOut").textContent = omega().toFixed(2) + " rad/s";
+    $("lamNote").hidden = state.shape !== "pulse";
+    $("formula").textContent = state.shape === "sine"
+      ? (state.dir > 0 ? "s(x, t) = A sin(kx − ωt)" : "s(x, t) = A sin(kx + ωt)")
+      : (state.dir > 0 ? "s(x, t) = A g(x − vt)" : "s(x, t) = A g(x + vt)");
+    readouts();
+  }
+
+  // ---------- controls ----------
+  // start the pulse already one metre into view rather than off the edge
+  const pulseStart = () => 4 * sigma() + 1;
+  function advance(dt) { state.theta += omega() * dt; state.travel += v() * dt; state.t += dt; }
+  $("play").textContent = state.playing ? "Pause" : "Play";
+  $("play").onclick = () => { state.playing = !state.playing; $("play").textContent = state.playing ? "Pause" : "Play"; };
+  $("step").onclick = () => { advance(1 / state.f / 8); draw(); readouts(); };
+  $("reset").onclick = () => { state.theta = 0; state.travel = pulseStart(); state.t = 0; draw(); readouts(); };
+  $("speed").oninput = e => { state.speed = +e.target.value; $("speedOut").textContent = state.speed.toFixed(1) + "×"; };
+  $("amp").oninput = e => { state.A = +e.target.value; params(); draw(); };
+  $("lam").oninput = e => { state.lam = +e.target.value; params(); draw(); };
+  $("freq").oninput = e => { state.f = +e.target.value; params(); draw(); };
+  document.querySelectorAll("[data-shape]").forEach(bt => bt.onclick = () => {
+    state.shape = bt.dataset.shape; state.travel = pulseStart();
+    document.querySelectorAll("[data-shape]").forEach(o => o.setAttribute("aria-pressed", o === bt));
+    params(); draw();
+  });
+  document.querySelectorAll("[data-dir]").forEach(bt => bt.onclick = () => {
+    state.dir = +bt.dataset.dir;
+    document.querySelectorAll("[data-dir]").forEach(o => o.setAttribute("aria-pressed", o === bt));
+    params(); draw();
+  });
+  const toggles = { tVel: "vel", tShade: "shade", tMarks: "marks", tLam: "lam", tEq: "eq", tDens: "dens" };
+  for (const [id, key] of Object.entries(toggles)) $(id).onchange = e => { show[key] = e.target.checked; draw(); };
+
+  canvas.addEventListener("click", e => {
+    const r = canvas.getBoundingClientRect();
+    const x = toWorldX(e.clientX - r.left);
+    state.track = Math.max(0, Math.min(NCOL - 1, Math.round(x / DX - 0.5)));
+    draw(); readouts();
+  });
+  addEventListener("keydown", e => {
+    if (e.code === "Space" && !/INPUT|SELECT|BUTTON|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); $("play").click(); }
+    if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && document.activeElement === document.body) {
+      state.track = Math.max(0, Math.min(NCOL - 1, state.track + (e.key === "ArrowRight" ? 1 : -1))); draw(); readouts();
+    }
+  });
+
+  new ResizeObserver(resize).observe(canvas);
+  document.fonts && document.fonts.ready.then(draw);
+
+  let last = performance.now(), lastRead = 0;
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (state.playing) { advance(dt * state.speed); draw(); if (now - lastRead > 100) { readouts(); lastRead = now; } }
+    requestAnimationFrame(loop);
+  }
+  params(); resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body></html>
