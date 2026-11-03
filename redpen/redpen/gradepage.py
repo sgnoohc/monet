@@ -67,6 +67,43 @@ def _canvas(cfg, roster):
                         "sec": r.get("section", "")} for r in roster]}
 
 
+def progress_path(cfg, out_dir=None):
+    """The grading progress kept in the quiz folder, so it travels with it.
+
+    Same name and format as the page's "Save progress" download, so one of
+    those dropped into the folder is picked up too."""
+    return os.path.join(out_dir or cfg["_dir"],
+                        config.store_name(cfg["title"]) + "_progress.json")
+
+
+def load_progress(path):
+    try:
+        with open(path) as f:
+            j = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return j if isinstance(j, dict) and isinstance(j.get("state"), dict) else None
+
+
+def write_progress(path, body):
+    """Write the page's state, unless the file has moved on since the page
+    last saw it (another computer, another tab) -- then report the conflict
+    and let the page ask which to keep.  `force` overwrites regardless."""
+    state = body.get("state")
+    if not isinstance(state, dict):
+        return {"ok": False, "error": "no state"}
+    old = load_progress(path)
+    if (old and not body.get("force")
+            and str(old.get("saved") or "") > str(body.get("base") or "")):
+        return {"ok": False, "conflict": True, "saved": old.get("saved")}
+    doc = {"quiz": body.get("quiz"), "saved": body.get("saved"), "state": state}
+    tmp = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(doc, f, indent=1)
+    os.replace(tmp, path)
+    return {"ok": True, "saved": doc["saved"]}
+
+
 def build(cfg, out_dir, dest=None, log=print):
     rows = read_report(out_dir)
     auto = load_auto(out_dir)
@@ -166,6 +203,9 @@ def build(cfg, out_dir, dest=None, log=print):
           '<datalist id="roster_ids">' +
           "".join(f'<option value="{e(r["id"])}">' for r in roster if r["id"]) + "</datalist>")
     store = config.store_name(cfg["title"])
+    # what the quiz folder holds, embedded so the page can start from it; a
+    # note typed as "</script>" must not end this script early
+    disk = json.dumps(load_progress(progress_path(cfg, out_dir))).replace("</", "<\\/")
     stamp = hashlib.sha1(json.dumps(
         {k: {pid: pv.get("verdict") for pid, pv in v.items()} for k, v in auto.items()},
         sort_keys=True).encode()).hexdigest()[:12] if auto else ""
@@ -318,6 +358,7 @@ const PARTS={json.dumps([{'id':p['id'],'label':p['label'],'points':p['points'],
                           'page':min((zmap[z]['page'] for z in p['zones'] if z in zmap), default=1)}
                          for p in parts])};
 const STORE={json.dumps(store)};
+const DISK={disk};
 const CANVAS={json.dumps(canvas_data)};
 const KEY={json.dumps(key_pages)};
 {JS}</script></body></html>"""

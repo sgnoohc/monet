@@ -289,7 +289,37 @@ details.tbl td,details.tbl th{padding:3px 10px;border-top:1px solid var(--line2)
 JS = r"""
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
 let S={max:{},score:{},note:{},name:{},sid:{},touched:{}};
-try{const r=localStorage.getItem(STORE);if(r)S=Object.assign(S,JSON.parse(r));}catch(e){}
+// Served by the app (/q/<id>/files/…) the page can write to the quiz folder.
+const APPQ=(location.pathname.match(/^\/q\/([^/]+)\/files\//)||[])[1];
+/* Progress is kept in two places: <quiz>_progress.json in the quiz folder
+   (DISK, embedded when the page was built), which travels with the folder to
+   another computer, and this browser's storage, a fallback for when the folder
+   can't be written.  Each copy carries the time it was saved (S._saved) and
+   the newer one wins.  BASE is the folder copy's time as this page knows it:
+   a write is refused when the folder has moved on since (see pushDisk). */
+let BASE=DISK&&DISK.saved||null;
+let PUSH_ON_LOAD=false;        // this browser's copy is the newer: give it to the folder
+(()=>{
+  let local=null;
+  try{const r=localStorage.getItem(STORE);if(r)local=JSON.parse(r);}catch(e){}
+  let pick=local;
+  if(DISK&&DISK.state){
+    if(!local)pick=DISK.state;
+    else if(local._saved)pick=local._saved<(DISK.saved||'')?DISK.state:local;
+    // kept before the folder copy existed: no time to compare, so ask once
+    else if(JSON.stringify(local)!==JSON.stringify(DISK.state))
+      pick=confirm('There is grading progress in the quiz folder (saved '
+        +(DISK.saved?new Date(DISK.saved).toLocaleString():'at an unknown time')
+        +') and different progress in this browser.\n\nOK: use the quiz folder\'s.'
+        +'\nCancel: keep this browser\'s (it will replace the folder\'s).')?DISK.state:local;
+  }
+  if(pick)S=Object.assign(S,pick);
+  if(pick&&pick===local&&!(DISK&&DISK.state&&local._saved&&local._saved===DISK.saved))
+    PUSH_ON_LOAD=true;
+  // the folder's copy chosen over an undated one here: replace it, or it asks again
+  if(pick&&pick!==local&&local)
+    try{localStorage.setItem(STORE,JSON.stringify(S));}catch(e){}
+})();
 PARTS.forEach(p=>{if(S.max[p.id]==null)S.max[p.id]=p.points;});
 if(!S.chips)S.chips={};        // pid -> typed marks, for "custom"
 if(!S.pcts)S.pcts={};          // pid -> percentages switched on
@@ -450,12 +480,64 @@ const curveOf=(t,K)=>{
 const finalTotal=(k,K=curveK())=>curveOn()?curveOf(total(k),K):total(k);
 // whole percent of the paper's current total; blank while it has no points
 const pct=k=>{const m=maxTotal();return m>0?Math.round(100*total(k)/m)+'%':'';};
+// The state as text, keys sorted and the save time left out: two copies with
+// the same marks compare equal however they were built.
+const stateText=o=>JSON.stringify(o,(k,v)=>k==='_saved'?undefined
+  :v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((a,x)=>(a[x]=v[x],a),{}):v);
+let ONDISK=DISK&&DISK.state?stateText(DISK.state):null;   // what the folder holds
+let LEAVING=false;
 function saveNow(){
   clearTimeout(T); T=null;
-  try{localStorage.setItem(STORE,JSON.stringify(S));$('#saved').textContent='saved locally';}
-  catch(e){$('#saved').textContent='browser storage unavailable — use Save progress';}
+  if(LEAVING)return;
+  // Opening the page saves (defaults filled in, and so on); when nothing has
+  // actually changed, the folder copy keeps its time, so another computer's
+  // open page isn't told of a change that isn't one.
+  const same=APPQ&&stateText(S)===ONDISK;
+  if(!same)S._saved=new Date().toISOString();
+  let local=true;
+  try{localStorage.setItem(STORE,JSON.stringify(S));}catch(e){local=false;}
+  if(same)$('#saved').textContent='saved to the quiz folder';
+  else if(APPQ)pushDisk();
+  else $('#saved').textContent=local?'saved in this browser only — use Save progress to move it'
+                                     :'browser storage unavailable — use Save progress';
 }
-function save(){clearTimeout(T);T=setTimeout(saveNow,250);}
+// One write at a time; edits made while one is out go in the next.
+let DBUSY=false, DAGAIN=false, DASKED=false;
+async function pushDisk(force){
+  if(DBUSY){DAGAIN=true;return;}
+  DBUSY=true;
+  const saved=S._saved, state=stateText(S),
+        body=JSON.stringify({quiz:STORE,saved,state:S,base:BASE,force:!!force});
+  try{
+    // keepalive lets the last write finish while the page closes (bodies to 64 kB)
+    const r=await fetch('/q/'+APPQ+'/progress',{method:'POST',keepalive:body.length<60000,
+      headers:{'Content-Type':'application/json'},body});
+    const j=await r.json();
+    if(j.ok){BASE=saved;ONDISK=state;$('#saved').textContent='saved to the quiz folder';}
+    else if(j.conflict){DBUSY=false;return diskConflict(j.saved);}
+    else $('#saved').textContent='saved in this browser, not the quiz folder: '+(j.error||'error');
+  }catch(e){$('#saved').textContent='saved in this browser — the quiz folder could not be reached';}
+  DBUSY=false;
+  if(DAGAIN){DAGAIN=false;pushDisk();}
+}
+// The folder copy was saved after this page last read or wrote it: another
+// computer (or another tab) is grading this quiz too.
+function diskConflict(when){
+  if(DASKED)return; DASKED=true; DAGAIN=false;
+  $('#saved').textContent='newer progress in the quiz folder';
+  const t=when?new Date(when).toLocaleString():'an unknown time';
+  if(confirm('The grading progress in the quiz folder was saved at '+t
+     +', after this page opened, probably on another computer.\n\nOK: load that version '
+     +'(changes made on this page since it opened are dropped).\nCancel: keep this page\'s '
+     +'and replace the folder\'s copy.')){
+    // nothing from this page may be saved on the way out, or it would be the
+    // newer copy again
+    LEAVING=true; clearTimeout(T); T=null;
+    try{localStorage.removeItem(STORE);}catch(e){}
+    location.href='/q/'+APPQ+'/grading';           // rebuilt from the folder copy
+  }else{DASKED=false;pushDisk(true);}
+}
+function save(){clearTimeout(T);if(!LEAVING)T=setTimeout(saveNow,250);}
 // A reload inside the app (Grade again, another step) must not drop the last
 // quarter-second of edits still waiting on the timer.
 window.addEventListener('pagehide',()=>{if(T)saveNow();});
@@ -829,9 +911,8 @@ function cscale(v){
   if(cstep())x=cup()?Math.ceil(x/cstep()-1e-9)*cstep():Math.round(x/cstep()+1e-9)*cstep();
   return Math.round(x*1e4)/1e4;
 }
-// Served by the app (/q/<id>/files/…) the gradebook can be changed from here:
-// the app stores it in the config and rebuilds this page on the next visit.
-const APPQ=(location.pathname.match(/^\/q\/([^/]+)\/files\//)||[])[1];
+// Served by the app (APPQ) the gradebook can be changed from here: the app
+// stores it in the config and rebuilds this page on the next visit.
 const NATIVE=!!(window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.redpen);
 async function setBook(path){
   const r=await fetch('/q/'+APPQ+'/gradebook',{method:'POST',
@@ -1467,6 +1548,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     else if(/^[1-9]$/.test(e.key)){const i=+e.key-1;if(i<ps.length){focusPart=i;markFocus();}}
   });
   if(STALE){S.autoStamp=AUTO_STAMP;save();}
+  if(PUSH_ON_LOAD&&APPQ)saveNow();
+  else if(!T)$('#saved').textContent=APPQ?(DISK?'loaded from the quiz folder':''):'';
   applyMax(); go(0,false);
   // Back from choosing a gradebook: reopen the dialog it was chosen in.
   let back=null;

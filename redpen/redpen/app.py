@@ -159,6 +159,38 @@ def _other_split(cfg):
     return owner if owner and owner != os.path.basename(cfg["_path"]) else None
 
 
+def _grading(q):
+    """Build the grading page: (path, None), or (None, a notice saying why not)."""
+    if not q["config"]:
+        return None, _notice("No grading config yet", "Build the quiz first.")
+    cfg = sync_rubric(q, config.load(q["config"]), lambda *a: None)
+    if not os.path.exists(os.path.join(cfg["_dir"], "split_report.csv")):
+        return None, _notice("Nothing split yet",
+                             "Run <b>Scan</b> first; the grading page is built "
+                             "from the sheets it cuts out.")
+    if _other_split(cfg):
+        return None, _notice("Not scanned yet",
+                             f"The sheets in this folder were split for "
+                             f"<b>{_other_split(cfg)}</b>. Run <b>Scan</b> for this "
+                             "quiz first.")
+    if not cfg["parts"]:
+        return None, _notice("No graded parts",
+                             "Build the quiz, or set the parts in <b>Zones</b>.")
+    dest, _n = gradepage.build(cfg, cfg["_dir"], log=lambda *a: None)
+    return dest, None
+
+
+_progress_lock = threading.Lock()
+
+
+def save_progress(q, body):
+    if not q["config"]:
+        return {"ok": False, "error": "no grading config"}
+    cfg = config.load(q["config"])
+    with _progress_lock:
+        return gradepage.write_progress(gradepage.progress_path(cfg), body)
+
+
 def _spawn(q, kind):
     """Start one of the existing editors on its own port, once per quiz."""
     key = (q["id"], kind)
@@ -442,26 +474,14 @@ class _H(BaseHTTPRequestHandler):
         what = parts[2]
         if what == "grading":
             # Built fresh on every visit -- it is cheap, and the page holds no
-            # state of its own: progress lives in the browser and in the
-            # progress file.  Served from under /files/ so the page's relative
-            # image paths (students/<name>/1a.png) resolve to the quiz folder.
-            if not q["config"]:
-                return self._send(404, "no grading config yet — build the quiz first")
-            cfg = sync_rubric(q, config.load(q["config"]), lambda *a: None)
-            if not os.path.exists(os.path.join(cfg["_dir"], "split_report.csv")):
-                return self._send(200, _notice("Nothing split yet",
-                                  "Run <b>Scan</b> first; the grading page is built "
-                                  "from the sheets it cuts out."))
-            if _other_split(cfg):
-                return self._send(200, _notice("Not scanned yet",
-                                  f"The sheets in this folder were split for "
-                                  f"<b>{_other_split(cfg)}</b>. Run <b>Scan</b> for this "
-                                  "quiz first."))
-            if not cfg["parts"]:
-                return self._send(200, _notice("No graded parts",
-                                  "Build the quiz, or set the parts in <b>Zones</b>."))
-            dest, _n = gradepage.build(cfg, cfg["_dir"], log=lambda *a: None)
-            rel = os.path.relpath(dest, cfg["_dir"]).replace(os.sep, "/")
+            # state of its own: progress lives in the quiz folder (and in the
+            # browser, as a fallback).  Served from under /files/ so the page's
+            # relative image paths (students/<name>/1a.png) resolve to the
+            # quiz folder.
+            dest, notice = _grading(q)
+            if notice:
+                return self._send(200, notice)
+            rel = os.path.relpath(dest, q["dir"]).replace(os.sep, "/")
             # HTTP/1.1 keep-alive: without a Content-Length the client waits
             # for a body that never comes.
             self.send_response(302)
@@ -476,6 +496,10 @@ class _H(BaseHTTPRequestHandler):
             target = os.path.realpath(os.path.join(root, *parts[3:]))
             if not target.startswith(root + os.sep) or not os.path.isfile(target):
                 return self._send(404, "not found")
+            if target.endswith("_grading.html"):
+                # A browser reload lands here, not on /grading: rebuild, so the
+                # page starts from the progress in the folder as it is now.
+                _grading(q)
             return self._file(target)
         if what == "compose":
             if not q["src"]:
@@ -579,6 +603,8 @@ class _H(BaseHTTPRequestHandler):
             return self._json(set_roster(q, body))
         if what == "gradebook":
             return self._json(set_roster(q, body, "canvas_gradebook"))
+        if what == "progress":
+            return self._json(save_progress(q, body))
         if what == "step":
             return self._json({"ok": True, "job": start_step(q, parts[3], body)})
         self._json({"ok": False, "error": "not found"})
