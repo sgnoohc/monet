@@ -1,0 +1,24 @@
+{
+  "name": "switchboard-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Switchboard for Android (Capacitor), sharing the desktop app's interface and connectors",
+  "scripts": {
+    "build": "node build.mjs",
+    "sync": "node build.mjs && cap sync android",
+    "apk": "node build.mjs && cap sync android && cd android && ./gradlew assembleDebug",
+    "install-phone": "adb install -r android/app/build/outputs/apk/debug/app-debug.apk"
+  },
+  "dependencies": {
+    "@capacitor-mlkit/barcode-scanning": "8.2.1",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/preferences": "8.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "esbuild": "0.28.2",
+    "events": "3.3.0"
+  }
+}

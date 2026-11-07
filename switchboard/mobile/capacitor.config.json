@@ -1,0 +1,13 @@
+{
+  "appId": "com.phchang.switchboard",
+  "appName": "Switchboard",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

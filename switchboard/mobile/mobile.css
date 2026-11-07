@@ -1,0 +1,80 @@
+/* Phone layout: the list fills the screen; opening a chat swaps to it. */
+
+:root {
+  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+}
+
+body.mobile { font-size: 15px; }
+
+body.mobile #sidebar { width: 100%; border-right: none; padding-top: var(--sat); padding-bottom: var(--sab); }
+body.mobile .drag { height: 12px; }
+body.mobile #main { display: none; }
+body.mobile.chat-open #sidebar { display: none; }
+body.mobile.chat-open #main { display: block; }
+body.mobile .pane { padding-top: var(--sat); padding-bottom: var(--sab); }
+
+body.mobile .chat-header { height: 56px; padding: 0 14px 0 2px; gap: 8px; }
+.back-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 34px;
+  line-height: 1;
+  padding: 0 8px 6px;
+}
+body.mobile .rename-btn { opacity: 1; }
+
+body.mobile .conv { padding: 9px 8px; }
+body.mobile .conv-title { font-size: 15px; }
+body.mobile .conv,
+body.mobile .group-head { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+body.mobile .group-more { opacity: 1; }
+
+body.mobile .msg-row { padding: 0 10px; }
+body.mobile .msg-stack { max-width: 80%; }
+body.mobile .bubble { font-size: 15px; }
+body.mobile .composer { margin: 0 10px 10px; }
+/* 16px stops Android from zooming into text fields */
+body.mobile .composer textarea,
+body.mobile .search input,
+body.mobile .dialog input { font-size: 16px; }
+body.mobile .dialog { max-height: calc(100vh - var(--sat) - var(--sab) - 32px); }
+body.mobile .icon-btn { font-size: 20px; padding: 4px 10px; }
+
+/* Bottom sheet that replaces right-click menus */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.35);
+}
+.sheet {
+  width: 100%;
+  padding: 8px 8px calc(8px + var(--sab));
+  border-radius: 16px 16px 0 0;
+  background: var(--surface);
+}
+.sheet-title { padding: 8px 12px; color: var(--muted); font-size: 13px; }
+.sheet-item {
+  display: block;
+  width: 100%;
+  padding: 14px 12px;
+  border: none;
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font-size: 16px;
+  text-align: left;
+}
+.sheet-item:active { background: var(--hover); }
+.sheet-item:disabled { opacity: 0.4; }
+.sheet-sep { height: 1px; margin: 4px 0; background: var(--border); }
+.sheet-cancel { color: var(--accent); font-weight: 600; }
+
+/* Long-press on a bubble opens reactions, so don't start a text selection */
+body.mobile .msg-stack { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+body.mobile .gif-panel { margin: 0 10px 8px; height: 45vh; }
+body.mobile .gif-grid { columns: 2; }
