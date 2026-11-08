@@ -171,6 +171,42 @@ class MattermostProvider extends EventEmitter {
     ws.on('error', () => {});
   }
 
+  reconnect() {
+    if (this.stopped) return;
+    if (this.poll) {
+      this.pollOnce().catch(() => {});
+      return;
+    }
+    const old = this.ws;
+    this.ws = null;
+    try {
+      old?.close();
+    } catch {}
+    clearTimeout(this.retry);
+    this.connect(); // reloads channels, so missed messages show as unread
+  }
+
+  async fetchMedia(ref) {
+    const res = await fetch(`${this.base}/api/v4/files/${ref}`, { headers: { Authorization: `Bearer ${this.token}` } });
+    if (!res.ok) throw new Error(`Mattermost: couldn't fetch the file (HTTP ${res.status})`);
+    return { data: new Uint8Array(await res.arrayBuffer()), type: res.headers.get('content-type') || '' };
+  }
+
+  async upload(convId, files, text) {
+    const form = new FormData();
+    form.append('channel_id', convId);
+    for (const f of files) form.append('files', new File([f.data], f.name, { type: f.type || 'application/octet-stream' }));
+    const res = await fetch(`${this.base}/api/v4/files`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}`, 'X-Requested-With': 'XMLHttpRequest' },
+      body: form,
+    });
+    const j = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(j?.message ? `Mattermost: ${j.message}` : `Mattermost HTTP ${res.status}`);
+    const post = await this.api('POST', '/posts', { channel_id: convId, message: text || '', file_ids: j.file_infos.map(f => f.id) });
+    return this.toMessage(post);
+  }
+
   startPolling() {
     clearInterval(this.pollTimer);
     this.pollTimer = setInterval(() => this.pollOnce().catch(() => {}), 15000);
@@ -253,7 +289,14 @@ class MattermostProvider extends EventEmitter {
       text: this.postText(p),
       reactions: this.reactionsOf(p),
       attachments: [
-        ...(p.metadata?.files || []).map(f => ({ name: f.name, url: `${this.base}/api/v4/files/${f.id}`, isImage: false })),
+        // Files need the login to fetch, so they carry a ref for fetchMedia instead of a public URL.
+        ...(p.metadata?.files || []).map(f => ({
+          name: f.name,
+          size: f.size,
+          ref: f.id,
+          thumbRef: f.has_preview_image || /^image\//.test(f.mime_type || '') ? `${f.id}/preview` : null,
+          isImage: /^image\//.test(f.mime_type || ''),
+        })),
         ...this.imageEmbeds(p).map(url => ({ name: 'Image', url, isImage: true })),
       ],
     };

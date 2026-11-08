@@ -651,6 +651,7 @@ async function openConversation(key) {
   showPane('chat');
   document.body.classList.add('chat-open');
   renderHeader(conv);
+  renderStaged();
   if (conv.unread || conv.mentions) {
     conv.unread = false;
     conv.mentions = 0;
@@ -670,9 +671,7 @@ async function openConversation(key) {
   // Always refresh: some channels (big Discord servers) don't stream live.
   try {
     const fresh = await sb.fetchMessages(key);
-    const lastTs = fresh.length ? fresh[fresh.length - 1].ts : 0;
-    const extra = (state.messages.get(key) || []).filter(m => m.ts > lastTs && !fresh.some(f => f.id === m.id));
-    state.messages.set(key, [...fresh, ...extra]);
+    state.messages.set(key, mergeMessages(state.messages.get(key), fresh));
     if (fresh.length < PAGE) state.exhausted.add(key);
     if (state.openKey === key) {
       renderMessages(key);
@@ -682,6 +681,44 @@ async function openConversation(key) {
     if (state.openKey === key && !cached) showPlaceholder(cleanError(e));
     else toast(cleanError(e));
   }
+}
+
+// The latest page from the server wins (it carries reactions and edits); older
+// loaded history and anything that arrived after the fetch are kept.
+function mergeMessages(old = [], fresh) {
+  if (!fresh.length) return old;
+  const ids = new Set(fresh.map(m => m.id));
+  const first = fresh[0].ts;
+  const last = fresh[fresh.length - 1].ts;
+  return [
+    ...old.filter(m => m.ts < first && !ids.has(m.id)),
+    ...fresh,
+    ...old.filter(m => m.ts > last && !ids.has(m.id)),
+  ];
+}
+
+const signature = list => JSON.stringify((list || []).map(m => [m.id, m.text, m.reactions?.map(r => [r.key, r.count, r.me])]));
+
+// Re-reads the open chat quietly: after waking up, and on the phone every few
+// seconds as a safety net for live updates that Android may have frozen.
+async function refreshOpen() {
+  const key = state.openKey;
+  if (!key) return;
+  try {
+    const fresh = await sb.fetchMessages(key);
+    if (state.openKey !== key) return;
+    const before = state.messages.get(key) || [];
+    const merged = mergeMessages(before, fresh);
+    if (signature(merged) === signature(before)) return;
+    for (const m of merged) {
+      if (!before.some(b => b.id === m.id)) onMessage({ key, message: m, quiet: true });
+    }
+    state.messages.set(key, merged);
+    const box = $('#messages');
+    const top = box.scrollTop;
+    renderMessages(key);
+    box.scrollTop = stickToBottom ? box.scrollHeight : top;
+  } catch {}
 }
 
 function showPlaceholder(text) {
@@ -729,15 +766,176 @@ function isEmojiOnly(text, customEmoji = {}) {
   return count > 0 && count <= 8;
 }
 
+let stickToBottom = true; // the chat is scrolled to the newest message
+const mediaCache = new Map(); // ref -> blob: URL for files that need the login
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+function mediaUrl(key, ref) {
+  if (!mediaCache.has(ref)) {
+    const url = sb.fetchMedia(key, ref).then(({ data, type }) => URL.createObjectURL(new Blob([data], { type })));
+    url.catch(() => mediaCache.delete(ref)); // retry next time
+    mediaCache.set(ref, url);
+  }
+  return mediaCache.get(ref);
+}
+
+// Clicking a file: on the Mac it is saved to Downloads and opened; on the
+// phone public links open in the browser.
+async function openAttachment(a) {
+  const key = state.openKey;
+  if (!MOBILE) {
+    toast(`Downloading ${a.name}…`);
+    try {
+      const saved = await sb.openFile(key, a);
+      toast(`Saved to Downloads: ${saved.split('/').pop()}`);
+    } catch (e) {
+      toast(cleanError(e));
+    }
+  } else if (a.url) {
+    sb.openExternal(a.url);
+  } else {
+    toast('Open this file on your Mac');
+  }
+}
+
+function showLightbox(src, a) {
+  const close = () => box.remove();
+  const box = h('div', { class: 'lightbox', onclick: close },
+    h('img', { src, alt: a.name, onclick: e => e.stopPropagation() }),
+    h('div', { class: 'lightbox-bar', onclick: e => e.stopPropagation() },
+      h('span', { class: 'lightbox-name' }, a.name, a.size ? ` · ${formatSize(a.size)}` : ''),
+      MOBILE && !a.url ? null : h('button', { class: 'btn small', onclick: () => openAttachment(a) }, MOBILE ? 'Open' : 'Save to Downloads'),
+      h('button', { class: 'btn small', onclick: close }, 'Close')));
+  document.body.append(box);
+}
+
+function fileChip(a) {
+  return h('a', {
+    class: 'bubble file',
+    href: '#',
+    title: MOBILE ? null : 'Save to Downloads and open',
+    onclick: e => { e.preventDefault(); openAttachment(a); },
+  },
+  h('span', { class: 'file-icon' }, '📄'),
+  h('span', { class: 'file-meta' }, h('span', { class: 'file-name' }, a.name), a.size ? h('span', { class: 'file-size' }, formatSize(a.size)) : null));
+}
+
 function mediaEl(a) {
-  const open = e => { e.preventDefault(); sb.openExternal(a.url); };
+  const key = state.openKey;
   if (a.isVideo) {
-    const video = h('video', { class: 'bubble-image', src: a.url, poster: a.poster, loop: true, autoplay: true, playsinline: true, onclick: open });
+    const video = h('video', { class: 'bubble-image', src: a.url, poster: a.poster, loop: true, autoplay: true, playsinline: true, onclick: () => openAttachment(a) });
     video.muted = true; // must be the property, or autoplay is refused
     return video;
   }
-  if (a.isImage) return h('img', { class: 'bubble-image', src: a.url, alt: a.name, onclick: open });
-  return h('a', { class: 'bubble file', href: '#', onclick: open }, `📎 ${a.name}`);
+  if (!a.isImage) return fileChip(a);
+  const img = h('img', { class: 'bubble-image', alt: a.name, title: a.name });
+  img.addEventListener('click', () => img.src && showLightbox(img.src, a));
+  if (a.url && !a.ref) {
+    img.src = a.url;
+  } else if (a.thumbRef || a.ref) {
+    img.classList.add('loading');
+    mediaUrl(key, a.thumbRef || a.ref)
+      .then(url => {
+        img.src = url;
+        img.classList.remove('loading');
+      })
+      .catch(() => img.replaceWith(fileChip(a)));
+  }
+  return img;
+}
+
+// ----- sending files -----
+
+// Pasted, dropped or picked files wait in a tray above the message box until
+// the message is sent (Enter or the send button). Kept per chat.
+const stagedFiles = new Map(); // conversation key -> [File]
+const previewUrls = new WeakMap(); // File -> blob: URL for its thumbnail
+
+function stageFiles(fileList) {
+  const key = state.openKey;
+  const files = [...(fileList || [])];
+  if (!key || !files.length) return;
+  const big = files.find(f => f.size > 50 * 1024 * 1024);
+  if (big) return toast(`${big.name || 'That file'} is too large (50 MB at most)`);
+  stagedFiles.set(key, [...(stagedFiles.get(key) || []), ...files]);
+  renderStaged();
+  $('#composer-input').focus();
+}
+
+function unstage(key, file) {
+  const rest = (stagedFiles.get(key) || []).filter(f => f !== file);
+  if (previewUrls.has(file)) URL.revokeObjectURL(previewUrls.get(file));
+  if (rest.length) stagedFiles.set(key, rest);
+  else stagedFiles.delete(key);
+  renderStaged();
+}
+
+function renderStaged() {
+  const key = state.openKey;
+  const files = stagedFiles.get(key) || [];
+  const tray = $('#staged');
+  tray.hidden = !files.length;
+  tray.replaceChildren(
+    ...files.map(f => {
+      let preview;
+      if (/^image\//.test(f.type)) {
+        if (!previewUrls.has(f)) previewUrls.set(f, URL.createObjectURL(f));
+        preview = h('img', { src: previewUrls.get(f), alt: '' });
+      } else {
+        preview = h('span', { class: 'staged-icon' }, '📄');
+      }
+      return h('div', { class: 'staged-file', title: f.name || 'Pasted image' },
+        preview,
+        h('div', { class: 'staged-meta' }, h('span', { class: 'staged-name' }, f.name || 'Pasted image'), h('span', {}, formatSize(f.size))),
+        h('button', { class: 'staged-remove', title: 'Remove', 'aria-label': 'Remove', onclick: () => unstage(key, f) }, '✕'));
+    }),
+    files.length ? h('div', { class: 'staged-hint' }, MOBILE ? 'Tap send to share' : 'Press Enter to send · Esc to remove all') : null);
+}
+
+async function sendStaged() {
+  const key = state.openKey;
+  const files = stagedFiles.get(key) || [];
+  stagedFiles.delete(key);
+  renderStaged();
+  const ok = await sendFiles(files);
+  if (!ok && files.length) {
+    stagedFiles.set(key, [...files, ...(stagedFiles.get(key) || [])]); // put them back to retry
+    if (state.openKey === key) renderStaged();
+  }
+}
+
+async function sendFiles(files) {
+  const key = state.openKey;
+  if (!key || !files.length) return false;
+  const input = $('#composer-input');
+  const text = input.value.trim();
+  input.value = '';
+  autosize();
+  toast(`Sending ${files.length === 1 ? files[0].name || 'image' : `${files.length} files`}…`);
+  try {
+    const payload = await Promise.all(files.map(async (f, i) => ({
+      name: f.name || `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`,
+      type: f.type,
+      data: new Uint8Array(await f.arrayBuffer()),
+    })));
+    const message = await sb.upload(key, payload, text);
+    if (message) onMessage({ key, message });
+    else setTimeout(refreshOpen, 1500); // Slack: the message arrives over the socket
+    toast('Sent');
+    scrollToBottom();
+    return true;
+  } catch (e) {
+    if (text && !input.value) input.value = text;
+    autosize();
+    toast(cleanError(e));
+    return false;
+  }
 }
 
 function reactionChips(m) {
@@ -985,7 +1183,7 @@ async function loadOlder() {
   }
 }
 
-function onMessage({ key, message }) {
+function onMessage({ key, message, quiet = false }) {
   const conv = state.convs.get(key);
   if (!conv) return;
   conv.lastActivity = Math.max(conv.lastActivity || 0, message.ts);
@@ -1006,7 +1204,7 @@ function onMessage({ key, message }) {
     } else {
       conv.unread = true;
       if (message.mentionsMe) conv.mentions = (conv.mentions || 0) + 1;
-      if (conv.kind !== 'channel' || message.mentionsMe) notify(conv, message);
+      if (!quiet && (conv.kind !== 'channel' || message.mentionsMe)) notify(conv, message);
     }
   }
   scheduleRender();
@@ -1035,6 +1233,7 @@ async function sendMessage() {
   const input = $('#composer-input');
   const text = input.value.trim();
   const key = state.openKey;
+  if (key && stagedFiles.get(key)?.length) return sendStaged();
   if (!text || !key) return;
   input.value = '';
   autosize();
@@ -1172,6 +1371,8 @@ oauth_config:
       - channels:read
       - channels:write
       - chat:write
+      - files:read
+      - files:write
       - groups:history
       - groups:read
       - groups:write
@@ -1370,6 +1571,7 @@ function hotkey(action) {
   if (action === 'next') navigate(1);
   else if (action === 'prev') navigate(-1);
   else if (action === 'flat') setFlat(!state.view.flat, true);
+  else if (action === 'refresh') refreshOpen();
   else if (action === 'back') {
     // Android back button: close whatever is on top, else leave the app.
     if (!$('#settings').hidden) closeSettings();
@@ -1415,14 +1617,61 @@ function bindUi() {
   const input = $('#composer-input');
   input.addEventListener('input', autosize);
   input.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && stagedFiles.has(state.openKey)) {
+      e.stopPropagation();
+      for (const f of [...stagedFiles.get(state.openKey)]) unstage(state.openKey, f);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE) {
       e.preventDefault();
       sendMessage();
     }
   });
   $('#messages').addEventListener('scroll', e => {
-    if (e.target.scrollTop < 150) loadOlder();
+    const box = e.target;
+    stickToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    if (box.scrollTop < 150) loadOlder();
   });
+  // When the list gets shorter (phone keyboard opening, window resizing), keep
+  // the newest message in view if it was in view before.
+  new ResizeObserver(() => {
+    if (stickToBottom) scrollToBottom();
+  }).observe($('#messages'));
+  $('#composer-input').addEventListener('focus', () => {
+    if (MOBILE) setTimeout(scrollToBottom, 350);
+  });
+  $('#attach-btn').addEventListener('click', () => $('#file-input').click());
+  $('#file-input').addEventListener('change', e => {
+    stageFiles(e.target.files);
+    e.target.value = '';
+  });
+  $('#composer-input').addEventListener('paste', e => {
+    if (e.clipboardData?.files?.length) {
+      e.preventDefault();
+      stageFiles(e.clipboardData.files);
+    }
+  });
+  const pane = $('#chat-pane');
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  pane.addEventListener('dragover', e => {
+    if (!hasFiles(e) || !state.openKey) return;
+    e.preventDefault();
+    pane.classList.add('file-drop');
+  });
+  pane.addEventListener('dragleave', e => {
+    if (!pane.contains(e.relatedTarget)) pane.classList.remove('file-drop');
+  });
+  pane.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    pane.classList.remove('file-drop');
+    stageFiles(e.dataTransfer.files);
+  });
+  if (MOBILE) {
+    setInterval(() => {
+      if (document.visibilityState === 'visible') refreshOpen();
+    }, 10000);
+  }
   document.addEventListener('keydown', e => {
     const action = { KeyJ: 'next', KeyK: 'prev', KeyL: 'flat' }[e.code];
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing && action) {

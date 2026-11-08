@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data:; media-src https:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: data: blob:; media-src https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>Switchboard</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -35,7 +35,10 @@
       <header id="chat-header" class="chat-header"></header>
       <div id="messages" class="messages"></div>
       <div id="gif-panel" class="gif-panel" hidden></div>
+      <div id="staged" class="staged" hidden></div>
       <form id="composer" class="composer">
+        <button type="button" id="attach-btn" class="attach-btn" title="Send files (or drop them on the chat)" aria-label="Send files">📎</button>
+        <input type="file" id="file-input" multiple hidden>
         <button type="button" id="gif-btn" class="gif-btn" title="Send a GIF">GIF</button>
         <textarea id="composer-input" rows="1" placeholder="Message" spellcheck="true"></textarea>
         <button type="submit" class="send-btn" aria-label="Send">↑</button>

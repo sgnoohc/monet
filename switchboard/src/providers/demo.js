@@ -100,6 +100,15 @@ class DemoProvider extends EventEmitter {
     throw new Error('GIF search uses your Discord account (not available in demo mode).');
   }
 
+  reconnect() {}
+
+  async upload(convId, files, text) {
+    const message = this.makeMessage('me', text, Date.now());
+    message.attachments = files.map(f => ({ name: f.name, size: f.data.length, url: null, isImage: false }));
+    this.messages.get(convId).push(message);
+    return message;
+  }
+
   async markRead(convId) {
     const conv = this.convs.get(convId);
     conv.unread = false;

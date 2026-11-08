@@ -233,6 +233,11 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 const ready = load().then(() => (DEMO ? startProvider(new DemoProvider()) : startAll()));
 
 App.addListener('backButton', () => emit('hotkey', 'back'));
+// Android freezes the app in the background; sockets come back dead.
+App.addListener('resume', () => {
+  for (const p of providers.values()) p.reconnect?.();
+  emit('hotkey', 'refresh');
+});
 enableLongPress();
 
 window.sb = {
@@ -256,6 +261,14 @@ window.sb = {
   async react(key, messageId, value, add) {
     const { provider, convId } = route(key);
     return provider.react(convId, messageId, value, add);
+  },
+  async upload(key, files, text) {
+    const { provider, convId } = route(key);
+    return provider.upload(convId, files, text);
+  },
+  async fetchMedia(key, ref) {
+    const { provider } = route(key);
+    return provider.fetchMedia(ref);
   },
   async searchGifs(query) {
     const discord = providers.get('discord');

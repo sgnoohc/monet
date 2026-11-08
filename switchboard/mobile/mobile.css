@@ -78,3 +78,4 @@ body.mobile .icon-btn { font-size: 20px; padding: 4px 10px; }
 body.mobile .msg-stack { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 body.mobile .gif-panel { margin: 0 10px 8px; height: 45vh; }
 body.mobile .gif-grid { columns: 2; }
+body.mobile .staged { margin: 0 10px 8px; }

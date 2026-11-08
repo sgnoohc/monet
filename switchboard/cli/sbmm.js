@@ -340,7 +340,10 @@ function messageLines(msgs, pw, group) {
     }
     const text = clean(m.text);
     const body = text ? wrap(text, max) : [];
-    for (const a of m.attachments || []) body.push(truncate(`${a.isImage ? '🖼 ' : a.isVideo ? '🎞 ' : '📎 '}${clean(a.name)}  ${a.url}`, max));
+    for (const a of m.attachments || []) {
+      const size = a.size ? ` (${(a.size / 1048576).toFixed(1)} MB)` : '';
+      body.push(truncate(`${a.isImage ? '🖼 ' : a.isVideo ? '🎞 ' : '📎 '}${clean(a.name)}${size}${a.url ? `  ${a.url}` : ''}`, max));
+    }
     if (m.isReply && !m.replyTo) body.unshift('↪ reply in thread');
     if (body.length) {
       const bw = Math.max(...body.map(width));

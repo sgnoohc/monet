@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, clipboard, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, clipboard, ipcMain, powerMonitor, session, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -155,6 +155,44 @@ function registerIpc() {
   ipcMain.handle('messages:send', (_e, key, text) => {
     const { provider, convId } = route(key);
     return provider.send(convId, text);
+  });
+
+  ipcMain.handle('messages:upload', (_e, key, files, text) => {
+    const { provider, convId } = route(key);
+    if (!provider.upload) throw new Error('Sending files is not supported here');
+    if (files.some(f => f.data.length > 50 * 1024 * 1024)) throw new Error('Files over 50 MB are not supported');
+    return provider.upload(convId, files.map(f => ({ name: String(f.name), type: String(f.type || ''), data: f.data })), text);
+  });
+
+  // Files that need the account's login (Mattermost, Slack) to download.
+  ipcMain.handle('media:fetch', (_e, key, ref) => {
+    const { provider } = route(key);
+    if (!provider.fetchMedia) throw new Error('Not available');
+    return provider.fetchMedia(ref);
+  });
+
+  // Saves an attachment to Downloads. Documents and media open in their app;
+  // anything else is only revealed in Finder, so nothing runnable is launched.
+  ipcMain.handle('file:open', async (_e, key, attachment) => {
+    let data;
+    if (attachment.ref) {
+      ({ data } = await route(key).provider.fetchMedia(attachment.ref));
+    } else if (/^https:\/\//.test(attachment.url || '')) {
+      const res = await fetch(attachment.url);
+      if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+      data = new Uint8Array(await res.arrayBuffer());
+    } else {
+      throw new Error('Nothing to download');
+    }
+    const name = path.basename(String(attachment.name || 'file')).replace(/[/\\:]/g, '_') || 'file';
+    const { name: base, ext } = path.parse(name);
+    let target = path.join(app.getPath('downloads'), name);
+    for (let i = 1; fs.existsSync(target); i++) target = path.join(app.getPath('downloads'), `${base} (${i})${ext}`);
+    fs.writeFileSync(target, data);
+    const SAFE = /\.(pdf|png|jpe?g|gif|webp|heic|svg|txt|md|csv|json|log|docx?|xlsx?|pptx?|key|pages|numbers|mp4|mov|m4v|webm|mp3|m4a|wav)$/i;
+    if (SAFE.test(target)) shell.openPath(target);
+    else shell.showItemInFolder(target);
+    return target;
   });
 
   ipcMain.handle('messages:react', (_e, key, messageId, value, add) => {
@@ -467,7 +505,15 @@ function createWindow() {
   }
 }
 
+// After sleep, sockets look open but are dead: reconnect and refresh the open chat.
+function reconnectAll() {
+  for (const p of providers.values()) p.reconnect?.();
+  sendToUi('hotkey', 'refresh');
+}
+
 app.whenReady().then(() => {
+  powerMonitor.on('resume', reconnectAll);
+  powerMonitor.on('unlock-screen', reconnectAll);
   hardenContents();
   registerIpc();
   createWindow();

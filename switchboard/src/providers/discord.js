@@ -69,6 +69,19 @@ class DiscordProvider extends EventEmitter {
     ws.on('error', () => {}); // a close event always follows
   }
 
+  // Drop the current socket and resume on a new one: used after sleep, when
+  // the app comes back to the foreground, and when heartbeats go unanswered.
+  reconnect() {
+    if (this.stopped) return;
+    const old = this.ws;
+    this.ws = null;
+    clearInterval(this.heartbeat);
+    try {
+      old?.close(4000);
+    } catch {}
+    this.open();
+  }
+
   onClose(ws, code) {
     if (ws !== this.ws || this.stopped) return;
     clearInterval(this.heartbeat);
@@ -94,7 +107,12 @@ class DiscordProvider extends EventEmitter {
     switch (op) {
       case 10: // hello
         clearInterval(this.heartbeat);
-        this.heartbeat = setInterval(() => this.sendOp(1, this.seq), d.heartbeat_interval);
+        this.acked = true;
+        this.heartbeat = setInterval(() => {
+          if (!this.acked) return this.reconnect(); // no ack since the last beat: the connection is dead
+          this.acked = false;
+          this.sendOp(1, this.seq);
+        }, d.heartbeat_interval);
         if (this.sessionId) {
           this.sendOp(6, { token: this.token, session_id: this.sessionId, seq: this.seq });
         } else {
@@ -105,6 +123,9 @@ class DiscordProvider extends EventEmitter {
             compress: false,
           });
         }
+        break;
+      case 11: // heartbeat ack
+        this.acked = true;
         break;
       case 1: // server asked for a heartbeat now
         this.sendOp(1, this.seq);
@@ -284,6 +305,7 @@ class DiscordProvider extends EventEmitter {
         ...(m.attachments || []).map(a => ({
           name: a.filename,
           url: a.url,
+          size: a.size,
           isImage: /^image\//.test(a.content_type || ''),
           isVideo: /^video\//.test(a.content_type || ''),
         })),
@@ -380,6 +402,22 @@ class DiscordProvider extends EventEmitter {
   }
 
   // Discord's own GIF search (Tenor), as used by its GIF picker.
+  // files: [{ name, type, data: Uint8Array }]; text goes along as the message.
+  async upload(convId, files, text) {
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify({
+      content: text || '',
+      nonce: makeNonce(),
+      attachments: files.map((f, i) => ({ id: i, filename: f.name })),
+    }));
+    files.forEach((f, i) => form.append(`files[${i}]`, new File([f.data], f.name, { type: f.type || 'application/octet-stream' })));
+    const res = await fetch(`${API}/channels/${convId}/messages`, { method: 'POST', headers: { Authorization: this.token }, body: form });
+    const j = await res.json().catch(() => null);
+    if (res.status === 413) throw new Error('Discord: that file is too large (the limit is 10 MB without Nitro)');
+    if (!res.ok) throw new Error(j?.message ? `Discord: ${j.message}` : `Discord HTTP ${res.status}`);
+    return this.toMessage(j);
+  }
+
   async searchGifs(query) {
     const params = 'media_format=mp4&provider=tenor&locale=en-US';
     const list = query

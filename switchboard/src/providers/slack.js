@@ -282,7 +282,15 @@ class SlackProvider extends EventEmitter {
       text: this.renderText(m.text || '') + replies,
       reactions: (m.reactions || []).map(r => this.reactionInfo(r.name, r.count, r.users?.includes(this.me))),
       attachments: [
-        ...(m.files || []).map(f => ({ name: f.name || f.title || 'file', url: f.permalink || f.url_private, isImage: false })),
+        // Slack files need the token to fetch: ref/thumbRef go through fetchMedia.
+        ...(m.files || []).map(f => ({
+          name: f.name || f.title || 'file',
+          size: f.size,
+          ref: f.url_private,
+          thumbRef: f.thumb_480 || f.thumb_360 || null,
+          url: f.permalink,
+          isImage: /^image\//.test(f.mimetype || ''),
+        })),
         // Unfurled links to images and GIFs
         ...(m.attachments || []).filter(a => a.image_url).map(a => ({ name: a.title || 'Image', url: a.image_url, isImage: true })),
       ],
@@ -340,6 +348,45 @@ class SlackProvider extends EventEmitter {
       throw err;
     }
     return this.reactionInfo(name, 1, add);
+  }
+
+  reconnect() {
+    if (this.stopped) return;
+    const old = this.ws;
+    this.ws = null;
+    try {
+      old?.close();
+    } catch {}
+    clearTimeout(this.retry);
+    this.openSocket();
+  }
+
+  async fetchMedia(ref) {
+    if (!/^https:\/\/([\w-]+\.)*slack(-edge)?\.com\//.test(ref)) throw new Error('Not a Slack file');
+    const res = await fetch(ref, { headers: { Authorization: `Bearer ${this.userToken}` } });
+    if (!res.ok) throw new Error(`Slack: couldn't fetch the file (HTTP ${res.status})`);
+    return { data: new Uint8Array(await res.arrayBuffer()), type: res.headers.get('content-type') || '' };
+  }
+
+  // Slack's upload flow: get an upload URL per file, send the bytes, then share
+  // them in the channel. The resulting message arrives over the socket.
+  async upload(convId, files, text) {
+    try {
+      const done = [];
+      for (const f of files) {
+        const { upload_url: url, file_id: id } = await this.call('files.getUploadURLExternal', { filename: f.name, length: String(f.data.length) });
+        const res = await fetch(url, { method: 'POST', body: f.data });
+        if (!res.ok) throw new Error(`Slack upload failed (HTTP ${res.status})`);
+        done.push({ id, title: f.name });
+      }
+      await this.call('files.completeUploadExternal', { files: JSON.stringify(done), channel_id: convId, initial_comment: text || undefined });
+    } catch (err) {
+      if (/missing_scope/.test(err.message)) {
+        throw new Error('Your Slack app needs file permissions: update it with the new manifest from Settings and reinstall it.');
+      }
+      throw err;
+    }
+    return null;
   }
 
   async markRead(convId) {
