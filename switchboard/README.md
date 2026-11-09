@@ -49,18 +49,19 @@ Needs Java 21 (`brew install openjdk@21`) and the Android SDK (`brew install --c
 
 ## Terminal (Mattermost only)
 
-`cli/sbmm.js` (linked as `sbmm`) is Mattermost in the terminal: chat list on the left, bubbles on the right, message line at the bottom. It reuses the desktop app's login (read from the macOS Keychain; macOS asks once), groups and nicknames.
+`cli/sbmm.js` (linked as `sbmm`) is Mattermost in the terminal: chat list on the left, the conversation on the right, message line at the bottom. It reuses the desktop app's login (read from the macOS Keychain; macOS asks once), groups and nicknames.
 
 | Key | Does |
 |---|---|
-| Ctrl+N / Ctrl+P (or Alt+J / Alt+K) | next / previous chat |
+| Ctrl+J / Ctrl+K (or Ctrl+N / Ctrl+P, Alt+J / Alt+K) | next / previous chat |
 | PgUp / PgDn, ↑ / ↓ | scroll (older messages load at the top) |
 | Ctrl+F | find a chat; Enter opens the first match |
 | Ctrl+L | latest first (ignore groups) |
 | `/react 👍` | toggle a reaction on the latest message from someone else |
+| `/style` | switch between `plain` (one line per message, like Discordo; the default) and `bubbles`; remembered |
 | Ctrl+C | quit |
 
-`sbmm --demo` shows sample chats. Ctrl+J isn't used: terminals send it as Enter.
+`sbmm --demo` shows sample chats.
 
 ### On another machine
 

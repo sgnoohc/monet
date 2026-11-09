@@ -21,7 +21,8 @@ const CONFIG_DIR = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir
 const CLI_CONFIG = path.join(CONFIG_DIR, 'config.json');
 const RUN_GAP = 5 * 60000;
 const TIME_GAP = 60 * 60000;
-const HELP = '^N/^P next/prev chat · PgUp/PgDn scroll · ^F find · ^L latest first · /react 👍 · ^C quit';
+const HELP = '^J/^K next/prev chat · PgUp/PgDn scroll · ^F find · ^L latest first · /react 👍 · /style · ^C quit';
+const STYLES = ['plain', 'bubbles']; // plain: one line per message, Discordo-like
 const USAGE = `sbmm: Mattermost in the terminal
 
   sbmm                  open the chat list (default)
@@ -129,7 +130,7 @@ async function login(code) {
   }
   const user = await checkLogin(data.url, data.token);
   fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(CLI_CONFIG, JSON.stringify(data), { mode: 0o600 });
+  fs.writeFileSync(CLI_CONFIG, JSON.stringify({ ...data, style: saved.style }), { mode: 0o600 });
   process.stderr.write(`Logged in as @${user} on ${data.url}. Saved in ${CLI_CONFIG.replace(os.homedir(), '~')}.\n`);
 }
 
@@ -140,6 +141,15 @@ function exportLogin() {
   if (process.stdout.isTTY) {
     process.stderr.write('\nThat code is your Mattermost login. Paste it only into your own machine (sbmm --login), or pipe it:\n  sbmm --export-login | ssh otherhost sbmm --login -\n');
   }
+}
+
+// Settings go in the same file as the login, so it stays readable only by you.
+function saveSetting(name, value) {
+  const data = readJson(CLI_CONFIG, {});
+  data[name] = value;
+  fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(CLI_CONFIG, JSON.stringify(data), { mode: 0o600 });
+  fs.chmodSync(CLI_CONFIG, 0o600);
 }
 
 async function credentials() {
@@ -273,6 +283,7 @@ const state = {
   cursor: 0, // index into graphemes(input)
   find: null, // string while ^F find is active
   flat: !!view.flat,
+  style: STYLES.includes(saved.style) ? saved.style : 'plain',
   notice: '',
   loadingOlder: false,
   floatKey: null, // open chat that was unread when opened; stays on top until you leave it
@@ -309,7 +320,7 @@ function sidebarRows() {
   for (const g of [...view.groups, { id: '', name: 'Other' }]) {
     const items = list.filter(c => groupOf(c.key) === g.id);
     if (!items.length) continue;
-    rows.push({ head: g.name, unread: items.filter(c => c.unread || c.mentions).length });
+    rows.push({ head: g.name, unread: items.reduce((n, c) => n + (c.muted ? 0 : Math.max(c.unreadCount || 0, c.mentions || 0, c.unread ? 1 : 0)), 0) });
     rows.push(...orderGroup(items).map(conv => ({ conv })));
   }
   return rows;
@@ -323,7 +334,64 @@ const sameRun = (a, b) => a && b && !a.system && !b.system && a.isSelf === b.isS
   a.author.id === b.author.id && b.ts - a.ts < RUN_GAP && dayKey(a.ts) === dayKey(b.ts);
 
 // Every message as screen lines for a pane `pw` columns wide.
+function attachmentLine(a) {
+  const size = a.size ? ` (${(a.size / 1048576).toFixed(1)} MB)` : '';
+  return `${a.isImage ? '🖼 ' : a.isVideo ? '🎞 ' : '📎 '}${clean(a.name)}${size}${a.url ? `  ${a.url}` : ''}`;
+}
+
+function reactionText(m) {
+  const parts = m.reactions.map(r => `${r.me ? fg(45) : DIM}${r.emoji || `:${clean(r.name)}:`} ${r.count}${RESET}`);
+  const plain = m.reactions.map(r => `${r.emoji || `:${r.name}:`} ${r.count}`).join('  ');
+  return [parts.join('  '), width(plain)];
+}
+
+// Plain style, like Discordo: "time name text" on the left, the name and time
+// shown once per run of messages, wrapped lines indented under the text.
+function plainLines(msgs, pw) {
+  const out = [];
+  const TW = 8; // "12:34 PM"
+  const indent = TW + 3;
+  const max = Math.max(16, pw - indent - 1);
+  const center = (text, style) => {
+    const t = truncate(text, pw - 2);
+    out.push(' '.repeat(Math.max(0, Math.floor((pw - width(t)) / 2))) + style + t + RESET);
+  };
+  msgs.forEach((m, i) => {
+    const prev = msgs[i - 1];
+    if (!prev || dayKey(prev.ts) !== dayKey(m.ts) || m.ts - prev.ts > TIME_GAP) {
+      out.push('');
+      center(`── ${formatDay(m.ts)} ──`, DIM);
+    }
+    if (m.system) {
+      out.push(`${' '.repeat(indent)}${DIM}${sgr(3)}${truncate(clean(m.text), max)}${RESET}`);
+      return;
+    }
+    const lead = m.mentionsMe && !m.isSelf ? `${fg(214)}▌${RESET}` : ' '; // marks messages that mention you
+    const first = !sameRun(prev, m) || !!m.replyTo;
+    if (m.replyTo) {
+      const quote = truncate(`╭─ ${clean(m.replyTo.author)}: ${clean(m.replyTo.text).replace(/\n/g, ' ')}`, pw - indent);
+      out.push(`${' '.repeat(indent - 1)}${DIM}${quote}${RESET}`);
+    }
+    const text = clean(m.text);
+    const body = text ? wrap(text, max) : [];
+    for (const a of m.attachments || []) body.push(truncate(attachmentLine(a), max));
+    if (m.isReply && !m.replyTo) body.unshift(`${DIM}↪ reply in thread${RESET}`);
+    if (first) {
+      const time = formatTime(m.ts);
+      const name = truncate(clean(m.author.name), Math.max(4, pw - indent - 2));
+      let head = `${lead}${DIM}${' '.repeat(Math.max(0, TW - width(time)))}${time}${RESET} ${fg(nameColor(name))}${BOLD}${name}${RESET}`;
+      const used = 1 + TW + 1 + width(name) + 1;
+      if (body.length && used + width(body[0]) <= pw - 1 && !body[0].startsWith(DIM)) head += ` ${body.shift()}`;
+      out.push(head);
+    }
+    for (const line of body) out.push(`${lead}${' '.repeat(indent - 1)}${line}${RESET}`);
+    if (m.reactions?.length) out.push(`${' '.repeat(indent)}${reactionText(m)[0]}`);
+  });
+  return out;
+}
+
 function messageLines(msgs, pw, group) {
+  if (state.style === 'plain') return plainLines(msgs, pw);
   const out = [];
   const max = Math.max(16, Math.floor(pw * 0.72) - 2);
   const center = (text, style) => {
@@ -353,10 +421,7 @@ function messageLines(msgs, pw, group) {
     }
     const text = clean(m.text);
     const body = text ? wrap(text, max) : [];
-    for (const a of m.attachments || []) {
-      const size = a.size ? ` (${(a.size / 1048576).toFixed(1)} MB)` : '';
-      body.push(truncate(`${a.isImage ? '🖼 ' : a.isVideo ? '🎞 ' : '📎 '}${clean(a.name)}${size}${a.url ? `  ${a.url}` : ''}`, max));
-    }
+    for (const a of m.attachments || []) body.push(truncate(attachmentLine(a), max));
     if (m.isReply && !m.replyTo) body.unshift('↪ reply in thread');
     if (body.length) {
       const bw = Math.max(...body.map(width));
@@ -364,9 +429,8 @@ function messageLines(msgs, pw, group) {
       for (const line of body) out.push(place(`${colors} ${pad(line, bw)} ${RESET}`, bw + 2, m.isSelf));
     }
     if (m.reactions?.length) {
-      const parts = m.reactions.map(r => `${r.me ? fg(45) : DIM}${r.emoji || `:${clean(r.name)}:`} ${r.count}${RESET}`);
-      const plain = m.reactions.map(r => `${r.emoji || `:${r.name}:`} ${r.count}`).join('  ');
-      out.push(place(parts.join('  '), width(plain), m.isSelf));
+      const [text, w] = reactionText(m);
+      out.push(place(text, w, m.isSelf));
     }
   });
   return out;
@@ -403,11 +467,13 @@ function draw() {
     let cell = ' '.repeat(sw);
     if (r?.head) {
       const label = ` ${r.head.toUpperCase()}`;
-      cell = DIM + BOLD + pad(truncate(label, sw - 4), sw - 4) + RESET + (r.unread ? fg(39) + pad(String(r.unread), 4) + RESET : ' '.repeat(4));
+      cell = DIM + BOLD + pad(truncate(label, sw - 4), sw - 4) + RESET + (r.unread ? fg(196) + BOLD + pad(r.unread > 99 ? '99+' : String(r.unread), 4) + RESET : ' '.repeat(4));
     } else if (r?.conv) {
       const c = r.conv;
-      const badge = c.mentions ? `${fg(196)}${c.mentions}${RESET}` : c.unread ? `${fg(39)}●${RESET}` : ' ';
-      const badgeW = c.mentions ? String(c.mentions).length : 1;
+      const n = Math.max(c.unreadCount || 0, c.mentions || 0);
+      const label = n > 99 ? '99+' : String(n);
+      const badge = n ? `${fg(196)}${BOLD}${label}${RESET}` : c.unread ? `${fg(196)}●${RESET}` : ' ';
+      const badgeW = n ? label.length : 1;
       const name = truncate(title(c), sw - 3 - badgeW);
       const bodyStyle = c.key === state.open ? sgr(7) : c.unread || c.mentions ? BOLD : c.muted ? DIM : '';
       cell = `${bodyStyle} ${pad(name, sw - 2 - badgeW)}${RESET}${badge} `;
@@ -420,7 +486,7 @@ function draw() {
   const conv = state.convs.get(state.open);
   const head = conv
     ? `${BOLD}${truncate(title(conv), pw - 2)}${RESET}${DIM}  ${truncate(title(conv) !== clean(conv.title) ? `${clean(conv.title)} · ${clean(conv.subtitle)}` : clean(conv.subtitle), Math.max(0, pw - width(title(conv)) - 4))}${RESET}`
-    : `${DIM}Pick a chat with ^N / ^P${RESET}`;
+    : `${DIM}Pick a chat with ^J / ^K${RESET}`;
   out += `${at(1, x0)} ${head}${RESET}${CSI}K`;
   out += at(2, x0) + DIM + '─'.repeat(pw) + RESET;
 
@@ -483,6 +549,7 @@ async function openConv(key) {
   if (conv.unread || conv.mentions) {
     conv.unread = false;
     conv.mentions = 0;
+    conv.unreadCount = 0;
     state.provider.markRead(conv.id).catch(() => {});
   }
   render();
@@ -564,9 +631,19 @@ async function submit() {
   state.cursor = 0;
   if (text === '/quit' || text === '/q') return quit();
   if (text === '/help') return noteFor(HELP, 8000);
+  const style = /^\/style(?:\s+(\w+))?$/.exec(text);
+  if (style) {
+    const next = style[1] || STYLES[(STYLES.indexOf(state.style) + 1) % STYLES.length];
+    if (!STYLES.includes(next)) return noteFor(`Styles: ${STYLES.join(', ')}`);
+    state.style = next;
+    try {
+      saveSetting('style', next);
+    } catch {}
+    return noteFor(`Style: ${next}`);
+  }
   const react = /^\/(react|r)(?:\s+(.*))?$/.exec(text);
   if (react) return reactCommand((react[2] || '').trim());
-  if (!conv) return noteFor('Pick a chat first (^N / ^P)');
+  if (!conv) return noteFor('Pick a chat first (^J / ^K)');
   try {
     const message = await state.provider.send(conv.id, text);
     onMessage({ convId: conv.id, message });
@@ -620,8 +697,9 @@ function handleKey(k) {
   const seq = k.seq || k.ch;
   switch (seq) {
     case '\x03': case '\x11': return quit(); // ^C ^Q
-    case '\x0e': case '\x1bj': case '\x1b[1;3B': return step(1); // ^N, Alt+J, Alt+Down
-    case '\x10': case '\x1bk': case '\x1b[1;3A': return step(-1); // ^P, Alt+K, Alt+Up
+    // Enter sends \r in raw mode, so ^J (\n) is free for "next chat"
+    case '\n': case '\x0e': case '\x1bj': case '\x1b[1;3B': return step(1); // ^J, ^N, Alt+J, Alt+Down
+    case '\x0b': case '\x10': case '\x1bk': case '\x1b[1;3A': return step(-1); // ^K, ^P, Alt+K, Alt+Up
     case '\x0c': // ^L
       state.flat = !state.flat;
       return noteFor(state.flat ? 'Latest first: on' : 'Latest first: off (grouped)');
@@ -684,6 +762,11 @@ function parseKeys(data) {
       const m = /^\x1b(\[[0-9;]*[A-Za-z~]|O[A-Za-z]|[^\x1b])?/.exec(data.slice(i));
       keys.push({ seq: m[0] });
       i += m[0].length;
+      continue;
+    }
+    if (data.startsWith('\r\n', i)) { // one Enter from terminals that send both
+      keys.push({ ch: '\r' });
+      i += 2;
       continue;
     }
     const ch = String.fromCodePoint(data.codePointAt(i));
