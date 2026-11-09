@@ -4,8 +4,6 @@
   --surface: #ffffff;
   --hover: rgba(0, 0, 0, 0.05);
   --active: rgba(10, 100, 230, 0.12);
-  --pinned: rgba(230, 150, 20, 0.09);
-  --pinned-bar: #e0a030;
   --border: rgba(0, 0, 0, 0.09);
   --text: #1d1d1f;
   --muted: #6e6e73;
@@ -31,8 +29,6 @@
     --surface: #1e1f22;
     --hover: rgba(255, 255, 255, 0.05);
     --active: rgba(80, 150, 255, 0.18);
-    --pinned: rgba(245, 175, 60, 0.08);
-    --pinned-bar: #d9a24a;
     --border: rgba(255, 255, 255, 0.08);
     --text: #ececef;
     --muted: #a0a0a8;
@@ -122,6 +118,9 @@ input, textarea { font: inherit; color: inherit; }
 .edit-title { flex: 1; font-weight: 700; }
 .edit-actions { margin-top: 6px; font-size: 12px; }
 .edit-count { flex: 1; color: var(--muted); }
+.edit-tabs { display: flex; gap: 4px; margin-top: 8px; }
+/* Between a group's pinned chats and the rest */
+.pin-divider { height: 1px; margin: 4px 12px; background: var(--border); }
 .edit-new { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .btn.small { padding: 3px 10px; font-size: 12px; }
 .link-btn { border: none; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 12px; }
@@ -160,10 +159,7 @@ button.list-note { display: block; width: 100%; }
   border-radius: 8px;
   cursor: pointer;
 }
-/* Pinned chats: a warm tint and a bar on the left */
-.conv.pinned { background: var(--pinned); box-shadow: inset 3px 0 0 var(--pinned-bar); }
 .conv:hover { background: var(--hover); }
-.conv.pinned:hover { background: linear-gradient(var(--hover), var(--hover)), var(--pinned); }
 .conv.active { background: var(--active); }
 .conv.muted { opacity: 0.55; }
 .conv.peek { box-shadow: inset 2px 0 0 var(--faint); }

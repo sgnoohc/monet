@@ -26,6 +26,7 @@ const state = {
   loadingOlder: false,
   view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false },
   editing: false,
+  editTab: 'show', // Edit chooses which chats to 'show' or to 'pin'
   dragKey: null, // chat being dragged onto a group
   renaming: null, // group id whose name is being edited
   renamingConv: null, // chat key whose nickname is being edited
@@ -306,13 +307,24 @@ function finishRename(g, name) {
 
 const isPinned = key => state.view.pins.includes(key);
 
-// Order inside a group: unread chats first (newest first), then pinned chats
-// in the order you set, then the rest by newest message.
-function orderGroup(items) {
+// A group is its pinned chats (in the order you set) and then the rest (newest
+// first); in each part, chats with unread messages move to the top.
+function splitGroup(items) {
   const rank = new Map(state.view.pins.map((k, i) => [k, i]));
   const floats = c => !c.muted && (unreadOf(c) > 0 || (c.key === state.floatKey && c.key === state.openKey));
-  const tier = c => (floats(c) ? 0 : rank.has(c.key) ? 1 : 2);
-  return [...items].sort((a, b) => tier(a) - tier(b) || (tier(a) === 1 ? rank.get(a.key) - rank.get(b.key) : 0));
+  const pinned = items.filter(c => rank.has(c.key)).sort((a, b) => floats(b) - floats(a) || rank.get(a.key) - rank.get(b.key));
+  const rest = items.filter(c => !rank.has(c.key)).sort((a, b) => floats(b) - floats(a));
+  return { pinned, rest };
+}
+
+function groupRows(items) {
+  if (state.editing || state.view.flat) return items.slice(0, LIST_LIMIT).map(convRow); // rows stay put while you tick them
+  const { pinned, rest } = splitGroup(items);
+  return [
+    ...pinned.map(convRow),
+    ...(pinned.length && rest.length ? [h('div', { class: 'pin-divider' })] : []),
+    ...rest.slice(0, LIST_LIMIT).map(convRow),
+  ];
 }
 
 // Pinned chats in the same group as key, in pin order
@@ -321,11 +333,17 @@ function groupPins(key) {
   return state.view.pins.filter(k => state.convs.has(k) && groupOf(k) === gid);
 }
 
-function setPinned(key, on) {
-  state.view.pins = state.view.pins.filter(k => k !== key);
-  if (on) state.view.pins.push(key);
-  saveView();
-  scheduleRender();
+function setPinned(keys, on) {
+  for (const key of keys) {
+    const was = isPinned(key);
+    if (was && !on) state.view.pins = state.view.pins.filter(k => k !== key);
+    if (!was && on) state.view.pins.push(key);
+  }
+  if (on) setVisible(keys, true); // saves and renders
+  else {
+    saveView();
+    scheduleRender();
+  }
 }
 
 function movePin(key, delta) {
@@ -380,7 +398,7 @@ async function convMenu(c) {
   if (!choice) return;
   if (choice === 'group:new') createGroup([c.key]);
   else if (choice.startsWith('group:')) assignGroup([c.key], choice.slice(6));
-  else if (choice === 'pin' || choice === 'unpin') setPinned(c.key, choice === 'pin');
+  else if (choice === 'pin' || choice === 'unpin') setPinned([c.key], choice === 'pin');
   else if (choice === 'pin-up') movePin(c.key, -1);
   else if (choice === 'pin-down') movePin(c.key, 1);
   else if (choice === 'hide') setVisible([c.key], false);
@@ -520,12 +538,25 @@ function renderEditBar() {
   bar.hidden = !state.editing;
   if (!state.editing) return;
   const list = filteredConvs();
+  const pinTab = state.editTab === 'pin';
+  const tabs = h('div', { class: 'edit-tabs' },
+    ...[['show', 'Show'], ['pin', 'Pin']].map(([id, label]) =>
+      h('button', { class: `chip${state.editTab === id ? ' on' : ''}`, onclick: () => { state.editTab = id; renderSidebar(); } }, label)));
+  const top = h('div', { class: 'edit-top' },
+    h('span', { class: 'edit-title' }, pinTab ? 'Choose chats to pin' : 'Choose chats to show'),
+    h('button', { class: 'btn primary small', onclick: () => setEditing(false) }, 'Done'));
+  if (pinTab) {
+    const pinned = list.filter(c => isPinned(c.key));
+    bar.replaceChildren(top, tabs,
+      h('div', { class: 'edit-actions' },
+        h('span', { class: 'edit-count' }, `${pinned.length} pinned`),
+        pinned.length ? h('button', { class: 'link-btn', onclick: () => setPinned(pinned.map(c => c.key), false) }, 'Unpin all') : null),
+      h('div', { class: 'edit-new' }, 'Pinned chats stay at the top of their group.'));
+    return;
+  }
   const shown = list.filter(isVisible).length;
   const newChats = h('input', { type: 'checkbox', checked: state.view.mode === 'all', onchange: e => setNewChatsShown(e.target.checked) });
-  bar.replaceChildren(
-    h('div', { class: 'edit-top' },
-      h('span', { class: 'edit-title' }, 'Choose chats to show'),
-      h('button', { class: 'btn primary small', onclick: () => setEditing(false) }, 'Done')),
+  bar.replaceChildren(top, tabs,
     h('div', { class: 'edit-actions' },
       h('span', { class: 'edit-count' }, `${shown} of ${list.length} shown`),
       h('button', { class: 'link-btn', onclick: () => setVisible(list.map(c => c.key), true) }, 'Show all'),
@@ -537,6 +568,8 @@ function renderEditBar() {
 function convRow(c) {
   const editing = state.editing;
   const visible = isVisible(c);
+  const pinTab = editing && state.editTab === 'pin';
+  const checked = pinTab ? isPinned(c.key) : visible;
   const count = Math.max(c.unreadCount || 0, c.mentions || 0);
   const badge = count ? h('span', { class: 'pill', title: c.mentions ? `${count} unread, ${c.mentions} mentioning you` : `${count} unread` }, countLabel(count))
     : c.unread ? h('span', { class: 'dot' }) : null;
@@ -547,14 +580,14 @@ function convRow(c) {
     : h('span', { class: 'conv-title' }, name));
   // An <input> can't live inside a <button>, so a row being renamed is a div.
   const el = h(renaming ? 'div' : 'button', {
-    class: `conv${!editing && c.key === state.openKey ? ' active' : ''}${c.unread || c.mentions ? ' unread' : ''}${c.muted ? ' muted' : ''}${!state.view.flat && isPinned(c.key) ? ' pinned' : ''}${editing && !visible ? ' off' : ''}${!editing && !visible ? ' peek' : ''}`,
+    class: `conv${!editing && c.key === state.openKey ? ' active' : ''}${c.unread || c.mentions ? ' unread' : ''}${c.muted ? ' muted' : ''}${editing && !pinTab && !visible ? ' off' : ''}${!editing && !visible ? ' peek' : ''}`,
     'data-kind': c.kind,
     'data-key': c.key,
     title: !editing && !visible
       ? 'Hidden chat, shown because of a new message. Right-click → Keep in list to keep it.'
       : state.view.compact || name !== c.title ? `${name} · ${name !== c.title ? `${c.title} · ` : ''}${c.subtitle}` : null,
     draggable: editing || renaming ? null : 'true',
-    onclick: () => (renaming ? null : editing ? setVisible([c.key], !visible) : openConversation(c.key)),
+    onclick: () => (renaming ? null : pinTab ? setPinned([c.key], !checked) : editing ? setVisible([c.key], !visible) : openConversation(c.key)),
     oncontextmenu: e => {
       e.preventDefault();
       if (!editing) convMenu(c);
@@ -569,7 +602,7 @@ function convRow(c) {
       if (state.renderPending) scheduleRender();
     },
   },
-  editing ? h('span', { class: `check${visible ? ' on' : ''}`, 'aria-hidden': 'true' }, visible ? '✓' : '') : null,
+  editing ? h('span', { class: `check${checked ? ' on' : ''}`, 'aria-hidden': 'true' }, checked ? '✓' : '') : null,
   h('div', { class: 'conv-avatar' },
     avatarEl(name, c.avatar),
     h('span', { class: `svc-badge svc-${c.service}` }, SERVICES[c.service]?.letter || '?')),
@@ -632,11 +665,11 @@ function renderSidebar() {
       const collapsed = g === OTHER ? state.view.otherCollapsed : g.collapsed;
       rows.push(groupHeader(g, items));
       if (collapsed && !expandAll) continue;
-      rows.push(...orderGroup(items).slice(0, LIST_LIMIT).map(convRow));
+      rows.push(...groupRows(items));
       if (!items.length) rows.push(h('div', { class: 'group-empty' }, 'Drag a chat here, or right-click one'));
     }
   } else {
-    rows.push(...(state.view.flat ? list : orderGroup(list)).slice(0, LIST_LIMIT).map(convRow));
+    rows.push(...groupRows(list));
     if (list.length > LIST_LIMIT) rows.push(h('div', { class: 'list-note' }, `${list.length - LIST_LIMIT} more; search to find them`));
   }
 

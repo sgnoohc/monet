@@ -283,13 +283,14 @@ const isVisible = c => (view.mode === 'all' ? !hiddenKeys.has(c.key) : hiddenKey
 const isListed = c => isVisible(c) || c.unread || c.mentions > 0 || c.key === state.open;
 const groupOf = key => (view.groups.some(g => g.id === view.assign[key]) ? view.assign[key] : '');
 
-// Inside a group: unread chats first, then pinned ones (set in the desktop
-// app) in their order, then the rest by newest message.
+// Inside a group: pinned chats (set in the desktop app) in their order, then
+// the rest by newest message; in each part, unread chats move to the top.
 function orderGroup(items) {
   const rank = new Map((view.pins || []).map((k, i) => [k, i]));
   const floats = c => !c.muted && (c.unread || c.mentions > 0 || (c.key === state.floatKey && c.key === state.open));
-  const tier = c => (floats(c) ? 0 : rank.has(c.key) ? 1 : 2);
-  return [...items].sort((a, b) => tier(a) - tier(b) || (tier(a) === 1 ? rank.get(a.key) - rank.get(b.key) : 0));
+  const pinned = items.filter(c => rank.has(c.key)).sort((a, b) => floats(b) - floats(a) || rank.get(a.key) - rank.get(b.key));
+  const rest = items.filter(c => !rank.has(c.key)).sort((a, b) => floats(b) - floats(a));
+  return [...pinned, ...rest];
 }
 
 function listedConvs() {

@@ -4,7 +4,7 @@ Discord, Mattermost, Slack and Teams in one Mac window: every chat in one list o
 
 - **One list** across services, newest first, with unread dots, @mention counts and search (⌘K).
 - **Groups** you make yourself (right-click a chat → Move to group, or drag it onto a group). **Ctrl+L** toggles "latest first", which ignores groups.
-- **Pins**: right-click a chat → Pin to top of group; pinned chats stay at the top of their group in the order you set (Move pin up/down, or drag a chat onto a pinned one). Chats with unread messages jump above them and go back to their place once read.
+- **Pins**: Edit → Pin, then tick the chats to pin (or right-click a chat → Pin to top of group). Pinned chats stay at the top of their group in the order you set (right-click → Move pin up/down, or drag a chat onto a pinned one); a thin line separates them from the rest. Unread chats move to the top of their part and go back once read.
 - **Choose what shows** with Edit. A hidden chat pops back in when a new message arrives and drops out again once read, unless you keep it.
 - **Nicknames** for any chat, visible only to you (right-click → Rename).
 - **iMessage-style bubbles**, reply quotes, compact list (☰), **Ctrl+J / Ctrl+K** to move between chats.
