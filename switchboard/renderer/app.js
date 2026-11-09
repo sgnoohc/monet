@@ -31,6 +31,7 @@ const state = {
   renaming: null, // group id whose name is being edited
   renamingConv: null, // chat key whose nickname is being edited
   renderPending: false,
+  searchKey: null, // match that Enter opens while searching
   floatKey: null, // open chat that was unread when opened; stays on top until you leave it
 };
 
@@ -688,6 +689,7 @@ function renderSidebar() {
   }
   box.replaceChildren(...rows);
   box.scrollTop = scroll;
+  markSearchPick();
 }
 
 function renderStatus() {
@@ -1702,6 +1704,45 @@ function hotkey(action) {
   }
 }
 
+// ----- search: Enter opens the highlighted match (the first, or the one
+// picked with Ctrl+J / Ctrl+K or the arrow keys) -----
+
+const searching = () => !!state.query.trim() && !state.editing;
+const searchMatches = () => [...document.querySelectorAll('#convs .conv')].map(el => el.dataset.key).filter(Boolean);
+
+function markSearchPick() {
+  const keys = searching() ? searchMatches() : [];
+  if (!keys.includes(state.searchKey)) state.searchKey = keys[0] || null;
+  for (const el of document.querySelectorAll('#convs .conv')) {
+    el.classList.toggle('picked', !!state.searchKey && el.dataset.key === state.searchKey);
+  }
+}
+
+function movePick(delta) {
+  const keys = searchMatches();
+  if (!keys.length) return;
+  const i = keys.indexOf(state.searchKey);
+  state.searchKey = keys[Math.min(keys.length - 1, Math.max(0, i + delta))];
+  markSearchPick();
+  document.querySelector('#convs .conv.picked')?.scrollIntoView({ block: 'nearest' });
+}
+
+function clearSearch() {
+  state.query = '';
+  state.searchKey = null;
+  $('#search').value = '';
+  $('#search').blur();
+  renderSidebar();
+}
+
+function openPick() {
+  const key = state.searchKey;
+  if (!key) return;
+  clearSearch();
+  openConversation(key);
+  requestAnimationFrame(() => document.querySelector('#sidebar .conv.active')?.scrollIntoView({ block: 'nearest' }));
+}
+
 function navigate(delta) {
   if (state.editing || state.renaming || state.renamingConv) return;
   const order = [...document.querySelectorAll('#apps .conv, #convs .conv')].map(el => el.dataset.key).filter(Boolean);
@@ -1720,7 +1761,21 @@ function navigate(delta) {
 function bindUi() {
   $('#search').addEventListener('input', e => {
     state.query = e.target.value;
+    state.searchKey = null; // a new search starts at the first match
     renderSidebar();
+  });
+  $('#search').addEventListener('keydown', e => {
+    if (e.isComposing) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      openPick();
+    } else if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && searching()) {
+      e.preventDefault();
+      movePick(e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      clearSearch();
+    }
   });
   $('#settings-btn').addEventListener('click', openSettings);
   $('#compact-btn').addEventListener('click', () => setCompact(!state.view.compact));
@@ -1796,7 +1851,8 @@ function bindUi() {
     const action = { KeyJ: 'next', KeyK: 'prev', KeyL: 'flat' }[e.code];
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing && action) {
       e.preventDefault();
-      hotkey(action);
+      if (document.activeElement === $('#search') && searching() && action !== 'flat') movePick(action === 'next' ? 1 : -1);
+      else hotkey(action);
     } else if (e.metaKey && e.key === 'k') {
       e.preventDefault();
       $('#search').focus();

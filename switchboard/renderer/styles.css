@@ -161,6 +161,8 @@ button.list-note { display: block; width: 100%; }
 }
 .conv:hover { background: var(--hover); }
 .conv.active { background: var(--active); }
+/* The search match Enter would open */
+.conv.picked { background: var(--active); box-shadow: inset 0 0 0 2px var(--accent); }
 .conv.muted { opacity: 0.55; }
 .conv.peek { box-shadow: inset 2px 0 0 var(--faint); }
 
