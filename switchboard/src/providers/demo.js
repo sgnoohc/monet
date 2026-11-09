@@ -4,17 +4,17 @@ const { EventEmitter } = require('events');
 const MIN = 60000;
 
 const SEED = [
-  { id: 'd1', service: 'discord', kind: 'dm', title: 'Alex Rivera', subtitle: 'Direct message', ago: 2, unread: true,
+  { id: 'd1', service: 'discord', kind: 'dm', title: 'Alex Rivera', subtitle: 'Direct message', ago: 2, unread: true, count: 2,
     msgs: [['Alex Rivera', 'are you coming to the lab meeting?', 9], ['me', 'yes, running 5 min late', 6], ['me', 'grabbing coffee first, want one?', 5], ['Alex Rivera', 'no worries, saving you a seat', 2], ['Alex Rivera', 'yes please! oat latte', 2, 2]] },
   { id: 'm1', service: 'mattermost', kind: 'channel', title: '#detector-ops', subtitle: 'ATLAS', ago: 7, mentions: 1,
     msgs: [['Sam Okafor', 'Run 4521 finished, data quality looks good', 40], ['Priya Nair', '@me can you check the calibration plots?', 7]] },
   { id: 't1', service: 'mattermost', kind: 'dm', title: 'Jordan Lee', subtitle: 'Direct message', ago: 25,
     msgs: [['Jordan Lee', 'sent you the slides for Thursday', 30], ['me', 'thanks, will review tonight', 25]] },
-  { id: 'd2', service: 'discord', kind: 'channel', title: '#general', subtitle: 'Gator Physics', ago: 55, unread: true,
+  { id: 'd2', service: 'discord', kind: 'channel', title: '#general', subtitle: 'Gator Physics', ago: 55, unread: true, count: 14,
     msgs: [['Casey', 'anyone have notes from PHY 4604?', 70], ['Morgan', 'I can share mine after class', 55]] },
   { id: 'm2', service: 'mattermost', kind: 'channel', title: '#town-square', subtitle: 'CERN', ago: 180,
     msgs: [['Robin', 'Reminder: cafeteria closes early Friday', 180]] },
-  { id: 's1', service: 'slack', kind: 'channel', title: '#analysis', subtitle: 'Physics Lab', ago: 15, unread: true,
+  { id: 's1', service: 'slack', kind: 'channel', title: '#analysis', subtitle: 'Physics Lab', ago: 15, unread: true, count: 3,
     msgs: [['Dana Kim', 'new histograms are up on the shared drive', 15]] },
   { id: 's2', service: 'slack', kind: 'dm', title: 'Chris Patel', subtitle: 'Direct message', ago: 95,
     msgs: [['Chris Patel', 'can we move our 1:1 to 3pm?', 95]] },
@@ -39,6 +39,7 @@ class DemoProvider extends EventEmitter {
         id: s.id, key: `demo:${s.id}`, provider: 'demo', service: s.service, kind: s.kind,
         title: s.title, subtitle: s.subtitle, avatar: null, muted: false,
         lastActivity: now - s.ago * MIN, unread: !!s.unread || !!s.mentions, mentions: s.mentions || 0,
+        unreadCount: s.count || s.mentions || 0,
       });
       const msgs = s.msgs.map(([who, text, ago]) => this.makeMessage(who, text, now - ago * MIN));
       if (s.id === 'd1') {
@@ -61,6 +62,7 @@ class DemoProvider extends EventEmitter {
       this.messages.get('d1').push(message);
       conv.lastActivity = message.ts;
       conv.unread = true;
+      conv.unreadCount += 1;
       this.emit('message', { convId: 'd1', message });
     }, 45000);
   }
@@ -112,6 +114,7 @@ class DemoProvider extends EventEmitter {
   async markRead(convId) {
     const conv = this.convs.get(convId);
     conv.unread = false;
+    conv.unreadCount = 0;
     conv.mentions = 0;
   }
 }

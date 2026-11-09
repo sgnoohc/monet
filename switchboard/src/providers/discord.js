@@ -31,6 +31,8 @@ class DiscordProvider extends EventEmitter {
     this.convs = new Map();
     this.users = new Map();
     this.readState = new Map();
+    this.counted = new Set();
+    this.countRun = 0;
     this.muted = { guilds: new Set(), channels: new Set() };
     this.me = null;
     this.ws = null;
@@ -50,6 +52,7 @@ class DiscordProvider extends EventEmitter {
   disconnect() {
     this.stopped = true;
     clearInterval(this.heartbeat);
+    clearTimeout(this.emitTimer);
     const ws = this.ws;
     this.ws = null;
     ws?.close(1000);
@@ -155,6 +158,7 @@ class DiscordProvider extends EventEmitter {
       case 'GUILD_CREATE':
         this.addGuild(d);
         this.emitConversations();
+        this.countUnread();
         break;
       case 'CHANNEL_CREATE':
         if (d.type === DM || d.type === GROUP_DM) {
@@ -197,10 +201,40 @@ class DiscordProvider extends EventEmitter {
     (d.guilds || []).forEach((g, i) => this.addGuild(g, d.merged_members?.[i]?.[0]?.roles));
     this.emit('status', { state: 'connected', user: userName(d.user) });
     this.emitConversations();
+    this.counted.clear();
+    this.countUnread();
   }
 
   emitConversations() {
+    clearTimeout(this.emitTimer);
+    this.emitTimer = null;
     this.emit('conversations', this.conversations());
+  }
+
+  emitSoon() {
+    this.emitTimer ??= setTimeout(() => this.emitConversations(), 400);
+  }
+
+  // Read state only says *whether* a server channel is unread (DMs carry a
+  // count), so count the unread messages one channel at a time (up to 100).
+  async countUnread() {
+    const run = ++this.countRun;
+    const todo = [...this.convs.values()].filter(c => c.unread && !this.counted.has(c.id) && (c.kind === 'channel' || !c.unreadCount));
+    for (const c of todo) {
+      if (this.stopped || run !== this.countRun) return;
+      this.counted.add(c.id);
+      const after = this.readState.get(c.id)?.last_message_id;
+      if (!after) continue;
+      try {
+        const list = await this.api('GET', `/channels/${c.id}/messages?after=${after}&limit=100`);
+        const conv = this.convs.get(c.id);
+        if (conv?.unread) {
+          conv.unreadCount = Math.max(conv.unreadCount, list.filter(m => m.author?.id !== this.me?.id).length);
+          this.emitSoon();
+        }
+      } catch {}
+      await sleep(400);
+    }
   }
 
   addPrivate(c) {
@@ -236,6 +270,7 @@ class DiscordProvider extends EventEmitter {
   putConv(c, extra) {
     const rs = this.readState.get(c.id);
     const lastId = c.last_message_id || null;
+    const unread = !extra.muted && !!rs && !!lastId && BigInt(lastId) > BigInt(rs.last_message_id || 0);
     this.convs.set(c.id, {
       id: c.id,
       key: `discord:${c.id}`,
@@ -244,7 +279,9 @@ class DiscordProvider extends EventEmitter {
       lastActivity: snowflakeTime(lastId),
       lastMessageId: lastId,
       // No read-state entry means the channel was never opened; don't flag it.
-      unread: !extra.muted && !!rs && !!lastId && BigInt(lastId) > BigInt(rs.last_message_id || 0),
+      unread,
+      // In DMs every unread message counts as a mention.
+      unreadCount: unread ? rs.mention_count || 0 : 0,
       mentions: rs?.mention_count || 0,
       ...extra,
     });
@@ -285,6 +322,7 @@ class DiscordProvider extends EventEmitter {
     conv.lastMessageId = m.id;
     if (!message.isSelf && !conv.muted) {
       conv.unread = true;
+      conv.unreadCount += 1;
       if (message.mentionsMe) conv.mentions += 1;
     }
     this.emit('message', { convId: m.channel_id, message });
@@ -430,6 +468,7 @@ class DiscordProvider extends EventEmitter {
     const conv = this.convs.get(convId);
     if (!conv) return;
     conv.unread = false;
+    conv.unreadCount = 0;
     conv.mentions = 0;
     if (!conv.lastMessageId) return;
     this.readState.set(convId, { id: convId, last_message_id: conv.lastMessageId });

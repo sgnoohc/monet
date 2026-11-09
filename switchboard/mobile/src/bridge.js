@@ -9,7 +9,7 @@ import MattermostProvider from '../../src/providers/mattermost';
 import SlackProvider from '../../src/providers/slack';
 import DemoProvider from '../../src/providers/demo';
 
-const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, otherCollapsed: false, compact: false, flat: false };
+const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, pins: [], otherCollapsed: false, compact: false, flat: false };
 
 // Stored in the app's private storage (not readable by other apps; backups are off).
 let config = { mattermost: { url: '' }, slack: [], view: { ...DEFAULT_VIEW } };
@@ -36,14 +36,18 @@ async function load() {
 const saveConfig = () => Preferences.set({ key: 'config', value: JSON.stringify(config) });
 const saveSecrets = () => Preferences.set({ key: 'secrets', value: JSON.stringify(secrets) });
 
+// What a chat's unread state is after a new message, so the interface can match it
+const countsOf = c => (c ? { unread: !!c.unread, unreadCount: c.unreadCount || 0, mentions: c.mentions || 0 } : null);
+
 function startProvider(p) {
   providers.set(p.id, p);
   p.on('status', s => {
     statuses[p.id] = { provider: p.id, label: p.label, ...s };
     emit('status', statuses[p.id]);
   });
-  p.on('conversations', list => emit('conversations', { provider: p.id, list }));
-  p.on('message', ({ convId, message }) => emit('message', { key: `${p.id}:${convId}`, message }));
+  // Copies, so the interface's changes don't leak back into the providers
+  p.on('conversations', list => emit('conversations', { provider: p.id, list: list.map(c => ({ ...c })) }));
+  p.on('message', ({ convId, message }) => emit('message', { key: `${p.id}:${convId}`, message, counts: countsOf(p.convs?.get(convId)) }));
   p.on('reaction', ({ convId, ...rest }) => emit('reaction', { key: `${p.id}:${convId}`, ...rest }));
   p.connect();
 }
@@ -247,7 +251,7 @@ window.sb = {
     return {
       settings: settings(),
       statuses,
-      conversations: [...providers.values()].flatMap(p => p.conversations()),
+      conversations: [...providers.values()].flatMap(p => p.conversations()).map(c => ({ ...c })),
     };
   },
   async fetchMessages(key, before) {

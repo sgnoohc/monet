@@ -256,6 +256,7 @@ const view = {
   groups: [],
   assign: {},
   nicknames: {},
+  pins: [],
   ...(appConfig.view || saved.view),
 };
 const hiddenKeys = new Set(view.keys);
@@ -274,12 +275,22 @@ const state = {
   flat: !!view.flat,
   notice: '',
   loadingOlder: false,
+  floatKey: null, // open chat that was unread when opened; stays on top until you leave it
 };
 
 const title = c => clean(view.nicknames[c.key] || c.title);
 const isVisible = c => (view.mode === 'all' ? !hiddenKeys.has(c.key) : hiddenKeys.has(c.key));
 const isListed = c => isVisible(c) || c.unread || c.mentions > 0 || c.key === state.open;
 const groupOf = key => (view.groups.some(g => g.id === view.assign[key]) ? view.assign[key] : '');
+
+// Inside a group: unread chats first, then pinned ones (set in the desktop
+// app) in their order, then the rest by newest message.
+function orderGroup(items) {
+  const rank = new Map((view.pins || []).map((k, i) => [k, i]));
+  const floats = c => !c.muted && (c.unread || c.mentions > 0 || (c.key === state.floatKey && c.key === state.open));
+  const tier = c => (floats(c) ? 0 : rank.has(c.key) ? 1 : 2);
+  return [...items].sort((a, b) => tier(a) - tier(b) || (tier(a) === 1 ? rank.get(a.key) - rank.get(b.key) : 0));
+}
 
 function listedConvs() {
   const q = state.find?.toLowerCase();
@@ -291,13 +302,14 @@ function listedConvs() {
 // Sidebar rows in display order: group headers (from the desktop app) and chats.
 function sidebarRows() {
   const list = listedConvs();
-  if (state.flat || state.find || !view.groups.length) return list.map(conv => ({ conv }));
+  if (state.flat || state.find) return list.map(conv => ({ conv }));
+  if (!view.groups.length) return orderGroup(list).map(conv => ({ conv }));
   const rows = [];
   for (const g of [...view.groups, { id: '', name: 'Other' }]) {
     const items = list.filter(c => groupOf(c.key) === g.id);
     if (!items.length) continue;
     rows.push({ head: g.name, unread: items.filter(c => c.unread || c.mentions).length });
-    rows.push(...items.map(conv => ({ conv })));
+    rows.push(...orderGroup(items).map(conv => ({ conv })));
   }
   return rows;
 }
@@ -466,6 +478,7 @@ async function openConv(key) {
   if (!conv) return;
   state.open = key;
   state.scroll = 0;
+  state.floatKey = !conv.muted && (conv.unread || conv.mentions) ? key : null;
   if (conv.unread || conv.mentions) {
     conv.unread = false;
     conv.mentions = 0;

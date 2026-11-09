@@ -4,6 +4,8 @@
   --surface: #ffffff;
   --hover: rgba(0, 0, 0, 0.05);
   --active: rgba(10, 100, 230, 0.12);
+  --pinned: rgba(230, 150, 20, 0.09);
+  --pinned-bar: #e0a030;
   --border: rgba(0, 0, 0, 0.09);
   --text: #1d1d1f;
   --muted: #6e6e73;
@@ -29,6 +31,8 @@
     --surface: #1e1f22;
     --hover: rgba(255, 255, 255, 0.05);
     --active: rgba(80, 150, 255, 0.18);
+    --pinned: rgba(245, 175, 60, 0.08);
+    --pinned-bar: #d9a24a;
     --border: rgba(255, 255, 255, 0.08);
     --text: #ececef;
     --muted: #a0a0a8;
@@ -156,7 +160,10 @@ button.list-note { display: block; width: 100%; }
   border-radius: 8px;
   cursor: pointer;
 }
+/* Pinned chats: a warm tint and a bar on the left */
+.conv.pinned { background: var(--pinned); box-shadow: inset 3px 0 0 var(--pinned-bar); }
 .conv:hover { background: var(--hover); }
+.conv.pinned:hover { background: linear-gradient(var(--hover), var(--hover)), var(--pinned); }
 .conv.active { background: var(--active); }
 .conv.muted { opacity: 0.55; }
 .conv.peek { box-shadow: inset 2px 0 0 var(--faint); }
@@ -203,7 +210,7 @@ button.list-note { display: block; width: 100%; }
   color: var(--muted);
   font-size: 12px;
 }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #e5484d; flex: none; }
 .pill {
   flex: none;
   min-width: 18px;
@@ -213,9 +220,11 @@ button.list-note { display: block; width: 100%; }
   color: #fff;
   font-size: 11px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   text-align: center;
   line-height: 18px;
 }
+.conv.muted .pill, .conv.muted .dot { background: var(--faint); }
 .list-note { color: var(--faint); font-size: 12px; padding: 12px 10px; text-align: center; }
 
 .avatar {
@@ -584,7 +593,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
 .group-head.collapsed .chev { transform: rotate(-90deg); }
 .group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .group-count { color: var(--faint); font-weight: 500; }
-.group-unread { background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; line-height: 16px; font-size: 10px; }
+.group-head .pill { min-width: 16px; padding: 0 5px; line-height: 16px; font-size: 10px; letter-spacing: 0; text-transform: none; }
 .group-more { flex: none; width: 22px; text-align: center; border: none; background: none; color: var(--faint); cursor: pointer; padding: 0; font-size: 14px; line-height: 1; opacity: 0; }
 .group-head:hover .group-more { opacity: 1; }
 .group-more:hover { color: var(--text); }

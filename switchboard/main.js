@@ -30,6 +30,9 @@ function sendToUi(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
+// What a chat's unread state is after a new message, so the interface can match it
+const countsOf = c => (c ? { unread: !!c.unread, unreadCount: c.unreadCount || 0, mentions: c.mentions || 0 } : null);
+
 function startProvider(provider) {
   stopProvider(provider.id);
   providers.set(provider.id, provider);
@@ -38,7 +41,7 @@ function startProvider(provider) {
     sendToUi('status', statuses[provider.id]);
   });
   provider.on('conversations', list => sendToUi('conversations', { provider: provider.id, list }));
-  provider.on('message', ({ convId, message }) => sendToUi('message', { key: `${provider.id}:${convId}`, message }));
+  provider.on('message', ({ convId, message }) => sendToUi('message', { key: `${provider.id}:${convId}`, message, counts: countsOf(provider.convs?.get(convId)) }));
   provider.on('reaction', ({ convId, ...rest }) => sendToUi('reaction', { key: `${provider.id}:${convId}`, ...rest }));
   provider.connect();
 }
@@ -307,6 +310,7 @@ function registerIpc() {
         keys: [...new Set((view.keys || []).map(String))],
         groups,
         assign,
+        pins: [...new Set((Array.isArray(view.pins) ? view.pins : []).map(String))].slice(0, 500),
         otherCollapsed: !!view.otherCollapsed,
         compact: !!view.compact,
         flat: !!view.flat,

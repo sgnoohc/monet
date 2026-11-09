@@ -144,6 +144,7 @@ class SlackProvider extends EventEmitter {
       muted: false,
       lastActivity: latest ? tsToMs(latest) : (c.created || 0) * 1000,
       unread: prev?.unread || false,
+      unreadCount: prev?.unreadCount || 0,
       mentions: prev?.mentions || 0,
     });
   }
@@ -174,6 +175,7 @@ class SlackProvider extends EventEmitter {
           conv.lastActivity = tsToMs(top.ts);
           const lastRead = info.channel?.last_read;
           if (!conv.unread) conv.unread = !!lastRead && parseFloat(top.ts) > parseFloat(lastRead) && top.user !== this.me;
+          if (conv.unread) conv.unreadCount = Math.max(conv.unreadCount, await this.countSince(c.id, lastRead, info.channel));
           this.emitSoon();
         }
       } catch (err) {
@@ -182,6 +184,21 @@ class SlackProvider extends EventEmitter {
       await sleep(1300);
     }
     this.saveCache();
+  }
+
+  // Slack reports the count for some conversations; otherwise count the
+  // messages since the last-read mark (up to 100).
+  async countSince(channel, lastRead, info) {
+    if (typeof info?.unread_count_display === 'number') return info.unread_count_display;
+    if (!lastRead) return 0;
+    try {
+      const hist = await this.call('conversations.history', { channel, oldest: lastRead, limit: '100' });
+      return (hist.messages || []).filter(m => m.user !== this.me
+        && (!m.subtype || SHOWN_SUBTYPES.has(m.subtype))
+        && (!m.thread_ts || m.thread_ts === m.ts || m.subtype === 'thread_broadcast')).length;
+    } catch {
+      return 0;
+    }
   }
 
   async ensureUsers(ids) {
@@ -255,6 +272,7 @@ class SlackProvider extends EventEmitter {
     conv.lastActivity = message.ts;
     if (!message.isSelf && !conv.muted) {
       conv.unread = true;
+      conv.unreadCount += 1;
       if (message.mentionsMe) conv.mentions += 1;
     }
     this.emit('message', { convId: ev.channel, message });
@@ -393,6 +411,7 @@ class SlackProvider extends EventEmitter {
     const conv = this.convs.get(convId);
     if (conv) {
       conv.unread = false;
+      conv.unreadCount = 0;
       conv.mentions = 0;
     }
     const ts = this.latest.get(convId);

@@ -24,12 +24,13 @@ const state = {
   filter: 'all',
   query: '',
   loadingOlder: false,
-  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), otherCollapsed: false, compact: false, flat: false },
+  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false },
   editing: false,
   dragKey: null, // chat being dragged onto a group
   renaming: null, // group id whose name is being edited
   renamingConv: null, // chat key whose nickname is being edited
   renderPending: false,
+  floatKey: null, // open chat that was unread when opened; stays on top until you leave it
 };
 
 // ---------- helpers ----------
@@ -186,6 +187,7 @@ function saveView() {
     groups: v.groups,
     assign: Object.fromEntries(v.assign),
     nicknames: Object.fromEntries(v.nicknames),
+    pins: v.pins,
     otherCollapsed: v.otherCollapsed,
     compact: v.compact,
     flat: v.flat,
@@ -246,6 +248,9 @@ function groupOf(key) {
 // Putting a chat in a group also keeps it in the list.
 function assignGroup(keys, gid) {
   for (const key of keys) {
+    if (isPinned(key) && groupOf(key) !== gid) {
+      state.view.pins = [...state.view.pins.filter(k => k !== key), key];
+    }
     if (gid) {
       state.view.assign.set(key, gid);
       if (state.view.mode === 'all') state.view.keys.delete(key);
@@ -297,9 +302,59 @@ function finishRename(g, name) {
   saveView();
   renderSidebar();
 }
+// ----- pins -----
+
+const isPinned = key => state.view.pins.includes(key);
+
+// Order inside a group: unread chats first (newest first), then pinned chats
+// in the order you set, then the rest by newest message.
+function orderGroup(items) {
+  const rank = new Map(state.view.pins.map((k, i) => [k, i]));
+  const floats = c => !c.muted && (unreadOf(c) > 0 || (c.key === state.floatKey && c.key === state.openKey));
+  const tier = c => (floats(c) ? 0 : rank.has(c.key) ? 1 : 2);
+  return [...items].sort((a, b) => tier(a) - tier(b) || (tier(a) === 1 ? rank.get(a.key) - rank.get(b.key) : 0));
+}
+
+// Pinned chats in the same group as key, in pin order
+function groupPins(key) {
+  const gid = groupOf(key);
+  return state.view.pins.filter(k => state.convs.has(k) && groupOf(k) === gid);
+}
+
+function setPinned(key, on) {
+  state.view.pins = state.view.pins.filter(k => k !== key);
+  if (on) state.view.pins.push(key);
+  saveView();
+  scheduleRender();
+}
+
+function movePin(key, delta) {
+  const pins = groupPins(key);
+  const other = pins[pins.indexOf(key) + delta];
+  if (!other) return;
+  const all = state.view.pins;
+  const a = all.indexOf(key);
+  const b = all.indexOf(other);
+  [all[a], all[b]] = [all[b], all[a]];
+  saveView();
+  scheduleRender();
+}
+
+// Dropping a chat on a pinned one pins it in that spot.
+function pinAt(key, targetKey) {
+  const pins = state.view.pins;
+  const from = pins.indexOf(key);
+  if (from !== -1) pins.splice(from, 1);
+  const to = pins.indexOf(targetKey);
+  pins.splice(from !== -1 && from <= to ? to + 1 : to, 0, key);
+  saveView();
+  scheduleRender();
+}
 
 async function convMenu(c) {
   const current = groupOf(c.key);
+  const pins = groupPins(c.key);
+  const pinIndex = pins.indexOf(c.key);
   const choice = await sb.popupMenu([
     {
       label: 'Move to group',
@@ -310,6 +365,12 @@ async function convMenu(c) {
         ...(current ? [{ id: 'group:', label: 'Remove from group' }] : []),
       ],
     },
+    ...(pinIndex === -1 ? [{ id: 'pin', label: state.view.groups.length ? 'Pin to top of group' : 'Pin to top' }] : [
+      { id: 'unpin', label: 'Unpin' },
+      { id: 'pin-up', label: 'Move pin up', enabled: pinIndex > 0 },
+      { id: 'pin-down', label: 'Move pin down', enabled: pinIndex < pins.length - 1 },
+    ]),
+    { type: 'separator' },
     { id: 'rename', label: 'Rename (only you see this)…' },
     ...(state.view.nicknames.has(c.key) ? [{ id: 'reset', label: `Reset name to "${c.title}"` }] : []),
     { type: 'separator' },
@@ -319,6 +380,9 @@ async function convMenu(c) {
   if (!choice) return;
   if (choice === 'group:new') createGroup([c.key]);
   else if (choice.startsWith('group:')) assignGroup([c.key], choice.slice(6));
+  else if (choice === 'pin' || choice === 'unpin') setPinned(c.key, choice === 'pin');
+  else if (choice === 'pin-up') movePin(c.key, -1);
+  else if (choice === 'pin-down') movePin(c.key, 1);
   else if (choice === 'hide') setVisible([c.key], false);
   else if (choice === 'keep') setVisible([c.key], true);
   else if (choice === 'rename') startRenameConv(c.key);
@@ -329,6 +393,7 @@ async function convMenu(c) {
   else if (choice === 'read') {
     c.unread = false;
     c.mentions = 0;
+    c.unreadCount = 0;
     sb.markRead(c.key).catch(() => {});
     scheduleRender();
   }
@@ -351,7 +416,7 @@ async function groupMenu(g) {
   else if (choice === 'delete') deleteGroup(g);
 }
 
-function dropTarget(el, gid) {
+function dropTarget(el, gid, targetKey = null) {
   el.addEventListener('dragover', e => {
     if (!state.dragKey) return;
     e.preventDefault();
@@ -365,6 +430,7 @@ function dropTarget(el, gid) {
     const key = state.dragKey;
     state.dragKey = null;
     if (key && groupOf(key) !== gid) assignGroup([key], gid);
+    if (key && targetKey && key !== targetKey && isPinned(targetKey)) pinAt(key, targetKey);
   });
 }
 
@@ -390,7 +456,7 @@ function renameInput(g) {
 function groupHeader(g, items) {
   const isOther = g === OTHER;
   const collapsed = isOther ? state.view.otherCollapsed : g.collapsed;
-  const unread = items.filter(c => !c.muted && (c.unread || c.mentions)).length;
+  const unread = items.reduce((n, c) => n + (c.muted ? 0 : unreadOf(c)), 0);
   const el = h('div', {
     class: `group-head${collapsed ? ' collapsed' : ''}`,
     onclick: () => toggleGroup(g),
@@ -401,7 +467,7 @@ function groupHeader(g, items) {
   },
   h('span', { class: 'chev' }, '▾'),
   state.renaming === g.id && !isOther ? renameInput(g) : h('span', { class: 'group-name' }, g.name),
-  unread ? h('span', { class: 'group-unread' }, unread) : h('span', { class: 'group-count' }, items.length),
+  unread ? h('span', { class: 'pill' }, countLabel(unread)) : state.editing ? h('span', { class: 'group-count' }, items.length) : null,
   isOther ? h('span', { class: 'group-more' }) : h('button', { class: 'group-more', title: 'Group options', onclick: e => { e.stopPropagation(); groupMenu(g); } }, '⋯'));
   dropTarget(el, g.id);
   return el;
@@ -471,7 +537,9 @@ function renderEditBar() {
 function convRow(c) {
   const editing = state.editing;
   const visible = isVisible(c);
-  const badge = c.mentions ? h('span', { class: 'pill' }, c.mentions) : c.unread ? h('span', { class: 'dot' }) : null;
+  const count = Math.max(c.unreadCount || 0, c.mentions || 0);
+  const badge = count ? h('span', { class: 'pill', title: c.mentions ? `${count} unread, ${c.mentions} mentioning you` : `${count} unread` }, countLabel(count))
+    : c.unread ? h('span', { class: 'dot' }) : null;
   const name = displayTitle(c);
   const renaming = state.renamingConv === c.key;
   const title = () => (renaming
@@ -479,7 +547,7 @@ function convRow(c) {
     : h('span', { class: 'conv-title' }, name));
   // An <input> can't live inside a <button>, so a row being renamed is a div.
   const el = h(renaming ? 'div' : 'button', {
-    class: `conv${!editing && c.key === state.openKey ? ' active' : ''}${c.unread || c.mentions ? ' unread' : ''}${c.muted ? ' muted' : ''}${editing && !visible ? ' off' : ''}${!editing && !visible ? ' peek' : ''}`,
+    class: `conv${!editing && c.key === state.openKey ? ' active' : ''}${c.unread || c.mentions ? ' unread' : ''}${c.muted ? ' muted' : ''}${!state.view.flat && isPinned(c.key) ? ' pinned' : ''}${editing && !visible ? ' off' : ''}${!editing && !visible ? ' peek' : ''}`,
     'data-kind': c.kind,
     'data-key': c.key,
     title: !editing && !visible
@@ -517,7 +585,7 @@ function convRow(c) {
       h('div', { class: 'conv-bottom' },
         h('span', { class: 'conv-sub' }, c.subtitle),
         badge)));
-  dropTarget(el, groupOf(c.key));
+  dropTarget(el, groupOf(c.key), c.key);
   return el;
 }
 
@@ -564,11 +632,11 @@ function renderSidebar() {
       const collapsed = g === OTHER ? state.view.otherCollapsed : g.collapsed;
       rows.push(groupHeader(g, items));
       if (collapsed && !expandAll) continue;
-      rows.push(...items.slice(0, LIST_LIMIT).map(convRow));
+      rows.push(...orderGroup(items).slice(0, LIST_LIMIT).map(convRow));
       if (!items.length) rows.push(h('div', { class: 'group-empty' }, 'Drag a chat here, or right-click one'));
     }
   } else {
-    rows.push(...list.slice(0, LIST_LIMIT).map(convRow));
+    rows.push(...(state.view.flat ? list : orderGroup(list)).slice(0, LIST_LIMIT).map(convRow));
     if (list.length > LIST_LIMIT) rows.push(h('div', { class: 'list-note' }, `${list.length - LIST_LIMIT} more; search to find them`));
   }
 
@@ -600,10 +668,22 @@ function renderStatus() {
   $('#statuses').replaceChildren(...items);
 }
 
+// Unread messages in a chat; 1 when a service says "unread" without a count.
+function unreadOf(c) {
+  return Math.max(c.unreadCount || 0, c.mentions || 0, c.unread ? 1 : 0);
+}
+
+function countLabel(n) {
+  return n > 99 ? '99+' : String(n);
+}
+
+// Dock badge: unread messages in chats you chose to show and in DMs and
+// groups; other channels count only when they mention you.
 function updateBadge() {
   let n = 0;
   for (const c of state.convs.values()) {
-    if (!c.muted && (c.mentions || (c.unread && c.kind !== 'channel'))) n++;
+    if (c.muted) continue;
+    n += isVisible(c) || c.kind !== 'channel' ? unreadOf(c) : c.mentions || 0;
   }
   for (const count of Object.values(state.appBadges)) n += count;
   sb.setBadge(n);
@@ -652,9 +732,11 @@ async function openConversation(key) {
   document.body.classList.add('chat-open');
   renderHeader(conv);
   renderStaged();
+  state.floatKey = !conv.muted && (conv.unread || conv.mentions) ? key : null;
   if (conv.unread || conv.mentions) {
     conv.unread = false;
     conv.mentions = 0;
+    conv.unreadCount = 0;
     sb.markRead(key).catch(() => {});
   }
   scheduleRender();
@@ -1183,7 +1265,7 @@ async function loadOlder() {
   }
 }
 
-function onMessage({ key, message, quiet = false }) {
+function onMessage({ key, message, counts, quiet = false }) {
   const conv = state.convs.get(key);
   if (!conv) return;
   conv.lastActivity = Math.max(conv.lastActivity || 0, message.ts);
@@ -1202,8 +1284,13 @@ function onMessage({ key, message, quiet = false }) {
     if (key === state.openKey && document.hasFocus()) {
       sb.markRead(key).catch(() => {});
     } else {
-      conv.unread = true;
-      if (message.mentionsMe) conv.mentions = (conv.mentions || 0) + 1;
+      if (counts) {
+        Object.assign(conv, counts); // the provider has already counted it
+      } else {
+        conv.unread = true;
+        conv.unreadCount = (conv.unreadCount || 0) + 1;
+        if (message.mentionsMe) conv.mentions = (conv.mentions || 0) + 1;
+      }
       if (!quiet && (conv.kind !== 'channel' || message.mentionsMe)) notify(conv, message);
     }
   }
@@ -1695,6 +1782,7 @@ function bindUi() {
     if (conv && (conv.unread || conv.mentions)) {
       conv.unread = false;
       conv.mentions = 0;
+      conv.unreadCount = 0;
       sb.markRead(conv.key).catch(() => {});
       scheduleRender();
     }
@@ -1716,6 +1804,7 @@ async function init() {
     groups: v.groups || [],
     assign: new Map(Object.entries(v.assign || {})),
     nicknames: new Map(Object.entries(v.nicknames || {})),
+    pins: Array.isArray(v.pins) ? v.pins.map(String) : [],
     otherCollapsed: !!v.otherCollapsed,
     compact: !!v.compact,
     flat: !!v.flat,

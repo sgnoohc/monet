@@ -141,6 +141,7 @@ class MattermostProvider extends EventEmitter {
       muted,
       lastActivity: c.last_post_at || c.create_at,
       unread: !muted && !!member && c.total_msg_count > member.msg_count,
+      unreadCount: !muted && member ? Math.max(0, c.total_msg_count - member.msg_count) : 0,
       mentions: member?.mention_count || 0,
     });
   }
@@ -248,6 +249,7 @@ class MattermostProvider extends EventEmitter {
       conv.lastActivity = post.create_at;
       if (!message.isSelf && !conv.muted) {
         conv.unread = true;
+        conv.unreadCount += 1;
         if (message.mentionsMe) conv.mentions += 1;
       }
       this.emit('message', { convId: post.channel_id, message });
@@ -352,6 +354,7 @@ class MattermostProvider extends EventEmitter {
     const conv = this.convs.get(convId);
     if (conv) {
       conv.unread = false;
+      conv.unreadCount = 0;
       conv.mentions = 0;
     }
     await this.api('POST', '/channels/members/me/view', { channel_id: convId }).catch(() => {});
