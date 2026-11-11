@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, clipboard, ipcMain, powerMonitor, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, powerMonitor, session, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -8,6 +8,7 @@ const DiscordProvider = require('./src/providers/discord');
 const MattermostProvider = require('./src/providers/mattermost');
 const SlackProvider = require('./src/providers/slack');
 const DemoProvider = require('./src/providers/demo');
+const { createSync } = require('./src/sync');
 
 const DEMO = process.env.SWITCHBOARD_DEMO === '1';
 const CAPTURE = process.env.SWITCHBOARD_CAPTURE; // write a screenshot here and quit (for testing)
@@ -143,6 +144,119 @@ function mattermostBrowserLogin(base) {
   });
 }
 
+// The sidebar layout, checked and trimmed whether it comes from this window or the other Mac.
+function cleanView(view = {}) {
+  const groups = (Array.isArray(view.groups) ? view.groups : []).slice(0, 200).map(g => ({
+    id: String(g.id).replace(/[^\w-]/g, '').slice(0, 40),
+    name: String(g.name || 'Group').slice(0, 60),
+    collapsed: !!g.collapsed,
+  }));
+  const ids = new Set(groups.map(g => g.id));
+  const assign = {};
+  for (const [key, gid] of Object.entries(view.assign || {})) if (ids.has(gid)) assign[String(key)] = gid;
+  const nicknames = {};
+  for (const [key, name] of Object.entries(view.nicknames || {}).slice(0, 5000)) {
+    if (String(name).trim()) nicknames[String(key)] = String(name).trim().slice(0, 80);
+  }
+  // Per-person look: name colour, whether the picture takes it too, and a small uploaded picture.
+  const people = {};
+  for (const [key, p] of Object.entries(view.people || {}).slice(0, 2000)) {
+    const color = /^#[0-9a-f]{6}$/i.test(p?.color) ? p.color : undefined;
+    const image = typeof p?.image === 'string' && p.image.length < 100000 && /^data:image\/(webp|jpeg|png);base64,[\w+/=]+$/.test(p.image) ? p.image : undefined;
+    if (color || image) people[String(key).slice(0, 200)] = { color, tint: !!(color && p.tint), image };
+  }
+  return {
+    nicknames,
+    people,
+    mode: view.mode === 'selected' ? 'selected' : 'all',
+    keys: [...new Set((view.keys || []).map(String))],
+    groups,
+    assign,
+    pins: [...new Set((Array.isArray(view.pins) ? view.pins : []).map(String))].slice(0, 500),
+    otherCollapsed: !!view.otherCollapsed,
+    compact: !!view.compact,
+    flat: !!view.flat,
+  };
+}
+
+function cleanWebApps(list) {
+  const clean = (Array.isArray(list) ? list : []).map(a => ({
+    id: String(a.id).replace(/[^\w-]/g, ''),
+    name: String(a.name).slice(0, 60),
+    service: a.service === 'teams' ? 'teams' : 'web',
+    url: new URL(a.url).href,
+  }));
+  if (clean.some(a => !a.url.startsWith('https://'))) throw new Error('Web app addresses must use https');
+  return clean;
+}
+
+// ---------- sync between Macs (see src/sync.js) ----------
+
+function getLogins() {
+  const cfg = store.getConfig();
+  const mmToken = store.getSecret('mattermost');
+  return {
+    discord: store.getSecret('discord') || null,
+    mattermost: mmToken ? { url: cfg.mattermost.url, token: mmToken } : null,
+    slack: cfg.slack.map(a => ({ id: a.id, name: a.name, secret: store.getSecret(`slack-${a.id}`) })).filter(a => a.secret),
+  };
+}
+
+// Makes this Mac's accounts match the other Mac's: signs in, switches or signs out.
+function applyLogins(p) {
+  if ((p.discord || null) !== (store.getSecret('discord') || null)) {
+    if (p.discord) {
+      store.setSecret('discord', p.discord);
+      startDiscord();
+    } else {
+      store.deleteSecret('discord');
+      stopProvider('discord');
+    }
+  }
+  const mm = p.mattermost;
+  if (mm?.token && mm.url) {
+    if (mm.token !== store.getSecret('mattermost') || normalizeUrl(mm.url) !== store.getConfig().mattermost.url) {
+      store.setConfig({ mattermost: { url: normalizeUrl(mm.url) } });
+      store.setSecret('mattermost', mm.token);
+      startMattermost();
+    }
+  } else if (store.getSecret('mattermost')) {
+    store.deleteSecret('mattermost');
+    stopProvider('mattermost');
+  }
+  const remote = (Array.isArray(p.slack) ? p.slack : []).filter(a => a?.id && a.secret);
+  for (const a of remote) {
+    if (a.secret === store.getSecret(`slack-${a.id}`)) continue;
+    const account = { id: String(a.id), name: String(a.name || 'Slack') };
+    store.setSecret(`slack-${account.id}`, a.secret);
+    store.setConfig({ slack: [...store.getConfig().slack.filter(x => x.id !== account.id), account] });
+    startSlack(account);
+  }
+  for (const a of store.getConfig().slack) {
+    if (remote.some(r => r.id === a.id)) continue;
+    store.deleteSecret(`slack-${a.id}`);
+    store.deleteCache(`slack-${a.id}`);
+    store.setConfig({ slack: store.getConfig().slack.filter(x => x.id !== a.id) });
+    stopProvider(`slack-${a.id}`);
+  }
+  sendToUi('settings', settings());
+}
+
+const sync = createSync({
+  store,
+  getLayout: () => {
+    const cfg = store.getConfig();
+    return { view: cfg.view, webApps: cfg.webApps };
+  },
+  applyLayout: ({ view, webApps }) => {
+    store.setConfig({ view: cleanView(view), ...(Array.isArray(webApps) ? { webApps: cleanWebApps(webApps) } : {}) });
+    sendToUi('settings', settings());
+  },
+  getLogins,
+  applyLogins,
+  onStatus: status => sendToUi('sync', status),
+});
+
 function registerIpc() {
   ipcMain.handle('state:get', () => ({
     settings: settings(),
@@ -226,12 +340,14 @@ function registerIpc() {
     if (!token) throw new Error('Paste a token first');
     store.setSecret('discord', token);
     startDiscord();
+    sync.loginsChanged();
     return settings();
   });
 
   ipcMain.handle('discord:remove', () => {
     store.deleteSecret('discord');
     stopProvider('discord');
+    sync.loginsChanged();
     return settings();
   });
 
@@ -241,6 +357,7 @@ function registerIpc() {
     store.setConfig({ mattermost: { url: base } });
     store.setSecret('mattermost', token);
     startMattermost();
+    sync.loginsChanged();
     return settings();
   });
 
@@ -250,6 +367,7 @@ function registerIpc() {
     store.setConfig({ mattermost: { url: normalizeUrl(url) } });
     store.setSecret('mattermost', token);
     startMattermost();
+    sync.loginsChanged();
     return settings();
   });
 
@@ -257,6 +375,7 @@ function registerIpc() {
     store.deleteSecret('mattermost');
     stopProvider('mattermost');
     await session.fromPartition('persist:mattermost-login').clearStorageData();
+    sync.loginsChanged();
     return settings();
   });
 
@@ -272,6 +391,7 @@ function registerIpc() {
     store.setSecret(`slack-${account.id}`, JSON.stringify({ userToken, appToken }));
     store.setConfig({ slack: [...store.getConfig().slack.filter(a => a.id !== account.id), account] });
     startSlack(account);
+    sync.loginsChanged();
     return settings();
   });
 
@@ -280,55 +400,19 @@ function registerIpc() {
     store.deleteCache(`slack-${id}`);
     store.setConfig({ slack: store.getConfig().slack.filter(a => a.id !== id) });
     stopProvider(`slack-${id}`);
+    sync.loginsChanged();
     return settings();
   });
 
   ipcMain.handle('webapps:set', (_e, list) => {
-    const clean = list.map(a => ({
-      id: String(a.id).replace(/[^\w-]/g, ''),
-      name: String(a.name).slice(0, 60),
-      service: a.service === 'teams' ? 'teams' : 'web',
-      url: new URL(a.url).href,
-    }));
-    if (clean.some(a => !a.url.startsWith('https://'))) throw new Error('Web app addresses must use https');
-    store.setConfig({ webApps: clean });
+    store.setConfig({ webApps: cleanWebApps(list) });
+    sync.layoutChanged();
     return settings();
   });
 
   ipcMain.handle('view:set', (_e, view) => {
-    const groups = (Array.isArray(view.groups) ? view.groups : []).slice(0, 200).map(g => ({
-      id: String(g.id).replace(/[^\w-]/g, '').slice(0, 40),
-      name: String(g.name || 'Group').slice(0, 60),
-      collapsed: !!g.collapsed,
-    }));
-    const ids = new Set(groups.map(g => g.id));
-    const assign = {};
-    for (const [key, gid] of Object.entries(view.assign || {})) if (ids.has(gid)) assign[String(key)] = gid;
-    const nicknames = {};
-    for (const [key, name] of Object.entries(view.nicknames || {}).slice(0, 5000)) {
-      if (String(name).trim()) nicknames[String(key)] = String(name).trim().slice(0, 80);
-    }
-    // Per-person look: name colour, whether the picture takes it too, and a small uploaded picture.
-    const people = {};
-    for (const [key, p] of Object.entries(view.people || {}).slice(0, 2000)) {
-      const color = /^#[0-9a-f]{6}$/i.test(p?.color) ? p.color : undefined;
-      const image = typeof p?.image === 'string' && p.image.length < 100000 && /^data:image\/(webp|jpeg|png);base64,[\w+/=]+$/.test(p.image) ? p.image : undefined;
-      if (color || image) people[String(key).slice(0, 200)] = { color, tint: !!(color && p.tint), image };
-    }
-    store.setConfig({
-      view: {
-        nicknames,
-        people,
-        mode: view.mode === 'selected' ? 'selected' : 'all',
-        keys: [...new Set((view.keys || []).map(String))],
-        groups,
-        assign,
-        pins: [...new Set((Array.isArray(view.pins) ? view.pins : []).map(String))].slice(0, 500),
-        otherCollapsed: !!view.otherCollapsed,
-        compact: !!view.compact,
-        flat: !!view.flat,
-      },
-    });
+    store.setConfig({ view: cleanView(view) });
+    sync.layoutChanged();
   });
 
   // Native context menu; resolves with the clicked item's id, or null.
@@ -397,6 +481,34 @@ function registerIpc() {
     const n = Math.ceil(text.length / PART);
     const parts = Array.from({ length: n }, (_, i) => `SBP:${session}:${i + 1}/${n}:${text.slice(i * PART, (i + 1) * PART)}`);
     return { dataUrls: await Promise.all(parts.map(qr)), dropped };
+  });
+
+  ipcMain.handle('sync:get', () => sync.status());
+  ipcMain.handle('sync:enable', async (_e, folder) => {
+    await sync.enable(folder ? String(folder) : null);
+    return sync.status();
+  });
+  ipcMain.handle('sync:choose', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Choose a folder that syncs between your Macs',
+      defaultPath: sync.status().suggested || app.getPath('home'),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (r.canceled || !r.filePaths[0]) return sync.status();
+    await sync.enable(r.filePaths[0]);
+    return sync.status();
+  });
+  ipcMain.handle('sync:disable', () => {
+    sync.disable();
+    return sync.status();
+  });
+  ipcMain.handle('sync:passphrase', async (_e, passphrase) => {
+    await sync.setPassphrase(passphrase);
+    return sync.status();
+  });
+  ipcMain.handle('sync:now', async () => {
+    await sync.poll();
+    return sync.status();
   });
 
   ipcMain.on('clipboard:write', (_e, text) => clipboard.writeText(String(text)));
@@ -509,6 +621,7 @@ function createWindow() {
     }
   });
 
+  win.on('focus', () => sync.poll()); // pick up the other Mac's changes as soon as you're back
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   if (CAPTURE) {
@@ -530,6 +643,7 @@ function createWindow() {
 // After sleep, sockets look open but are dead: reconnect and refresh the open chat.
 function reconnectAll() {
   for (const p of providers.values()) p.reconnect?.();
+  sync.poll();
   sendToUi('hotkey', 'refresh');
 }
 
@@ -545,6 +659,7 @@ app.whenReady().then(() => {
     startDiscord();
     startMattermost();
     for (const account of store.getConfig().slack) startSlack(account);
+    sync.start();
   }
 });
 

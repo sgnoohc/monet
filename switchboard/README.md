@@ -34,6 +34,14 @@ npm run package    # builds dist/Switchboard-darwin-arm64/Switchboard.app
 
 Copy the built app into `~/Applications` to install it. Needs Node 22 (newer Node breaks nothing here, but Electron bundles its own).
 
+## Sync between Macs
+
+Settings → **Sync between Macs** keeps groups, pins, nicknames, hidden chats, people's colors and pictures, and web apps the same on several Macs, through a folder they all sync (OneDrive is found automatically; any folder works). Each Mac writes `layout.json` there after a change and checks the folder every 20 s and whenever the window comes forward; the newer copy wins. A Mac that turns sync on adopts what is already in the folder.
+
+Logins sync too once you choose a passphrase (the same on every Mac): they are stored in `logins.json`, encrypted with it (scrypt + AES-256-GCM), and the passphrase itself stays in each Mac's Keychain. Teams signs in separately on each Mac.
+
+On another Mac: pull, `npm install`, `npm run package`, copy the app to `~/Applications`, then Settings → Sync between Macs → **Turn on with OneDrive** and type the passphrase.
+
 ## Phone (Android)
 
 `mobile/` is the Pixel version, built with Capacitor from the same interface and connectors: Discord, Mattermost and Slack in one list, with groups, nicknames and bubbles. It works while open (no background notifications). Mattermost checks for new messages every 15 s, because servers refuse websockets from app origins.

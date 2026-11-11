@@ -34,6 +34,7 @@ const state = {
   searchKey: null, // match that Enter opens while searching
   floatKey: null, // open chat that was unread when opened; stays on top until you leave it
   newMark: null, // { key, id } or { key, count }: where the "New" line goes in the open chat
+  sync: null, // sync between Macs: status from the main process (Settings)
 };
 
 // ---------- helpers ----------
@@ -1962,7 +1963,7 @@ function renderSettings() {
   const children = [h('h2', {}, MOBILE ? 'Settings' : 'Accounts')];
   if (MOBILE) children.push(phoneAccountsSection());
   else if (s.demo) children.push(h('p', {}, 'Demo mode: showing sample conversations. Run the app normally to connect real accounts.'));
-  else children.push(discordSection(), mattermostSection(), slackSection(), webAppsSection(), phoneSection());
+  else children.push(discordSection(), mattermostSection(), slackSection(), webAppsSection(), syncSection(), phoneSection());
   children.push(appearanceSection());
   children.push(h('div', { class: 'dialog-actions' }, h('button', { class: 'btn', onclick: closeSettings }, 'Done')));
   $('#settings .dialog').replaceChildren(...children);
@@ -1971,6 +1972,67 @@ function renderSettings() {
 function openSettings() {
   renderSettings();
   $('#settings').hidden = false;
+  if (!MOBILE && !state.settings.demo) {
+    sb.syncStatus().then(st => {
+      state.sync = st;
+      if (!$('#settings').hidden) renderSettings();
+    }).catch(() => {});
+  }
+}
+
+// ----- sync between Macs -----
+
+const syncPlace = folder => String(folder || '')
+  .replace(/^.*\/CloudStorage\/OneDrive[^/]*/, 'OneDrive')
+  .replace(/^.*\/Mobile Documents\/com~apple~CloudDocs/, 'iCloud Drive')
+  .replace(/^\/Users\/[^/]+/, '~')
+  .split('/').filter(Boolean).join(' › ');
+
+async function runSync(btn, fn) {
+  btn.disabled = true;
+  try {
+    state.sync = await fn();
+    renderSettings();
+  } catch (e) {
+    toast(cleanError(e));
+    btn.disabled = false;
+  }
+}
+
+function syncSection() {
+  const st = state.sync;
+  const title = h('h3', {}, 'Sync between Macs');
+  if (!st) return h('section', {}, title, h('p', {}, 'Checking…'));
+  if (!st.enabled) {
+    const on = h('button', { class: 'btn primary', onclick: () => runSync(on, () => sb.syncEnable()) }, 'Turn on with OneDrive');
+    const choose = h('button', { class: 'btn', onclick: () => runSync(choose, () => sb.syncChoose()) }, 'Choose folder…');
+    return h('section', {}, title,
+      h('p', {}, "Keeps groups, pins, nicknames, hidden chats, people's colors and pictures, and web apps the same on your Macs, through a folder both of them sync. If the folder already has your other Mac's settings, this Mac switches to them."),
+      h('div', { class: 'row' }, st.suggested ? on : null, choose),
+      h('p', {}, st.suggested ? `Folder: ${syncPlace(st.suggested)}` : 'No OneDrive folder found on this Mac; choose a folder that syncs.'));
+  }
+  const last = st.lastSync;
+  const lastText = last
+    ? `Last synced ${formatListTime(last.at)}: ${last.what} ${last.from === st.device ? 'sent from this Mac' : `from ${last.from}`}.`
+    : 'Nothing synced yet.';
+  const now = h('button', { class: 'btn', onclick: () => runSync(now, () => sb.syncNow()) }, 'Sync now');
+  const change = h('button', { class: 'btn', onclick: () => runSync(change, () => sb.syncChoose()) }, 'Change folder…');
+  const off = h('button', { class: 'btn danger', onclick: () => runSync(off, () => sb.syncDisable()) }, 'Turn off');
+  const items = [title,
+    h('p', {}, `Syncing through ${syncPlace(st.folder)}. ${lastText}`),
+    st.error ? h('p', { style: 'color:#e5484d' }, st.error) : null,
+    h('div', { class: 'row' }, now, change, off)];
+  if (st.hasPassphrase) {
+    items.push(h('p', {}, 'Logins sync too, encrypted with your passphrase. Signing in or out here does the same on your other Mac.'));
+  } else {
+    const pass = h('input', { type: 'password', placeholder: 'Passphrase, the same on each Mac', autocomplete: 'new-password' });
+    const save = h('button', { class: 'btn', onclick: () => runSync(save, () => sb.syncPassphrase(pass.value)) }, 'Sync logins');
+    pass.addEventListener('keydown', e => e.key === 'Enter' && save.click());
+    items.push(
+      h('p', {}, "Logins can sync too. They're stored in the folder encrypted with a passphrase; type the same one on your other Mac. Teams signs in separately on each Mac."),
+      h('div', { class: 'row' }, pass, save));
+  }
+  return h('section', {}, ...items);
 }
 
 function closeSettings() {
@@ -2201,16 +2263,8 @@ function bindUi() {
   window.addEventListener('blur', () => clearTimeout(readTimer));
 }
 
-async function init() {
-  if (MOBILE) {
-    document.body.classList.add('mobile');
-    $('#search').placeholder = 'Search';
-  }
-  const initial = await sb.getState();
-  state.settings = initial.settings;
-  state.statuses = initial.statuses;
-  const v = initial.settings.view || {};
-  state.view = {
+function viewFrom(v = {}) {
+  return {
     mode: v.mode || 'all',
     keys: new Set(v.keys || []),
     groups: v.groups || [],
@@ -2222,6 +2276,17 @@ async function init() {
     compact: !!v.compact,
     flat: !!v.flat,
   };
+}
+
+async function init() {
+  if (MOBILE) {
+    document.body.classList.add('mobile');
+    $('#search').placeholder = 'Search';
+  }
+  const initial = await sb.getState();
+  state.settings = initial.settings;
+  state.statuses = initial.statuses;
+  state.view = viewFrom(initial.settings.view);
   for (const c of initial.conversations) state.convs.set(c.key, c);
 
   sb.on('conversations', ({ provider, list }) => {
@@ -2241,6 +2306,24 @@ async function init() {
   sb.on('message', onMessage);
   sb.on('reaction', ({ key, messageId, reaction, mine, delta }) => applyReaction(key, messageId, reaction, mine, delta));
   sb.on('hotkey', hotkey); // pressed while a web app had focus
+  // Settings changed by the other Mac (sync) or by signing in there.
+  sb.on('settings', s => {
+    state.settings = s;
+    state.view = viewFrom(s.view);
+    syncWebviews();
+    scheduleRender();
+    if (state.openKey && state.messages.has(state.openKey)) {
+      const box = $('#messages');
+      const top = box.scrollTop;
+      renderMessages(state.openKey);
+      box.scrollTop = stickToBottom ? box.scrollHeight : top;
+    }
+    if (!$('#settings').hidden) renderSettings();
+  });
+  sb.on('sync', st => {
+    state.sync = st;
+    if (!$('#settings').hidden) renderSettings();
+  });
 
   bindUi();
   syncWebviews();

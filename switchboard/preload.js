@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const EVENTS = new Set(['status', 'conversations', 'message', 'reaction', 'hotkey']);
+const EVENTS = new Set(['status', 'conversations', 'message', 'reaction', 'hotkey', 'settings', 'sync']);
 
 contextBridge.exposeInMainWorld('sb', {
   platform: 'mac',
@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('sb', {
   popupMenu: items => ipcRenderer.invoke('menu:popup', items),
   copyText: text => ipcRenderer.send('clipboard:write', text),
   phoneSetupCode: part => ipcRenderer.invoke('phone:setupCode', part),
+  syncStatus: () => ipcRenderer.invoke('sync:get'),
+  syncEnable: folder => ipcRenderer.invoke('sync:enable', folder),
+  syncChoose: () => ipcRenderer.invoke('sync:choose'),
+  syncDisable: () => ipcRenderer.invoke('sync:disable'),
+  syncPassphrase: passphrase => ipcRenderer.invoke('sync:passphrase', passphrase),
+  syncNow: () => ipcRenderer.invoke('sync:now'),
   setBadge: n => ipcRenderer.send('badge', n),
   focus: () => ipcRenderer.send('focus'),
   openExternal: url => ipcRenderer.send('open-external', url),
