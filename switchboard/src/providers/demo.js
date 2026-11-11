@@ -37,7 +37,7 @@ class DemoProvider extends EventEmitter {
     for (const s of SEED) {
       this.convs.set(s.id, {
         id: s.id, key: `demo:${s.id}`, provider: 'demo', service: s.service, kind: s.kind,
-        title: s.title, subtitle: s.subtitle, avatar: null, muted: false,
+        title: s.title, subtitle: s.subtitle, peerId: s.kind === 'dm' ? s.title : null, avatar: null, muted: false,
         lastActivity: now - s.ago * MIN, unread: !!s.unread || !!s.mentions, mentions: s.mentions || 0,
         unreadCount: s.count || s.mentions || 0,
       });
@@ -96,6 +96,11 @@ class DemoProvider extends EventEmitter {
 
   async react(convId, messageId, value, add) {
     return { key: value, emoji: value, name: value, imageUrl: null, count: 1, me: add };
+  }
+
+  async reactors(convId, messageId, key) {
+    const r = this.messages.get(convId)?.find(m => m.id === messageId)?.reactions?.find(x => x.key === key);
+    return [...(r?.me ? ['You'] : []), ...['Sam Okafor', 'Priya Nair', 'Jordan Lee'].slice(0, Math.max(0, (r?.count || 0) - (r?.me ? 1 : 0)))];
   }
 
   async searchGifs() {

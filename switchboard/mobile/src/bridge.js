@@ -1,6 +1,7 @@
 // Phone version of the desktop preload: provides `window.sb` with the same
 // API, but runs the providers right here in the page. Accounts arrive by
 // scanning the setup QR code shown by the Mac app.
+import { registerPlugin } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning';
@@ -9,7 +10,7 @@ import MattermostProvider from '../../src/providers/mattermost';
 import SlackProvider from '../../src/providers/slack';
 import DemoProvider from '../../src/providers/demo';
 
-const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, pins: [], otherCollapsed: false, compact: false, flat: false };
+const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, people: {}, pins: [], otherCollapsed: false, compact: false, flat: false };
 
 // Stored in the app's private storage (not readable by other apps; backups are off).
 let config = { mattermost: { url: '' }, slack: [], view: { ...DEFAULT_VIEW } };
@@ -31,7 +32,44 @@ async function load() {
     const { value } = await Preferences.get({ key: `cache-slack-${a.id}` });
     caches[a.id] = value ? JSON.parse(value) : null;
   }
+  await addMacPictures();
 }
+
+// Pictures from the Mac app, built into the APK (see build.mjs). Each one is
+// applied once per version, so a picture changed or removed on the phone stays
+// that way until the Mac's picture for that person changes.
+async function addMacPictures() {
+  let pictures;
+  try {
+    pictures = await (await fetch('pictures.json')).json();
+  } catch {
+    return;
+  }
+  const applied = config.macPictures || {};
+  const people = { ...config.view.people };
+  let changed = false;
+  for (const [key, image] of Object.entries(pictures)) {
+    const mark = `${image.length}:${image.slice(-24)}`;
+    if (applied[key] === mark) continue;
+    applied[key] = mark;
+    people[key] = { ...people[key], image };
+    changed = true;
+  }
+  if (!changed) return;
+  config.macPictures = applied;
+  config.view = { ...config.view, people };
+  await saveConfig();
+}
+
+// Native helper in android/.../FileViewerPlugin.java.
+const FileViewer = registerPlugin('FileViewer');
+
+const toBase64 = blob => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ''));
+  reader.onerror = () => reject(new Error("Couldn't read the file"));
+  reader.readAsDataURL(blob);
+});
 
 const saveConfig = () => Preferences.set({ key: 'config', value: JSON.stringify(config) });
 const saveSecrets = () => Preferences.set({ key: 'secrets', value: JSON.stringify(secrets) });
@@ -266,6 +304,10 @@ window.sb = {
     const { provider, convId } = route(key);
     return provider.react(convId, messageId, value, add);
   },
+  async reactors(key, messageId, reactionKey) {
+    const { provider, convId } = route(key);
+    return provider.reactors ? provider.reactors(convId, messageId, reactionKey) : [];
+  },
   async upload(key, files, text) {
     const { provider, convId } = route(key);
     return provider.upload(convId, files, text);
@@ -273,6 +315,23 @@ window.sb = {
   async fetchMedia(key, ref) {
     const { provider } = route(key);
     return provider.fetchMedia(ref);
+  },
+  // Downloads an attachment (with the login when it needs one) and opens it in
+  // the phone's own viewer: PDF viewer, video player, Photos, Docs, ...
+  async openFile(key, a) {
+    let data;
+    let type = '';
+    if (a.ref) {
+      ({ data, type } = await route(key).provider.fetchMedia(a.ref));
+    } else if (/^https:\/\//.test(a.url || '')) {
+      const res = await fetch(a.url);
+      if (!res.ok) throw new Error(`Download failed (HTTP ${res.status})`);
+      data = new Uint8Array(await res.arrayBuffer());
+      type = res.headers.get('content-type') || '';
+    } else {
+      throw new Error('Nothing to open');
+    }
+    await FileViewer.open({ data: await toBase64(new Blob([data])), name: a.name || 'file', type: type.split(';')[0].trim() });
   },
   async searchGifs(query) {
     const discord = providers.get('discord');
@@ -298,7 +357,12 @@ window.sb = {
     const text = await scanText();
     const { kind, data } = await decodeSetup(text);
     if (kind === 'layout') {
-      config.view = { ...DEFAULT_VIEW, ...data.view };
+      // The code carries colors only; keep the pictures already on the phone.
+      const people = { ...data.view?.people };
+      for (const [key, p] of Object.entries(config.view.people || {})) {
+        if (p.image) people[key] = { ...people[key], image: p.image };
+      }
+      config.view = { ...DEFAULT_VIEW, ...data.view, people };
       await saveConfig();
       return kind;
     }

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('sb', {
   send: (key, text) => ipcRenderer.invoke('messages:send', key, text),
   markRead: key => ipcRenderer.invoke('conv:markRead', key),
   react: (key, messageId, value, add) => ipcRenderer.invoke('messages:react', key, messageId, value, add),
+  reactors: (key, messageId, reactionKey) => ipcRenderer.invoke('messages:reactors', key, messageId, reactionKey),
   searchGifs: query => ipcRenderer.invoke('gifs:search', query),
   upload: (key, files, text) => ipcRenderer.invoke('messages:upload', key, files, text),
   fetchMedia: (key, ref) => ipcRenderer.invoke('media:fetch', key, ref),

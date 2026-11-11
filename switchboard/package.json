@@ -12,7 +12,8 @@
     "start": "electron .",
     "demo": "SWITCHBOARD_DEMO=1 electron .",
     "cli": "node cli/build.mjs",
-    "package": "electron-packager . Switchboard --platform=darwin --arch=arm64 --out=dist --overwrite --ignore=^/dist --ignore=^/mobile --ignore=^/gmhelper"
+    "package": "electron-packager . Switchboard --platform=darwin --arch=arm64 --out=dist --overwrite --ignore=^/dist --ignore=^/mobile --ignore=^/gmhelper",
+    "postpackage": "codesign --force --deep --sign - dist/Switchboard-darwin-arm64/Switchboard.app"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
@@ -20,7 +21,7 @@
   },
   "devDependencies": {
     "@electron/packager": "18.3.6",
-    "electron": "33.2.1",
+    "electron": "45.2.1",
     "esbuild": "^0.28.2"
   }
 }

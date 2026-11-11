@@ -8,6 +8,8 @@ Discord, Mattermost, Slack and Teams in one Mac window: every chat in one list o
 - **Choose what shows** with Edit. A hidden chat pops back in when a new message arrives and drops out again once read, unless you keep it.
 - **Nicknames** for any chat, visible only to you (right-click → Rename).
 - **iMessage-style bubbles**, reply quotes, compact list (☰), **Ctrl+J / Ctrl+K** to move between chats.
+- **Who reacted**: hover a reaction (long-press on the phone) to see who added it.
+- **People's colors and pictures**: click someone's name or picture in a chat (or a direct message's picture at the top) to pick a color for their name, use it on their picture too, or upload a picture of your own for them. Only you see these; colors go to the phone with the layout code, pictures stay on the Mac.
 - **Teams** (personal and UF) and other sites run as embedded web apps with their own logins.
 
 ## Accounts

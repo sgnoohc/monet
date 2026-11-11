@@ -140,6 +140,7 @@ class SlackProvider extends EventEmitter {
       title,
       subtitle,
       kind,
+      peerId: c.is_im ? c.user : null,
       avatar: c.is_im ? this.users.get(c.user)?.avatar || null : null,
       muted: false,
       lastActivity: latest ? tsToMs(latest) : (c.created || 0) * 1000,
@@ -366,6 +367,13 @@ class SlackProvider extends EventEmitter {
       throw err;
     }
     return this.reactionInfo(name, 1, add);
+  }
+
+  async reactors(convId, ts, key) {
+    const r = await this.call('reactions.get', { channel: convId, timestamp: ts, full: 'true' });
+    const ids = (r.message?.reactions || []).find(x => x.name === key)?.users || [];
+    await this.ensureUsers(ids);
+    return ids.map(id => (id === this.me ? 'You' : this.users.get(id)?.name || 'Unknown'));
   }
 
   reconnect() {

@@ -2,6 +2,7 @@
 // phone bridge. Run with `npm run build` (or `npm run apk` to also build the APK).
 import { build } from 'esbuild';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const here = import.meta.dirname;
@@ -41,4 +42,17 @@ for (const [from, to] of swaps) {
   html = next;
 }
 fs.writeFileSync(path.join(out, 'index.html'), html);
+
+// People's pictures are too big for the setup QR codes, so they ride along in
+// the APK instead: copied from this Mac's own settings into www/ (git-ignored,
+// like the APK), never into the repository.
+const macConfig = path.join(os.homedir(), 'Library', 'Application Support', 'Switchboard', 'config.json');
+const pictures = {};
+try {
+  for (const [key, p] of Object.entries(JSON.parse(fs.readFileSync(macConfig, 'utf8')).view?.people || {})) {
+    if (p?.image) pictures[key] = p.image;
+  }
+} catch {} // no Mac app settings here: the phone just keeps its own pictures
+fs.writeFileSync(path.join(out, 'pictures.json'), JSON.stringify(pictures));
+if (Object.keys(pictures).length) console.log(`included ${Object.keys(pictures).length} people's pictures from the Mac app`);
 console.log('built', out);

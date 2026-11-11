@@ -204,6 +204,11 @@ function registerIpc() {
     return provider.react(convId, messageId, value, add);
   });
 
+  ipcMain.handle('messages:reactors', (_e, key, messageId, reactionKey) => {
+    const { provider, convId } = route(key);
+    return provider.reactors ? provider.reactors(convId, messageId, reactionKey) : [];
+  });
+
   // GIF search goes through Discord's GIF picker API, whichever chat it is for.
   ipcMain.handle('gifs:search', (_e, query) => {
     const discord = providers.get('discord');
@@ -303,9 +308,17 @@ function registerIpc() {
     for (const [key, name] of Object.entries(view.nicknames || {}).slice(0, 5000)) {
       if (String(name).trim()) nicknames[String(key)] = String(name).trim().slice(0, 80);
     }
+    // Per-person look: name colour, whether the picture takes it too, and a small uploaded picture.
+    const people = {};
+    for (const [key, p] of Object.entries(view.people || {}).slice(0, 2000)) {
+      const color = /^#[0-9a-f]{6}$/i.test(p?.color) ? p.color : undefined;
+      const image = typeof p?.image === 'string' && p.image.length < 100000 && /^data:image\/(webp|jpeg|png);base64,[\w+/=]+$/.test(p.image) ? p.image : undefined;
+      if (color || image) people[String(key).slice(0, 200)] = { color, tint: !!(color && p.tint), image };
+    }
     store.setConfig({
       view: {
         nicknames,
+        people,
         mode: view.mode === 'selected' ? 'selected' : 'all',
         keys: [...new Set((view.keys || []).map(String))],
         groups,
@@ -354,8 +367,12 @@ function registerIpc() {
     const dropped = [];
     if (part === 'layout') {
       const view = { ...cfg.view };
+      // Pictures are far too big for a QR code; colours travel, pictures stay on the Mac.
+      view.people = Object.fromEntries(Object.entries(view.people || {})
+        .filter(([, p]) => p.color)
+        .map(([key, p]) => [key, { color: p.color, tint: p.tint }]));
       text = encode('SBL', { v: 1, view });
-      for (const key of ['keys', 'assign', 'nicknames']) {
+      for (const key of ['people', 'keys', 'assign', 'nicknames']) {
         if (text.length <= 1800) break;
         delete view[key];
         if (key === 'keys') view.mode = 'all';
@@ -468,6 +485,7 @@ function createWindow() {
       sandbox: true,
       nodeIntegration: false,
       webviewTag: true,
+      backgroundThrottling: false, // keep counting and polling at full speed while the window is hidden
     },
   });
 

@@ -24,7 +24,7 @@ const state = {
   filter: 'all',
   query: '',
   loadingOlder: false,
-  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false },
+  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), people: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false },
   editing: false,
   editTab: 'show', // Edit chooses which chats to 'show' or to 'pin'
   dragKey: null, // chat being dragged onto a group
@@ -33,6 +33,7 @@ const state = {
   renderPending: false,
   searchKey: null, // match that Enter opens while searching
   floatKey: null, // open chat that was unread when opened; stays on top until you leave it
+  newMark: null, // { key, id } or { key, count }: where the "New" line goes in the open chat
 };
 
 // ---------- helpers ----------
@@ -75,10 +76,13 @@ function initials(name) {
   return (words.length > 1 ? words[0][0] + words[1][0] : (words[0] || '?').slice(0, 2)).toUpperCase();
 }
 
-function avatarEl(name, url, cls = '') {
-  const fallback = () => h('div', { class: `avatar ${cls}`, style: `background:${hashColor(name)}` }, initials(name));
-  if (!url) return fallback();
-  const img = h('img', { class: `avatar ${cls}`, src: url, alt: '' });
+// look: a person's chosen color/picture (see lookOf); tint puts the color on the picture too.
+function avatarEl(name, url, cls = '', look = null) {
+  const tint = look?.tint ? look.color : null;
+  const fallback = () => h('div', { class: `avatar ${cls}`, style: `background:${tint || hashColor(name)}` }, initials(name));
+  const src = look?.image || url;
+  if (!src) return fallback();
+  const img = h('img', { class: `avatar ${cls}`, src, alt: '', style: tint ? `box-shadow:0 0 0 2px ${tint}` : null });
   img.addEventListener('error', () => img.replaceWith(fallback()), { once: true });
   return img;
 }
@@ -189,6 +193,7 @@ function saveView() {
     groups: v.groups,
     assign: Object.fromEntries(v.assign),
     nicknames: Object.fromEntries(v.nicknames),
+    people: Object.fromEntries(v.people),
     pins: v.pins,
     otherCollapsed: v.otherCollapsed,
     compact: v.compact,
@@ -392,6 +397,7 @@ async function convMenu(c) {
     { type: 'separator' },
     { id: 'rename', label: 'Rename (only you see this)…' },
     ...(state.view.nicknames.has(c.key) ? [{ id: 'reset', label: `Reset name to "${c.title}"` }] : []),
+    ...(c.peerId ? [{ id: 'look', label: 'Color and picture…' }] : []),
     { type: 'separator' },
     ...(c.unread || c.mentions ? [{ id: 'read', label: 'Mark as read' }] : []),
     isVisible(c) ? { id: 'hide', label: 'Hide from list' } : { id: 'keep', label: 'Keep in list' },
@@ -405,6 +411,7 @@ async function convMenu(c) {
   else if (choice === 'hide') setVisible([c.key], false);
   else if (choice === 'keep') setVisible([c.key], true);
   else if (choice === 'rename') startRenameConv(c.key);
+  else if (choice === 'look') openPersonDialog(c.key, { id: c.peerId, name: c.title, avatar: c.avatar });
   else if (choice === 'reset') {
     setNickname(c.key, '');
     scheduleRender();
@@ -496,11 +503,13 @@ function groupHeader(g, items) {
 
 let renderQueued = false;
 function scheduleRender() {
+  // Right away, not in the frame below: a hidden or minimized window draws no
+  // frames, and that is exactly when the Dock count matters.
+  updateBadge();
   if (renderQueued) return;
   renderQueued = true;
   requestAnimationFrame(() => {
     renderQueued = false;
-    updateBadge();
     // Re-rendering mid-drag or mid-rename would destroy what the user is holding.
     if (state.dragKey || state.renaming || state.renamingConv) {
       state.renderPending = true;
@@ -605,7 +614,7 @@ function convRow(c) {
   },
   editing ? h('span', { class: `check${checked ? ' on' : ''}`, 'aria-hidden': 'true' }, checked ? '✓' : '') : null,
   h('div', { class: 'conv-avatar' },
-    avatarEl(name, c.avatar),
+    avatarEl(name, c.avatar, '', convLook(c)),
     h('span', { class: `svc-badge svc-${c.service}` }, SERVICES[c.service]?.letter || '?')),
   state.view.compact
     ? h('div', { class: 'conv-main' },
@@ -714,6 +723,7 @@ function countLabel(n) {
 
 // Dock badge: unread messages in chats you chose to show and in DMs and
 // groups; other channels count only when they mention you.
+let lastBadge = null;
 function updateBadge() {
   let n = 0;
   for (const c of state.convs.values()) {
@@ -721,7 +731,8 @@ function updateBadge() {
     n += isVisible(c) || c.kind !== 'channel' ? unreadOf(c) : c.mentions || 0;
   }
   for (const count of Object.values(state.appBadges)) n += count;
-  sb.setBadge(n);
+  if (n !== lastBadge) sb.setBadge(n);
+  lastBadge = n;
 }
 
 // ---------- conversation pane ----------
@@ -734,7 +745,11 @@ function renderHeader(c) {
   const svc = SERVICES[c.service];
   $('#chat-header').replaceChildren(
     ...(MOBILE ? [h('button', { class: 'back-btn', 'aria-label': 'Back', onclick: closeConversation }, '‹')] : []),
-    avatarEl(displayTitle(c), c.avatar),
+    c.peerId ? h('button', {
+      class: 'person-btn',
+      title: 'Choose a color or picture for this person',
+      onclick: () => openPersonDialog(c.key, { id: c.peerId, name: c.title, avatar: c.avatar }),
+    }, avatarEl(displayTitle(c), c.avatar, '', convLook(c))) : avatarEl(displayTitle(c), c.avatar),
     h('div', { class: 'chat-titles' },
       h('div', { class: 'chat-title' },
         h('span', {}, displayTitle(c)),
@@ -759,6 +774,7 @@ function renderHeader(c) {
 async function openConversation(key) {
   const conv = state.convs.get(key);
   if (!conv) return;
+  closePopover?.();
   state.openKey = key;
   state.openApp = null;
   showWebview(null);
@@ -768,6 +784,7 @@ async function openConversation(key) {
   renderHeader(conv);
   renderStaged();
   state.floatKey = !conv.muted && (conv.unread || conv.mentions) ? key : null;
+  state.newMark = unreadOf(conv) > 0 ? { key, count: unreadOf(conv) } : null;
   if (conv.unread || conv.mentions) {
     conv.unread = false;
     conv.mentions = 0;
@@ -790,6 +807,12 @@ async function openConversation(key) {
     const fresh = await sb.fetchMessages(key);
     state.messages.set(key, mergeMessages(state.messages.get(key), fresh));
     if (fresh.length < PAGE) state.exhausted.add(key);
+    const mark = state.newMark;
+    if (mark?.key === key && !mark.id) {
+      // Fixed now that the latest messages are in, so later arrivals don't move it.
+      const list = state.messages.get(key);
+      mark.id = list[Math.max(0, list.length - mark.count)]?.id;
+    }
     if (state.openKey === key) {
       renderMessages(key);
       scrollToBottom();
@@ -851,8 +874,33 @@ const sameRun = (a, b) => a && b && !a.system && !b.system && a.isSelf === b.isS
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Text with links, plus custom emoji (":name:" with an image in customEmoji).
+// ```code blocks``` (an optional language word on the opening line is dropped)
+// and `inline code`, shown in monospace with no links or emoji inside.
+const CODE_RE = /```(?:[\w+#.-]*\n)?([\s\S]*?)```|`([^`\n]+)`/g;
+
+// Text with code, links, plus custom emoji (":name:" with an image in customEmoji).
 function richText(text, customEmoji = {}) {
+  const out = [];
+  let last = 0;
+  let m;
+  CODE_RE.lastIndex = 0;
+  while ((m = CODE_RE.exec(text))) {
+    const block = m[2] == null;
+    // A block sits on its own lines, so the line breaks around it would only add gaps.
+    let before = text.slice(last, m.index);
+    if (block) before = before.replace(/\n$/, '');
+    if (before) out.push(...plainRichText(before, customEmoji));
+    out.push(block
+      ? h('pre', { class: 'code-block' }, m[1].replace(/^\n/, '').replace(/\n$/, ''))
+      : h('code', { class: 'code-inline' }, m[2]));
+    last = m.index + m[0].length;
+    if (block && text[last] === '\n') last++;
+  }
+  if (last < text.length) out.push(...plainRichText(text.slice(last), customEmoji));
+  return out;
+}
+
+function plainRichText(text, customEmoji) {
   const names = Object.keys(customEmoji);
   if (!names.length) return linkify(text);
   const re = new RegExp(`:(${names.map(escapeRe).join('|')}):`, 'g');
@@ -903,34 +951,39 @@ function mediaUrl(key, ref) {
 }
 
 // Clicking a file: on the Mac it is saved to Downloads and opened; on the
-// phone public links open in the browser.
+// phone it is downloaded and handed to the phone's own viewer (PDF viewer,
+// video player, ...).
 async function openAttachment(a) {
   const key = state.openKey;
-  if (!MOBILE) {
-    toast(`Downloading ${a.name}…`);
-    try {
-      const saved = await sb.openFile(key, a);
-      toast(`Saved to Downloads: ${saved.split('/').pop()}`);
-    } catch (e) {
-      toast(cleanError(e));
-    }
-  } else if (a.url) {
-    sb.openExternal(a.url);
-  } else {
-    toast('Open this file on your Mac');
+  toast(MOBILE ? `Opening ${a.name}…` : `Downloading ${a.name}…`);
+  try {
+    const saved = await sb.openFile(key, a);
+    if (!MOBILE) toast(`Saved to Downloads: ${saved.split('/').pop()}`);
+  } catch (e) {
+    toast(cleanError(e));
   }
 }
 
+// Shows the bubble's picture at once, then swaps in the full-size file when
+// the bubble only had a preview.
 function showLightbox(src, a) {
+  const key = state.openKey;
   const close = () => box.remove();
+  const img = h('img', { src, alt: a.name, onclick: e => e.stopPropagation() });
   const box = h('div', { class: 'lightbox', onclick: close },
-    h('img', { src, alt: a.name, onclick: e => e.stopPropagation() }),
+    img,
     h('div', { class: 'lightbox-bar', onclick: e => e.stopPropagation() },
       h('span', { class: 'lightbox-name' }, a.name, a.size ? ` · ${formatSize(a.size)}` : ''),
-      MOBILE && !a.url ? null : h('button', { class: 'btn small', onclick: () => openAttachment(a) }, MOBILE ? 'Open' : 'Save to Downloads'),
+      h('button', { class: 'btn small', onclick: () => openAttachment(a) }, MOBILE ? 'Open' : 'Save to Downloads'),
       h('button', { class: 'btn small', onclick: close }, 'Close')));
   document.body.append(box);
+  if (a.ref && a.thumbRef && a.thumbRef !== a.ref) {
+    mediaUrl(key, a.ref).then(url => { img.src = url; }).catch(() => {});
+  }
 }
+
+const fileIcon = name => (/\.(mp4|mov|m4v|webm|mkv|avi)$/i.test(name) ? '🎬'
+  : /\.(mp3|m4a|wav|aac|ogg|flac|opus)$/i.test(name) ? '🎵' : '📄');
 
 function fileChip(a) {
   return h('a', {
@@ -939,7 +992,7 @@ function fileChip(a) {
     title: MOBILE ? null : 'Save to Downloads and open',
     onclick: e => { e.preventDefault(); openAttachment(a); },
   },
-  h('span', { class: 'file-icon' }, '📄'),
+  h('span', { class: 'file-icon' }, fileIcon(a.name)),
   h('span', { class: 'file-meta' }, h('span', { class: 'file-name' }, a.name), a.size ? h('span', { class: 'file-size' }, formatSize(a.size)) : null));
 }
 
@@ -1055,18 +1108,34 @@ async function sendFiles(files) {
   }
 }
 
-function reactionChips(m) {
+function reactionChips(m, convKey) {
   if (!m.reactions?.length) return null;
   return h('div', { class: 'reactions' }, ...m.reactions.map(r => h('button', {
     class: `reaction${r.me ? ' mine' : ''}`,
-    title: r.me ? 'Remove your reaction' : `React with ${r.emoji || `:${r.name}:`}`,
-    onclick: e => { e.stopPropagation(); react(m, r.key, !r.me); },
+    onclick: e => {
+      e.stopPropagation();
+      hideReactTip();
+      react(m, r.key, !r.me);
+    },
+    // Hover (or long-press on the phone) shows who reacted.
+    onmouseenter: MOBILE ? null : e => {
+      const chip = e.currentTarget;
+      clearTimeout(tipTimer);
+      tipTimer = setTimeout(() => showReactTip(convKey, m, r, chip), 250);
+    },
+    onmouseleave: MOBILE ? null : hideReactTip,
+    oncontextmenu: e => {
+      e.preventDefault();
+      e.stopPropagation();
+      showReactTip(convKey, m, r, e.currentTarget);
+    },
   },
   r.imageUrl ? h('img', { src: r.imageUrl, alt: r.name }) : (r.emoji || `:${r.name}:`),
   h('span', {}, r.count))));
 }
 
-function bubbleEl(m, { last, showName, showAvatar }) {
+function bubbleEl(m, { key, last, showName, showAvatar }) {
+  const look = showName || showAvatar ? lookOf(personKey(key, m.author)) : null;
   const parts = [];
   if (m.text) {
     const emoji = isEmojiOnly(m.text, m.customEmoji);
@@ -1074,7 +1143,13 @@ function bubbleEl(m, { last, showName, showAvatar }) {
   }
   for (const a of m.attachments || []) parts.push(mediaEl(a));
   if (last && parts.length) parts[parts.length - 1].classList.add('tail');
-  const label = [showName ? m.author.name : null, m.isReply ? 'reply in thread' : null].filter(Boolean).join(' · ');
+  const author = showName ? h('span', {
+    class: 'msg-author',
+    style: look?.color ? `color:${look.color}` : null,
+    title: 'Choose a color or picture for this person',
+    onclick: e => { e.stopPropagation(); openPersonDialog(key, m.author); },
+  }, m.author.name) : null;
+  const label = author || m.isReply ? [author, author && m.isReply ? ' · ' : null, m.isReply ? 'reply in thread' : null] : null;
   if (m.replyTo) {
     parts.unshift(h('div', {
       class: 'reply-quote',
@@ -1086,25 +1161,33 @@ function bubbleEl(m, { last, showName, showAvatar }) {
   }
   const stack = h('div', {
     class: 'msg-stack',
-    ondblclick: e => {
+    // A double-tap while scrolling would open it by accident on the phone, so there it's long-press only.
+    ondblclick: MOBILE ? null : e => {
       window.getSelection()?.removeAllRanges();
       openReactionPicker(m, e.currentTarget);
     },
     oncontextmenu: e => {
       e.preventDefault();
-      openReactionPicker(m, e.currentTarget);
+      openReactionPicker(m, e.currentTarget, MOBILE ? { x: e.clientX, y: e.clientY } : null);
     },
   },
   label ? h('div', { class: 'msg-name' }, label) : null,
   ...parts,
-  reactionChips(m));
+  reactionChips(m, key));
   const reactBtn = MOBILE ? null : h('button', {
     class: 'react-btn',
     title: 'React',
     onclick: e => { e.stopPropagation(); openReactionPicker(m, stack); },
   }, '☺︎');
-  return h('div', { class: `msg-row ${m.isSelf ? 'me' : 'them'}${last ? ' last' : ''}`, 'data-id': m.id, title: formatTime(m.ts) },
-    showAvatar ? (last ? avatarEl(m.author.name, m.author.avatar, 'msg-avatar') : h('div', { class: 'msg-avatar' })) : null,
+  return h('div', {
+    class: `msg-row ${m.isSelf ? 'me' : 'them'}${last ? ' last' : ''}`,
+    'data-id': m.id,
+    title: formatTime(m.ts),
+    onclick: e => {
+      if (showAvatar && e.target.closest('.msg-avatar')) openPersonDialog(key, m.author);
+    },
+  },
+    showAvatar ? (last ? avatarEl(m.author.name, m.author.avatar, 'msg-avatar', look) : h('div', { class: 'msg-avatar' })) : null,
     m.isSelf ? reactBtn : null,
     stack,
     m.isSelf ? null : reactBtn);
@@ -1114,11 +1197,37 @@ function bubbleEl(m, { last, showName, showAvatar }) {
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
-function closePicker() {
-  document.querySelector('.react-picker')?.remove();
+let closePopover = null; // closes whichever reaction picker or "who reacted" tip is open
+
+// Shows el until a touch or click lands outside it, the chat scrolls, or
+// Back is pressed. The press is caught on its way down, so handlers that stop
+// clicks from bubbling can't leave it stuck on screen.
+function showPopover(el) {
+  closePopover?.();
+  const outside = e => {
+    if (!el.contains(e.target)) close();
+  };
+  const close = () => {
+    el.remove();
+    document.removeEventListener('pointerdown', outside, true);
+    $('#messages').removeEventListener('scroll', onScroll);
+    if (closePopover === close) closePopover = null;
+  };
+  document.body.append(el);
+  document.addEventListener('pointerdown', outside, true);
+  const onScroll = () => userScrolling() && close();
+  $('#messages').addEventListener('scroll', onScroll, { passive: true });
+  closePopover = close;
+  return close;
 }
 
-function openReactionPicker(m, anchor) {
+function closePicker() {
+  if (document.querySelector('.react-picker')) closePopover?.();
+}
+
+// point: where a long-press landed; the picker goes just above it. Either
+// way it stays inside the chat pane, never pinned to the top of the screen.
+function openReactionPicker(m, anchor, point = null) {
   closePicker();
   const picker = h('div', { class: 'react-picker', onclick: e => e.stopPropagation() },
     ...QUICK_REACTIONS.map(emoji => {
@@ -1133,12 +1242,21 @@ function openReactionPicker(m, anchor) {
       }, emoji);
     }),
     m.text ? h('button', { class: 'copy', onclick: () => { sb.copyText(m.text); closePicker(); toast('Copied'); } }, 'Copy') : null);
-  document.body.append(picker);
+  showPopover(picker);
   const box = anchor.getBoundingClientRect();
+  const pane = $('#messages').getBoundingClientRect();
   const width = picker.offsetWidth;
-  picker.style.top = `${Math.max(8, box.top - picker.offsetHeight - 6)}px`;
-  picker.style.left = `${Math.min(window.innerWidth - width - 8, Math.max(8, m.isSelf ? box.right - width : box.left))}px`;
-  setTimeout(() => document.addEventListener('click', closePicker, { once: true }));
+  const height = picker.offsetHeight;
+  const minTop = pane.top + 6;
+  const maxTop = Math.max(minTop, pane.bottom - height - 6);
+  let top;
+  if (point) top = point.y - height - 16 >= minTop ? point.y - height - 16 : point.y + 16;
+  else if (box.top - height - 6 >= minTop) top = box.top - height - 6;
+  else if (box.bottom + 6 <= maxTop) top = box.bottom + 6;
+  else top = minTop; // a bubble taller than the pane
+  picker.style.top = `${Math.min(maxTop, Math.max(minTop, top))}px`;
+  const left = point ? point.x - width / 2 : m.isSelf ? box.right - width : box.left;
+  picker.style.left = `${Math.min(window.innerWidth - width - 8, Math.max(8, left))}px`;
 }
 
 async function react(m, value, add) {
@@ -1173,6 +1291,162 @@ function applyReaction(convKey, messageId, info, mine, delta) {
     renderMessages(convKey);
     box.scrollTop = atBottom ? box.scrollHeight : top;
   }
+}
+
+// ----- who reacted -----
+
+// Names per message/emoji/count, so hovering again doesn't ask the server again.
+const reactorCache = new Map();
+let tipTimer;
+
+function hideReactTip() {
+  clearTimeout(tipTimer);
+  if (document.querySelector('.react-tip')) closePopover?.();
+}
+
+function reactorText(names, r) {
+  const list = [...names.filter(n => n === 'You'), ...names.filter(n => n !== 'You')];
+  const shown = list.slice(0, 12);
+  const others = Math.max(r.count, list.length) - shown.length;
+  const parts = others ? [...shown, `${others} other${others === 1 ? '' : 's'}`] : shown;
+  if (!parts.length) return 'No one yet';
+  const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return r.emoji ? `${joined} reacted` : `${joined} reacted with :${r.name}:`;
+}
+
+function showReactTip(convKey, m, r, anchor) {
+  hideReactTip();
+  const text = h('div', { class: 'react-tip-text' }, 'Loading…');
+  const tip = h('div', { class: 'react-tip' },
+    h('div', { class: 'react-tip-emoji' }, r.imageUrl ? h('img', { src: r.imageUrl, alt: r.name }) : r.emoji || `:${r.name}:`),
+    text);
+  showPopover(tip);
+  const place = () => {
+    const box = anchor.getBoundingClientRect();
+    const left = box.left + box.width / 2 - tip.offsetWidth / 2;
+    tip.style.left = `${Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, left))}px`;
+    const above = box.top - tip.offsetHeight - 6;
+    tip.style.top = `${above >= 8 ? above : box.bottom + 6}px`;
+  };
+  place();
+  const id = [convKey, m.id, r.key, r.count, r.me].join('|');
+  if (!reactorCache.has(id)) {
+    reactorCache.set(id, sb.reactors(convKey, m.id, r.key).catch(e => {
+      reactorCache.delete(id);
+      throw e;
+    }));
+  }
+  reactorCache.get(id).then(
+    names => { text.textContent = reactorText(names, r); },
+    e => { text.textContent = cleanError(e); },
+  ).finally(() => tip.isConnected && place());
+}
+
+// ----- people -----
+
+// A person's color and picture, chosen by you and keyed by account + user id.
+const PERSON_COLORS = ['#e5484d', '#f76b15', '#c99400', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#8d8d86'];
+const personKey = (convKey, author) => `${state.convs.get(convKey)?.provider || convKey.split(':')[0]}:${author.id}`;
+const lookOf = pkey => state.view.people.get(pkey) || null;
+const convLook = c => (c.peerId ? lookOf(`${c.provider}:${c.peerId}`) : null);
+
+function setLook(pkey, changes) {
+  const next = { ...lookOf(pkey), ...changes };
+  for (const k of Object.keys(next)) if (next[k] == null) delete next[k];
+  if (!next.color) delete next.tint;
+  if (next.color || next.image) state.view.people.set(pkey, next);
+  else state.view.people.delete(pkey);
+  saveView();
+  scheduleRender();
+  if (state.openKey && state.messages.has(state.openKey)) {
+    const box = $('#messages');
+    const top = box.scrollTop;
+    renderMessages(state.openKey);
+    box.scrollTop = top;
+  }
+}
+
+// A square crop, small enough to keep in the settings file.
+async function pictureFromFile(file) {
+  const bmp = await createImageBitmap(file);
+  const side = Math.min(bmp.width, bmp.height);
+  const canvas = h('canvas', { width: 128, height: 128 });
+  canvas.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 128, 128);
+  return canvas.toDataURL('image/webp', 0.85);
+}
+
+function openPersonDialog(convKey, author) {
+  const pkey = personKey(convKey, author);
+  const modal = h('div', { class: 'modal', onclick: e => e.target === modal && close() });
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    close();
+  };
+  const close = () => {
+    modal.remove();
+    document.removeEventListener('keydown', onKey, true);
+  };
+  const file = h('input', {
+    type: 'file',
+    accept: 'image/*',
+    hidden: true,
+    onchange: async () => {
+      const f = file.files[0];
+      file.value = '';
+      if (!f) return;
+      try {
+        setLook(pkey, { image: await pictureFromFile(f) });
+        render();
+      } catch {
+        toast("Couldn't read that picture; try a PNG or JPEG");
+      }
+    },
+  });
+  const change = changes => {
+    setLook(pkey, changes);
+    render();
+  };
+  const render = () => {
+    const look = lookOf(pkey) || {};
+    modal.replaceChildren(h('div', { class: 'dialog person-dialog' },
+      h('div', { class: 'person-head' },
+        avatarEl(author.name, author.avatar, 'person-preview', look),
+        h('div', {},
+          h('h2', { style: look.color ? `color:${look.color}` : null }, author.name),
+          h('p', {}, 'Only you see these changes.'))),
+      h('section', {},
+        h('h3', {}, 'Name color'),
+        h('div', { class: 'swatches' },
+          h('button', { class: `swatch none${look.color ? '' : ' on'}`, title: 'Default', onclick: () => change({ color: null }) }),
+          ...PERSON_COLORS.map(color => h('button', {
+            class: `swatch${look.color === color ? ' on' : ''}`,
+            style: `background:${color}`,
+            title: color,
+            onclick: () => change({ color }),
+          })),
+          h('input', {
+            type: 'color',
+            class: 'swatch-custom',
+            title: 'Any color',
+            value: look.color || '#888888',
+            onchange: e => change({ color: e.target.value }),
+          })),
+        h('label', { class: 'edit-new' },
+          h('input', { type: 'checkbox', checked: !!look.tint, disabled: !look.color, onchange: e => change({ tint: e.target.checked || null }) }),
+          'Use it for their picture too')),
+      h('section', {},
+        h('h3', {}, 'Picture'),
+        h('p', {}, look.image ? 'Your picture replaces theirs in Switchboard.' : 'Upload a picture to use instead of theirs.'),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', onclick: () => file.click() }, look.image ? 'Change picture…' : 'Upload picture…'),
+          look.image ? h('button', { class: 'btn danger', onclick: () => change({ image: null }) }, 'Remove picture') : null)),
+      h('div', { class: 'dialog-actions' }, h('button', { class: 'btn primary', onclick: close }, 'Done')),
+      file));
+  };
+  render();
+  document.body.append(modal);
+  document.addEventListener('keydown', onKey, true);
 }
 
 // ----- GIFs -----
@@ -1240,6 +1514,7 @@ async function sendGif(g) {
 function jumpToMessage(id) {
   const row = id && [...document.querySelectorAll('#messages .msg-row')].find(el => el.dataset.id === id);
   if (!row) return toast('The original message is further back; scroll up to load it');
+  stickToBottom = false; // stay on the quoted message even if pictures below finish loading
   row.scrollIntoView({ block: 'center', behavior: 'smooth' });
   row.classList.remove('flash');
   void row.offsetWidth; // restart the animation
@@ -1247,13 +1522,17 @@ function jumpToMessage(id) {
 }
 
 function renderMessages(key) {
+  hideReactTip();
   const list = state.messages.get(key) || [];
   if (!list.length) return showPlaceholder('No messages yet');
   const group = state.convs.get(key)?.kind !== 'dm'; // names and avatars only where several people talk
   const nodes = [];
   if (state.exhausted.has(key)) nodes.push(h('div', { class: 'history-start' }, 'Beginning of conversation'));
+  const mark = state.newMark?.key === key ? state.newMark : null;
+  const markId = mark && (mark.id || list[Math.max(0, list.length - mark.count)]?.id);
   list.forEach((m, i) => {
     const prev = list[i - 1];
+    if (markId && m.id === markId) nodes.push(h('div', { class: 'new-sep' }, h('span', {}, 'New')));
     if (!prev || dayKey(prev.ts) !== dayKey(m.ts) || m.ts - prev.ts > TIME_GAP) {
       nodes.push(h('div', { class: 'time-sep' }, h('b', {}, formatDay(m.ts)), ` ${formatTime(m.ts)}`));
     }
@@ -1263,6 +1542,7 @@ function renderMessages(key) {
     }
     const first = !sameRun(prev, m);
     nodes.push(bubbleEl(m, {
+      key,
       last: !sameRun(m, list[i + 1]),
       showName: group && !m.isSelf && first,
       showAvatar: group && !m.isSelf,
@@ -1275,7 +1555,14 @@ function renderMessages(key) {
 function scrollToBottom() {
   const box = $('#messages');
   box.scrollTop = box.scrollHeight;
+  stickToBottom = true;
 }
+
+// When you last scrolled the chat yourself (trackpad, wheel, touch, keys,
+// scrollbar). Scrolls without that are the page settling: pictures loading,
+// a re-render. Those must not unstick the chat from the bottom.
+let userScrollAt = 0;
+const userScrolling = () => Date.now() - userScrollAt < 1000;
 
 async function loadOlder() {
   const key = state.openKey;
@@ -1308,6 +1595,9 @@ function onMessage({ key, message, counts, quiet = false }) {
   const isNew = !list?.some(m => m.id === message.id);
   if (list && isNew) list.push(message);
 
+  if (isNew && !message.isSelf && key === state.openKey && !document.hasFocus() && state.newMark?.key !== key) {
+    state.newMark = { key, id: message.id };
+  }
   if (key === state.openKey && list) {
     const box = $('#messages');
     const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
@@ -1333,6 +1623,8 @@ function onMessage({ key, message, counts, quiet = false }) {
 }
 
 function closeConversation() {
+  closePopover?.();
+  state.newMark = null;
   state.openKey = null;
   document.body.classList.remove('chat-open');
   showPane('empty');
@@ -1357,6 +1649,7 @@ async function sendMessage() {
   const key = state.openKey;
   if (key && stagedFiles.get(key)?.length) return sendStaged();
   if (!text || !key) return;
+  if (state.newMark?.key === key) state.newMark = null; // you've replied, so it's all been seen
   input.value = '';
   autosize();
   try {
@@ -1551,6 +1844,7 @@ function slackSection() {
 // The code display outlives Settings re-renders (they happen on every status
 // change), so the box and its cycling timer are kept here.
 const setupUi = { box: null, cycle: null };
+const DROPPED_NAMES = { people: "people's colors", keys: 'hidden chats', assign: 'groups', nicknames: 'nicknames' };
 
 function phoneSection() {
   const box = (setupUi.box ||= h('div'));
@@ -1583,7 +1877,7 @@ function phoneSection() {
         accounts
           ? h('p', { class: 'warn' }, 'This code contains your account logins. Scan it only with your own phone, and don\'t screenshot or share it.')
           : h('p', {}, 'Optional: copies your groups, nicknames and hidden chats.'),
-        dropped.length ? h('p', {}, `Too much to fit, so these stay on the Mac: ${dropped.join(', ')}.`) : null,
+        dropped.length ? h('p', {}, `Too much to fit, so these stay on the Mac: ${dropped.map(k => DROPPED_NAMES[k] || k).join(', ')}.`) : null,
         h('div', { class: 'row' },
           accounts ? h('button', { class: 'btn primary', onclick: () => showCode('layout') }, 'Next: groups and nicknames') : null,
           h('button', { class: 'btn', onclick: hide }, accounts ? 'Done' : 'Hide code')));
@@ -1696,7 +1990,9 @@ function hotkey(action) {
   else if (action === 'refresh') refreshOpen();
   else if (action === 'back') {
     // Android back button: close whatever is on top, else leave the app.
-    if (!$('#settings').hidden) closeSettings();
+    if (closePopover) closePopover();
+    else if (document.querySelector('.lightbox')) document.querySelector('.lightbox').remove();
+    else if (!$('#settings').hidden) closeSettings();
     else if (state.renamingConv || state.renaming) document.activeElement?.blur();
     else if (state.editing) setEditing(false);
     else if (state.openKey) closeConversation();
@@ -1785,6 +2081,14 @@ function bindUi() {
     if (e.target.id === 'settings') closeSettings();
   });
   $('#gif-btn').addEventListener('click', openGifPanel);
+  // Tapping Send would otherwise take focus from the text box, which closes the
+  // phone keyboard after every message.
+  $('#composer .send-btn').addEventListener('mousedown', e => e.preventDefault());
+  $('#composer .send-btn').addEventListener('touchend', e => {
+    if (!MOBILE) return;
+    e.preventDefault(); // no focus change, no synthetic click
+    sendMessage();
+  });
   $('#composer').addEventListener('submit', e => {
     e.preventDefault();
     sendMessage();
@@ -1802,11 +2106,22 @@ function bindUi() {
       sendMessage();
     }
   });
+  for (const type of ['wheel', 'touchmove', 'pointerdown', 'keydown']) {
+    $('#messages').addEventListener(type, () => { userScrollAt = Date.now(); }, { passive: true });
+  }
   $('#messages').addEventListener('scroll', e => {
     const box = e.target;
-    stickToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    if (box.scrollHeight - box.scrollTop - box.clientHeight < 60) stickToBottom = true;
+    else if (userScrolling()) stickToBottom = false;
     if (box.scrollTop < 150) loadOlder();
   });
+  // Pictures, GIFs and custom emoji only get their height once loaded. When
+  // that happens at the bottom (a picture you just sent), follow it down.
+  for (const type of ['load', 'loadedmetadata']) {
+    $('#messages').addEventListener(type, () => {
+      if (stickToBottom) scrollToBottom();
+    }, true);
+  }
   // When the list gets shorter (phone keyboard opening, window resizing), keep
   // the newest message in view if it was in view before.
   new ResizeObserver(() => {
@@ -1866,16 +2181,24 @@ function bindUi() {
       setEditing(false);
     }
   });
+  // Coming back to the window: the open chat's unread dot and the Dock count
+  // stay a moment so you can see where the new messages were (the "New" line
+  // marks them), then clear. Leaving again before that keeps them unread.
+  let readTimer;
   window.addEventListener('focus', () => {
-    const conv = state.convs.get(state.openKey);
-    if (conv && (conv.unread || conv.mentions)) {
+    clearTimeout(readTimer);
+    const key = state.openKey;
+    readTimer = setTimeout(() => {
+      const conv = state.convs.get(key);
+      if (!document.hasFocus() || state.openKey !== key || !conv || !(conv.unread || conv.mentions)) return;
       conv.unread = false;
       conv.mentions = 0;
       conv.unreadCount = 0;
       sb.markRead(conv.key).catch(() => {});
       scheduleRender();
-    }
+    }, 2500);
   });
+  window.addEventListener('blur', () => clearTimeout(readTimer));
 }
 
 async function init() {
@@ -1893,6 +2216,7 @@ async function init() {
     groups: v.groups || [],
     assign: new Map(Object.entries(v.assign || {})),
     nicknames: new Map(Object.entries(v.nicknames || {})),
+    people: new Map(Object.entries(v.people || {})),
     pins: Array.isArray(v.pins) ? v.pins.map(String) : [],
     otherCollapsed: !!v.otherCollapsed,
     compact: !!v.compact,

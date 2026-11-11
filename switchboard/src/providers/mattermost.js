@@ -119,7 +119,9 @@ class MattermostProvider extends EventEmitter {
     let title = `#${c.display_name || c.name}`;
     let subtitle = this.teams.get(c.team_id)?.display_name || '';
     let kind = 'channel';
+    let peerId = null;
     if (c.type === 'D') {
+      peerId = this.otherUser(c);
       title = this.displayName(this.users.get(this.otherUser(c)));
       subtitle = 'Direct message';
       kind = 'dm';
@@ -137,6 +139,7 @@ class MattermostProvider extends EventEmitter {
       title,
       subtitle,
       kind,
+      peerId,
       avatar: null,
       muted,
       lastActivity: c.last_post_at || c.create_at,
@@ -335,6 +338,13 @@ class MattermostProvider extends EventEmitter {
     if (add) await this.api('POST', '/reactions', { user_id: this.me.id, post_id: postId, emoji_name: name });
     else await this.api('DELETE', `/users/${this.me.id}/posts/${postId}/reactions/${encodeURIComponent(name)}`);
     return this.reactionInfo(name, 1, add);
+  }
+
+  // Names of the people who reacted with one emoji ("You" for yourself).
+  async reactors(convId, postId, key) {
+    const ids = ((await this.api('GET', `/posts/${postId}/reactions`)) || []).filter(r => r.emoji_name === key).map(r => r.user_id);
+    await this.ensureUsers(ids);
+    return ids.map(id => (id === this.me.id ? 'You' : this.displayName(this.users.get(id))));
   }
 
   async fetchMessages(convId, before) {

@@ -243,6 +243,7 @@ class DiscordProvider extends EventEmitter {
       title: c.name || recipients.map(userName).join(', ') || 'Direct message',
       subtitle: c.type === DM ? 'Direct message' : 'Group',
       kind: c.type === DM ? 'dm' : 'group',
+      peerId: c.type === DM ? recipients[0]?.id || c.recipient_ids?.[0] || null : null,
       avatar: c.type === DM ? avatarUrl(recipients[0]) : null,
       muted: this.muted.channels.has(c.id),
     });
@@ -437,6 +438,12 @@ class DiscordProvider extends EventEmitter {
     await this.api(add ? 'PUT' : 'DELETE', `/channels/${convId}/messages/${messageId}/reactions/${encodeURIComponent(key)}/@me`);
     const [name, id] = key.split(':');
     return this.reactionInfo(id ? { name, id } : { name: key }, 1, add);
+  }
+
+  // Discord only sends counts with messages; the names are a separate request.
+  async reactors(convId, messageId, key) {
+    const users = await this.api('GET', `/channels/${convId}/messages/${messageId}/reactions/${encodeURIComponent(key)}?limit=100`);
+    return users.map(u => (u.id === this.me?.id ? 'You' : userName(u)));
   }
 
   // Discord's own GIF search (Tenor), as used by its GIF picker.
