@@ -1,0 +1,1665 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Lantern Harbor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: a square harbor chart (40 spaces round the water) beside a ship's-ledger panel; the panel drops below the board on narrow screens.
+   Single deliberate look: a night port. */
+:root{
+  --sea:#0b232c; --sea-2:#11313c; --sea-3:#1b4552; --rule:#24515e;
+  --water:#123a46;
+  --chart:#dcebe5; --chart-2:#c9ddd6; --chart-3:#a9c4bc; --chart-hi:#eef7f3;
+  --ink:#0e2229; --ink-2:#4b6a70; --alert-ink:#a8321f;
+  --foam:#ecf5f1; --foam-2:#c9dcd7; --mist:#93b4b5;
+  --brass:#eaa93a; --brass-hi:#f4bb54; --brass-ink:#2b1a02;
+  --tide:#167789; --guild:#a46a10;
+  --danger:#ff8a78; --good:#86dcaa; --bone:#f6faf8;
+  --display:"Big Shoulders Display","Arial Narrow","Roboto Condensed",Impact,sans-serif;
+  --body:"Barlow","Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--sea);color:var(--foam);font:15px/1.45 var(--body);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit}
+.app{--bs:640px;display:flex;gap:24px;justify-content:center;align-items:flex-start;padding-block:16px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.app.stack{flex-direction:column;align-items:center}
+
+/* ---------- board ---------- */
+.board{--u:48px;position:relative;flex:none;width:var(--bs);height:var(--bs);display:grid;
+  grid-template-columns:minmax(0,1.6fr) repeat(9,minmax(0,1fr)) minmax(0,1.6fr);
+  grid-template-rows:minmax(0,1.6fr) repeat(9,minmax(0,1fr)) minmax(0,1.6fr);
+  gap:1px;padding:1px;background:var(--rule);border-radius:6px;
+  box-shadow:0 0 0 5px var(--sea-2),0 0 0 6px var(--rule),0 24px 60px rgba(0,0,0,.45)}
+.tile{position:relative;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--chart);color:var(--ink);cursor:pointer;outline:none;transition:background .15s}
+.tile:hover{background:var(--chart-hi)}
+.tile:focus-visible{box-shadow:inset 0 0 0 3px var(--tide)}
+.tile.here{box-shadow:inset 0 0 0 3px var(--brass)}
+.s-b{flex-direction:column-reverse}.s-t{flex-direction:column}.s-l{flex-direction:row}.s-r{flex-direction:row-reverse}
+.band{flex:none;background:var(--g);display:flex;align-items:center;justify-content:center}
+.s-b .band,.s-t .band{height:calc(var(--u)*.3)}
+.s-l .band,.s-r .band{width:calc(var(--u)*.3)}
+.hs{display:flex;align-items:center;gap:calc(var(--u)*.04)}
+.s-l .hs,.s-r .hs{flex-direction:column}
+.hs i{display:block;width:calc(var(--u)*.14);height:calc(var(--u)*.14);background:var(--bone);border:1px solid rgba(0,0,0,.5);border-radius:2px}
+.hs i.inn{width:calc(var(--u)*.46);height:calc(var(--u)*.17);background:var(--brass)}
+.s-l .hs i.inn,.s-r .hs i.inn{width:calc(var(--u)*.17);height:calc(var(--u)*.46)}
+.body{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:2px;padding:calc(var(--u)*.08) calc(var(--u)*.05);text-align:center}
+.nm{flex:1;display:flex;align-items:center;justify-content:center;max-width:100%;font:800 calc(var(--u)*.2)/1.02 var(--display);text-transform:uppercase;letter-spacing:.02em;hyphens:auto;overflow-wrap:break-word}
+.pr{display:flex;align-items:center;justify-content:center;gap:3px;min-height:calc(var(--u)*.24);font:500 calc(var(--u)*.17)/1 var(--mono);font-variant-numeric:tabular-nums}
+.own{display:inline-grid;place-items:center;min-width:calc(var(--u)*.3);height:calc(var(--u)*.24);padding:0 .25em;border-radius:999px;background:var(--pc);color:#10151a;font:900 calc(var(--u)*.17)/1 var(--display);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.mtag{font:600 calc(var(--u)*.13)/1 var(--mono);color:var(--alert-ink)}
+.tile.mort .body,.tile.mort .band{opacity:.5}
+.tile.mort::after{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(135deg,transparent 0 5px,rgba(14,34,41,.14) 5px 6px)}
+.special{justify-content:center;gap:calc(var(--u)*.06)}
+.special .nm{flex:none}
+.ico{display:block;flex:none}
+.special .ico{width:calc(var(--u)*.46);height:calc(var(--u)*.46)}
+.t-card .ico{color:var(--tide)}
+.t-card[data-deck="guild"] .ico{color:var(--guild)}
+.t-tax .ico{color:var(--alert-ink)}
+.t-card,.t-tax{background:var(--chart-2)}
+.corner{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--u)*.06);padding:calc(var(--u)*.12);text-align:center;background:var(--chart-2)}
+.corner .ico{width:calc(var(--u)*.62);height:calc(var(--u)*.62)}
+.corner b{font:900 calc(var(--u)*.27)/1 var(--display);text-transform:uppercase;letter-spacing:.03em}
+.corner small{font:500 calc(var(--u)*.145)/1.15 var(--body);color:var(--ink-2)}
+.c-start .ico{color:var(--tide)}
+.c-rest .ico{color:var(--guild)}
+.c-gob .ico{color:var(--alert-ink)}
+.c-brig{position:relative;padding:0;display:block}
+.c-brig .cell{position:absolute;right:0;top:0;width:64%;height:64%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--u)*.04);background:var(--chart-3);border-left:2px solid var(--ink);border-bottom:2px solid var(--ink)}
+.c-brig .cell .ico{width:calc(var(--u)*.5);height:calc(var(--u)*.5)}
+.c-brig .cell b{font-size:calc(var(--u)*.22)}
+.c-brig .visit{position:absolute;left:0;bottom:0;width:100%;height:36%;display:flex;align-items:center;justify-content:flex-end;padding-right:8%;font-weight:600}
+.board.compact .tile:not(.corner-tile) .nm,.board.compact .pr .price,.board.compact .corner small{display:none}
+.board.compact .c-brig .visit{display:none}
+.board.compact .corner b{font-size:calc(var(--u)*.24)}
+.board.tiny .corner b{display:none}
+.board.compact .special .ico{width:calc(var(--u)*.6);height:calc(var(--u)*.6)}
+
+/* ---------- center of the chart ---------- */
+.center{grid-column:2/11;grid-row:2/11;position:relative;min-width:0;min-height:0;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:calc(var(--u)*.24);padding:calc(var(--u)*.4);
+  background:radial-gradient(circle at 82% 16%,rgba(234,169,58,.2),transparent 34%),
+  repeating-radial-gradient(circle at 26% 74%,transparent 0 calc(var(--u)*.6 - 1px),rgba(236,245,241,.06) calc(var(--u)*.6 - 1px) calc(var(--u)*.6)),var(--water)}
+.compass{position:absolute;left:calc(var(--u)*-.7);bottom:calc(var(--u)*-.7);width:calc(var(--u)*4.6);height:calc(var(--u)*4.6);color:var(--foam);opacity:.12;pointer-events:none}
+.compass svg{width:100%;height:100%}
+.mast{position:relative;text-align:center}
+.wm{font:900 calc(var(--u)*.8)/.9 var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--foam);text-wrap:balance}
+.wm .lamp{display:inline-block;width:.3em;height:.3em;border-radius:50%;background:var(--brass);box-shadow:0 0 .5em .14em rgba(234,169,58,.65);vertical-align:.2em;margin:0 .14em}
+.chartno{margin-top:calc(var(--u)*.14);font:500 max(9px,calc(var(--u)*.15))/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--mist)}
+.board.compact .chartno{display:none}
+.stage{position:relative;width:min(100%,calc(var(--u)*7.6));display:flex;flex-direction:column;align-items:center;gap:calc(var(--u)*.16);font-size:clamp(12px,calc(var(--u)*.21),16px);text-align:center}
+.dice{display:flex;gap:calc(var(--u)*.22)}
+.die{width:clamp(28px,calc(var(--u)*.74),58px);aspect-ratio:1;max-width:100%;padding:14%;display:grid;grid-template:repeat(3,1fr)/repeat(3,1fr);background:var(--bone);border-radius:20%;box-shadow:0 3px 0 #94afa8,0 8px 18px rgba(0,0,0,.35)}
+.die i{display:block;width:72%;height:72%;place-self:center;border-radius:50%;background:var(--ink);visibility:hidden}
+.die i.on{visibility:visible}
+.die.tumble{animation:tumble .42s ease-out}
+@keyframes tumble{0%{transform:rotate(-34deg) translateY(-8px)}35%{transform:rotate(22deg)}70%{transform:rotate(-8deg)}100%{transform:none}}
+.who{display:flex;align-items:center;justify-content:center;gap:.5em;font-weight:600;flex-wrap:wrap}
+.who .mono{font-family:var(--mono);color:var(--mist);font-weight:500}
+.dot{display:inline-grid;place-items:center;width:1.5em;height:1.5em;flex:none;border-radius:50%;background:var(--pc);color:#10151a;font:900 .85em/1 var(--display);box-shadow:0 0 0 2px var(--foam)}
+.pn{font-weight:700;color:var(--pc)}
+.msg{margin:0;max-width:100%;color:var(--foam);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.sub,.hint{margin:0;color:var(--mist);font-size:.9em;max-width:34em}
+.acts{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+.think{margin:0;color:var(--mist)}
+.think::after{content:"";animation:dots 1.2s steps(1) infinite}
+@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+.mini{display:grid;width:min(100%,calc(var(--u)*4.6));padding:0;border:0;border-radius:8px;overflow:hidden;background:var(--chart);color:var(--ink);text-align:center;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.3)}
+.mini-band{padding:.5em;background:var(--g);color:var(--gi);font:600 .7em/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+.mini-name{padding:.45em .4em .2em;font:900 1.35em/1 var(--display);text-transform:uppercase;letter-spacing:.02em}
+.mini-row{padding:0 .4em .65em;font:500 .78em/1.25 var(--mono);color:var(--ink-2)}
+.lcard{width:min(100%,calc(var(--u)*5.8));padding:.8em 1em 1em;border-radius:10px;background:var(--chart);color:var(--ink);text-align:left;border-top:6px solid var(--deck);box-shadow:0 8px 22px rgba(0,0,0,.35);animation:flip .35s ease-out}
+.lcard.tide{--deck:var(--tide)}.lcard.guild{--deck:var(--guild)}
+.lc-h{display:flex;align-items:center;gap:.4em;color:var(--deck);font:900 1.05em/1 var(--display);text-transform:uppercase;letter-spacing:.08em}
+.lc-h .ico{width:1.4em;height:1.4em}
+.lcard p{margin:.5em 0 0;font-weight:500;line-height:1.35}
+@keyframes flip{from{transform:perspective(600px) rotateX(60deg);opacity:.2}to{transform:none;opacity:1}}
+.auc{display:grid;gap:.35em;justify-items:center}
+.bidline b{font-family:var(--mono);font-size:1.15em}
+.bidders{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.bidders .dot.dim{opacity:.3}
+.bidders .dot.now{box-shadow:0 0 0 2px var(--brass),0 0 0 4px var(--water)}
+.debtline{padding:.5em .8em;border:1px solid var(--danger);border-radius:8px;color:var(--foam)}
+.debtline b{font-family:var(--mono);color:var(--danger)}
+
+/* ---------- pawns ---------- */
+.pawn{position:absolute;left:0;top:0;z-index:5;width:24px;height:24px;display:grid;place-items:center;border-radius:50%;background:var(--pc);border:2px solid var(--bone);color:#10151a;font:900 13px/1 var(--display);box-shadow:0 2px 0 rgba(0,0,0,.35),0 4px 10px rgba(0,0,0,.35);transition:transform .15s ease-out;pointer-events:none}
+.pawn.active{z-index:6}
+.pawn.active::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--pc);animation:ping 1.6s ease-out infinite}
+@keyframes ping{from{transform:scale(.75);opacity:.95}to{transform:scale(1.45);opacity:0}}
+
+/* ---------- ledger panel ---------- */
+.panel{width:360px;flex:none;min-width:0;display:flex;flex-direction:column;gap:16px}
+.app.stack .panel{width:var(--bs);max-width:100%}
+.eyebrow{margin:0 0 8px;font:600 11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--mist)}
+.players{display:grid;gap:8px}
+.pl{display:grid;gap:7px;padding:10px 12px;background:var(--sea-2);border:1px solid var(--rule);border-radius:10px;min-width:0}
+.pl.now{border-color:var(--pc);background:var(--sea-3)}
+.pl.out{opacity:.5}
+.pl-top{display:flex;align-items:center;gap:8px;min-width:0}
+.pl-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.tag{flex:none;padding:3px 5px;border:1px solid var(--rule);border-radius:4px;font:600 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--mist)}
+.pl-cash{margin-left:auto;font:600 18px/1 var(--mono);font-variant-numeric:tabular-nums}
+.pl-sub{display:flex;flex-wrap:wrap;gap:2px 8px;font-size:12.5px;color:var(--mist)}
+.pl-sub .warn{color:var(--danger)}
+.ledger{display:flex;flex-wrap:wrap;gap:6px}
+.lg{display:flex;gap:2px}
+.lc{position:relative;width:13px;height:17px;padding:0;border:1px solid var(--rule);border-radius:2px;background:transparent;cursor:pointer}
+.lc.on{background:var(--g);border-color:rgba(0,0,0,.3)}
+.lc.on.m{background:repeating-linear-gradient(135deg,var(--g) 0 2px,transparent 2px 4px)}
+.lc .hn{position:absolute;left:0;right:0;bottom:1px;font:700 8px/1 var(--mono);color:var(--gi)}
+.hint-p{margin:0;font-size:13px;color:var(--mist)}
+.tools{display:flex;flex-wrap:wrap;gap:8px}
+.tools .btn{flex:1 1 auto}
+.logbox ol{list-style:none;margin:0;padding:0;max-height:320px;overflow:auto;font-size:13.5px;color:var(--foam-2)}
+.logbox li{padding:6px 0;border-bottom:1px solid var(--rule)}
+.logbox .t{margin-right:6px;font:500 11px var(--mono);color:var(--mist)}
+.muted{color:var(--mist);margin:0}
+
+/* ---------- buttons ---------- */
+.btn{appearance:none;min-height:38px;padding:.65em 1em;border:1px solid var(--rule);border-radius:8px;background:var(--sea-2);color:var(--foam);font:600 14px/1.1 var(--body);cursor:pointer;transition:background .15s,transform .1s}
+.stage .btn{font-size:clamp(12px,calc(var(--u)*.22),15px);min-height:34px}
+.btn:hover:not(:disabled){background:var(--sea-3)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn.primary{background:var(--brass);border-color:var(--brass);color:var(--brass-ink)}
+.btn.primary:hover:not(:disabled){background:var(--brass-hi)}
+.btn.danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.42;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+/* ---------- modals ---------- */
+.scrim{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(3,13,17,.74);
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.modal{width:min(580px,100%);max-height:100%;overflow:auto;padding:20px;background:var(--sea-2);border:1px solid var(--rule);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.modal h2{margin:0 0 6px;font:900 30px/1 var(--display);text-transform:uppercase;letter-spacing:.04em;text-wrap:balance}
+.modal .lede{margin:0 0 16px;color:var(--mist)}
+.mf{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:18px}
+.crew{display:grid;gap:8px}
+.crow{display:flex;align-items:center;gap:8px}
+.cdot{width:36px;height:36px;flex:none;border:2px solid var(--bone);border-radius:50%;background:var(--pc);color:#10151a;font:900 16px/1 var(--display);cursor:pointer}
+.cname{flex:1;min-width:0;padding:9px 10px;background:var(--sea);border:1px solid var(--rule);border-radius:8px;color:var(--foam);font:500 15px var(--body)}
+.seg{display:inline-flex;flex:none;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.seg button{padding:8px 10px;border:0;background:transparent;color:var(--mist);font:600 13px/1 var(--body);cursor:pointer}
+.seg button+button{border-left:1px solid var(--rule)}
+.seg button.on{background:var(--sea-3);color:var(--foam)}
+.x{width:32px;height:32px;flex:none;border:1px solid var(--rule);border-radius:8px;background:transparent;color:var(--mist);font-size:18px;line-height:1;cursor:pointer}
+.x:disabled{opacity:.3;cursor:not-allowed}
+.addp{margin-top:10px}
+.opts{display:grid;gap:12px;margin-top:16px;padding-top:16px;border-top:1px solid var(--rule)}
+.opt{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px}
+.opt small{display:block;max-width:30em;color:var(--mist);font-size:12.5px}
+.resume{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px;padding:10px 12px;border:1px solid var(--brass);border-radius:10px;color:var(--foam-2)}
+.deed{max-width:340px;margin:0 auto;overflow:hidden;border-radius:10px;background:var(--chart);color:var(--ink)}
+.deed-h{padding:14px 12px 12px;background:var(--g);color:var(--gi);text-align:center}
+.deed-h small{font:600 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;opacity:.85}
+.deed-h div{margin-top:6px;font:900 28px/1 var(--display);text-transform:uppercase;letter-spacing:.03em;text-wrap:balance}
+.deed table{width:100%;border-collapse:collapse;font-size:14px}
+.deed td{padding:6px 14px;border-bottom:1px solid #c3d6cf}
+.deed td:last-child{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.deed tr.cur td{background:#f3dfb2;font-weight:700}
+.deed-foot{padding:10px 14px 14px;font-size:13px;color:var(--ink-2)}
+.deed-info{padding:16px;font-size:15px}
+.deed-own{max-width:340px;margin:14px auto 0;display:flex;align-items:center;gap:8px;color:var(--foam-2)}
+.dacts{max-width:340px;margin:12px auto 0;display:grid;gap:8px}
+.dact{display:grid;gap:3px}
+.dact .btn{width:100%}
+.dact small{color:var(--mist);font-size:12.5px}
+.partners{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.partners .btn.on{background:var(--foam);color:var(--ink);border-color:var(--foam)}
+.tgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.tgrid{grid-template-columns:1fr}}
+.tside{min-width:0;padding:12px;background:var(--sea);border:1px solid var(--rule);border-radius:10px}
+.tside h4{margin:0 0 8px;font:600 15px var(--body)}
+.pchips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.pchip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px 5px 8px;border:1px solid var(--rule);border-radius:999px;background:transparent;color:var(--foam);font:500 13px/1.15 var(--body);text-align:left;cursor:pointer}
+.pchip::before{content:"";width:10px;height:10px;flex:none;border-radius:2px;background:var(--g)}
+.pchip em{font-style:normal;color:var(--danger)}
+.pchip.on{background:var(--foam);border-color:var(--foam);color:var(--ink)}
+.pchip.on em{color:var(--alert-ink)}
+.tfield{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--foam-2)}
+.tfield input[type=number]{width:96px;padding:7px 8px;background:var(--sea-2);border:1px solid var(--rule);border-radius:8px;color:var(--foam);font:500 14px var(--mono)}
+.tfield small{color:var(--mist)}
+.tmsg{min-height:1.4em;margin:12px 0 0;color:var(--mist)}
+.tmsg.err{color:var(--danger)}
+.tlist{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.tlist li{display:flex;align-items:center;gap:8px}
+.tlist li::before{content:"";width:10px;height:10px;flex:none;border-radius:2px;background:var(--g,var(--brass))}
+.rank{width:100%;border-collapse:collapse}
+.rank td{padding:8px 6px;border-bottom:1px solid var(--rule)}
+.rank td:first-child{width:2em;font:600 13px var(--mono);color:var(--mist)}
+.rank td:last-child{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.rules h3{margin:18px 0 6px;font:800 18px/1.1 var(--display);text-transform:uppercase;letter-spacing:.05em;color:var(--brass)}
+.rules p,.rules li{color:var(--foam-2);max-width:65ch}
+.rules ul{padding-left:1.1em;margin:0}
+.rules li{margin:3px 0}
+.toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;transform:translateX(-50%);max-width:calc(100% - 32px);padding:10px 16px;border-radius:999px;background:var(--bone);color:var(--ink);font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.toast .pn{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="board" id="board">
+    <div class="center" id="center">
+      <div class="compass" id="compass"></div>
+      <div class="mast">
+        <div class="wm">Lantern<span class="lamp" aria-hidden="true"></span>Harbor</div>
+        <div class="chartno">Chart No. 40 · soundings in dollars</div>
+      </div>
+      <div class="dice" id="dice" aria-label="Dice"><div class="die"></div><div class="die"></div></div>
+      <div class="stage" id="stage" aria-live="polite"></div>
+    </div>
+  </div>
+  <aside class="panel" id="panel">
+    <section>
+      <p class="eyebrow">Crew</p>
+      <div class="players" id="players"></div>
+    </section>
+    <p class="hint-p">Tap any space for its details. On your turn, tap your own streets to build, sell or mortgage.</p>
+    <div class="tools">
+      <button class="btn" id="btn-trade" data-act="trade">Propose a trade</button>
+      <button class="btn" data-act="rules">Rules</button>
+      <button class="btn" id="btn-tally" data-act="tally">Final tally</button>
+      <button class="btn" data-act="newgame">New game</button>
+    </div>
+    <section class="logbox">
+      <p class="eyebrow">Harbor log</p>
+      <ol id="log"></ol>
+    </section>
+  </aside>
+</div>
+<div id="modal-root"></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script id="engine">
+"use strict";
+/* ================= Lantern Harbor rules engine (no DOM) ================= */
+const SALARY = 200, FINE = 50, BANK = -1, POT = -2, EACH = -3;
+const TRANSIT_RENT = [25, 50, 100, 200];
+const GROUPS = {
+  drift: { name: 'Driftwood', color: '#b98d5c', ink: '#1d1408', house: 50 },
+  foam:  { name: 'Seafoam',   color: '#74d0b6', ink: '#08261e', house: 50 },
+  lav:   { name: 'Lavender',  color: '#a68ad8', ink: '#1a1030', house: 100 },
+  rust:  { name: 'Rust',      color: '#c9622f', ink: '#fff4ec', house: 100 },
+  must:  { name: 'Mustard',   color: '#dbb33c', ink: '#231a02', house: 150 },
+  teal:  { name: 'Deep Teal', color: '#1b8b8b', ink: '#eafffd', house: 150 },
+  crim:  { name: 'Crimson',   color: '#c0344f', ink: '#fff0f3', house: 200 },
+  viol:  { name: 'Midnight',  color: '#5b47ab', ink: '#f1edff', house: 200 },
+};
+const SP = [
+  { t: 'start', name: 'Set Sail' },
+  { t: 'prop', g: 'drift', name: 'Mudflat Row', price: 60, rent: [2, 10, 30, 90, 160, 250] },
+  { t: 'card', deck: 'guild', name: 'Guild' },
+  { t: 'prop', g: 'drift', name: 'Netmender Lane', price: 60, rent: [4, 20, 60, 180, 320, 450] },
+  { t: 'tax', name: 'Dock Fee', amount: 200 },
+  { t: 'transit', icon: 'ferry', name: 'Harbor Ferry', price: 200 },
+  { t: 'prop', g: 'foam', name: 'Kelp Street', price: 100, rent: [6, 30, 90, 270, 400, 550] },
+  { t: 'card', deck: 'tide', name: 'Tide' },
+  { t: 'prop', g: 'foam', name: 'Gull Alley', price: 100, rent: [6, 30, 90, 270, 400, 550] },
+  { t: 'prop', g: 'foam', name: 'Barnacle Court', price: 120, rent: [8, 40, 100, 300, 450, 600] },
+  { t: 'brig', name: 'The Brig' },
+  { t: 'prop', g: 'lav', name: 'Tidepool Walk', price: 140, rent: [10, 50, 150, 450, 625, 750] },
+  { t: 'util', icon: 'mill', name: 'Tide Mill', price: 150 },
+  { t: 'prop', g: 'lav', name: 'Heron Way', price: 140, rent: [10, 50, 150, 450, 625, 750] },
+  { t: 'prop', g: 'lav', name: 'Saltworks Square', price: 160, rent: [12, 60, 180, 500, 700, 900] },
+  { t: 'transit', icon: 'tram', name: 'Canal Tram', price: 200 },
+  { t: 'prop', g: 'rust', name: 'Rope Walk', price: 180, rent: [14, 70, 200, 550, 750, 950] },
+  { t: 'card', deck: 'guild', name: 'Guild' },
+  { t: 'prop', g: 'rust', name: 'Anchorsmith Road', price: 180, rent: [14, 70, 200, 550, 750, 950] },
+  { t: 'prop', g: 'rust', name: "Cooper's Yard", price: 200, rent: [16, 80, 220, 600, 800, 1000] },
+  { t: 'rest', name: 'Calm Waters' },
+  { t: 'prop', g: 'must', name: 'Market Steps', price: 220, rent: [18, 90, 250, 700, 875, 1050] },
+  { t: 'card', deck: 'tide', name: 'Tide' },
+  { t: 'prop', g: 'must', name: 'Spice Quay', price: 220, rent: [18, 90, 250, 700, 875, 1050] },
+  { t: 'prop', g: 'must', name: 'Saffron Arcade', price: 240, rent: [20, 100, 300, 750, 925, 1100] },
+  { t: 'transit', icon: 'funicular', name: 'Cliff Funicular', price: 200 },
+  { t: 'prop', g: 'teal', name: 'Chandler Street', price: 260, rent: [22, 110, 330, 800, 975, 1150] },
+  { t: 'prop', g: 'teal', name: 'Customs House Row', price: 260, rent: [22, 110, 330, 800, 975, 1150] },
+  { t: 'util', icon: 'lamp', name: 'Lantern Works', price: 150 },
+  { t: 'prop', g: 'teal', name: 'Admiralty Green', price: 280, rent: [24, 120, 360, 850, 1025, 1200] },
+  { t: 'gobrig', name: 'Harbormaster!' },
+  { t: 'prop', g: 'crim', name: "Captain's Terrace", price: 300, rent: [26, 130, 390, 900, 1100, 1275] },
+  { t: 'prop', g: 'crim', name: 'Bellbuoy Heights', price: 300, rent: [26, 130, 390, 900, 1100, 1275] },
+  { t: 'card', deck: 'guild', name: 'Guild' },
+  { t: 'prop', g: 'crim', name: 'Signal Hill', price: 320, rent: [28, 150, 450, 1000, 1200, 1400] },
+  { t: 'transit', icon: 'airship', name: 'Airship Mast', price: 200 },
+  { t: 'card', deck: 'tide', name: 'Tide' },
+  { t: 'prop', g: 'viol', name: 'Meridian Crescent', price: 350, rent: [35, 175, 500, 1100, 1300, 1500] },
+  { t: 'tax', name: 'Mooring Toll', amount: 100 },
+  { t: 'prop', g: 'viol', name: 'Starwatch Point', price: 400, rent: [50, 200, 600, 1400, 1700, 2000] },
+];
+SP.forEach((s, i) => {
+  s.i = i;
+  if (s.t === 'prop') s.house = GROUPS[s.g].house;
+  if (s.price) s.mort = s.price / 2;
+});
+const PROP_IDX = SP.filter(s => s.price).map(s => s.i);
+const GROUP_IDX = {};
+SP.forEach(s => { if (s.g) (GROUP_IDX[s.g] = GROUP_IDX[s.g] || []).push(s.i); });
+const LEDGER = [...Object.keys(GROUPS).map(g => GROUP_IDX[g]),
+  PROP_IDX.filter(i => SP[i].t === 'transit'), PROP_IDX.filter(i => SP[i].t === 'util')];
+
+const DECKS = {
+  tide: [
+    { txt: 'Fair winds! Advance to Set Sail and collect $200.', fx: { to: 0 } },
+    { txt: 'Climb up to Starwatch Point to watch the meteor shower.', fx: { to: 39 } },
+    { txt: 'Deliver a crate of saffron to Saffron Arcade. If you pass Set Sail, collect $200.', fx: { to: 24 } },
+    { txt: 'Low tide! Go exploring on Tidepool Walk. If you pass Set Sail, collect $200.', fx: { to: 11 } },
+    { txt: 'Catch the nearest transit. If someone owns it, pay them double the fare. If not, you may buy it.', fx: { near: 'transit' } },
+    { txt: 'Hop aboard the nearest transit. If someone owns it, pay them double the fare. If not, you may buy it.', fx: { near: 'transit' } },
+    { txt: 'Visit the nearest works. If someone owns it, roll the dice and pay them 10 times the roll.', fx: { near: 'util' } },
+    { txt: 'A trader buys your spare brass compass. Collect $50.', fx: { cash: 50 } },
+    { txt: 'Harbormaster’s pardon. Keep this card until you need to leave the Brig.', fx: { pardon: true } },
+    { txt: 'Caught in a squall. Drift back 3 spaces.', fx: { fwd: -3 } },
+    { txt: 'Rumors of smuggling. Go straight to the Brig. Do not pass Set Sail.', fx: { brig: true } },
+    { txt: 'Barnacles everywhere. Pay $25 for each house and $100 for each inn you own.', fx: { repairs: [25, 100] } },
+    { txt: 'Fined for rowing too fast down the canal. Pay $15.', fx: { cash: -15 } },
+    { txt: 'Ride the Harbor Ferry. If you pass Set Sail, collect $200.', fx: { to: 5 } },
+    { txt: 'You are elected harbor pilot for the season. Pay each player $50.', fx: { payEach: 50 } },
+    { txt: 'Your shipping bond matures. Collect $150.', fx: { cash: 150 } },
+  ],
+  guild: [
+    { txt: 'Guild pension day. Advance to Set Sail and collect $200.', fx: { to: 0 } },
+    { txt: 'The harbor bank miscounts your catch in your favor. Collect $200.', fx: { cash: 200 } },
+    { txt: 'The ship’s doctor sends a bill. Pay $50.', fx: { cash: -50 } },
+    { txt: 'You sell your share in a fishing boat. Collect $50.', fx: { cash: 50 } },
+    { txt: 'Harbormaster’s pardon. Keep this card until you need to leave the Brig.', fx: { pardon: true } },
+    { txt: 'Caught napping on night watch. Go straight to the Brig. Do not pass Set Sail.', fx: { brig: true } },
+    { txt: 'Your lantern festival savings pay out. Collect $100.', fx: { cash: 100 } },
+    { txt: 'The harbor office refunds an overpaid dock fee. Collect $20.', fx: { cash: 20 } },
+    { txt: 'It’s your name day! Collect $10 from every player.', fx: { collectEach: 10 } },
+    { txt: 'A stay in the harbor infirmary. Pay $100.', fx: { cash: -100 } },
+    { txt: 'Navigation school fees are due. Pay $50.', fx: { cash: -50 } },
+    { txt: 'A message in a bottle leads to a finder’s reward. Collect $100.', fx: { cash: 100 } },
+    { txt: 'Storm damage on your streets. Pay $40 for each house and $115 for each inn you own.', fx: { repairs: [40, 115] } },
+    { txt: 'The guild pays you for advice on a new pier. Collect $25.', fx: { cash: 25 } },
+    { txt: 'Your boat takes second prize at the regatta. Collect $10.', fx: { cash: 10 } },
+    { txt: 'An old sea captain leaves you an inheritance. Collect $100.', fx: { cash: 100 } },
+  ],
+};
+const DECK_NAME = { tide: 'Tide', guild: 'Guild' };
+const PARDON = { tide: DECKS.tide.findIndex(c => c.fx.pardon), guild: DECKS.guild.findIndex(c => c.fx.pardon) };
+
+let G = null;
+
+const r6 = () => 1 + Math.floor(Math.random() * 6);
+const money = n => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
+const P = i => `@${i}@`;
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+function log(m) { G.log.push({ r: G.round, m }); if (G.log.length > 250) G.log.splice(0, G.log.length - 250); }
+function note(m) { log(m); G.msg = m; }
+
+function newGame(cfg) {
+  G = {
+    v: 1,
+    cfg: { cash: cfg.cash, auctions: cfg.auctions, pot: cfg.pot, speed: cfg.speed },
+    players: cfg.players.map(p => ({ name: p.name, color: p.color, bot: !!p.bot, cash: cfg.cash, pos: 0, brig: false, brigTurns: 0, pardons: [], out: false })),
+    props: SP.map(s => s.price ? { o: -1, h: 0, m: false } : null),
+    turn: 0, phase: 'roll', dice: [3, 4], rollId: 0, moveId: 0, doubles: 0, extra: false,
+    decks: { tide: shuffle([...DECKS.tide.keys()]), guild: shuffle([...DECKS.guild.keys()]) },
+    card: null, auction: null, debt: null, trade: null, ctx: null, moveFx: null,
+    pot: 0, log: [], msg: '', turnNo: 1, round: 1, over: null, offers: {}, botTradeTurn: 0,
+  };
+  note(`A new game begins. ${P(0)} takes the helm first.`);
+}
+
+/* ---------- queries ---------- */
+const cur = () => G.players[G.turn];
+const alive = () => G.players.map((p, i) => i).filter(i => !G.players[i].out);
+const owned = pi => PROP_IDX.filter(i => G.props[i].o === pi);
+const ownsSet = (pi, g) => GROUP_IDX[g].every(i => G.props[i].o === pi);
+const countType = (pi, t) => PROP_IDX.filter(i => SP[i].t === t && G.props[i].o === pi).length;
+const groupHasHouses = g => GROUP_IDX[g].some(i => G.props[i].h > 0);
+const unmortgageCost = i => Math.ceil(SP[i].mort * 1.1);
+const mortFee = i => Math.ceil(SP[i].mort * 0.1);
+function actor() {
+  if (!G || G.phase === 'over') return -1;
+  if (G.phase === 'auction') return G.auction.order[G.auction.k];
+  return G.turn;
+}
+function netWorth(pi) {
+  const p = G.players[pi];
+  return p.cash + owned(pi).reduce((s, i) => s + (G.props[i].m ? SP[i].mort : SP[i].price) + (SP[i].house || 0) * G.props[i].h, 0);
+}
+function rentFor(i, ctx) {
+  const s = SP[i], pr = G.props[i];
+  if (s.t === 'prop') return pr.h ? s.rent[pr.h] : (ownsSet(pr.o, s.g) ? s.rent[0] * 2 : s.rent[0]);
+  if (s.t === 'transit') return TRANSIT_RENT[countType(pr.o, 'transit') - 1] * (ctx && ctx.double ? 2 : 1);
+  const sum = G.dice[0] + G.dice[1];
+  return (countType(pr.o, 'util') === 2 ? 10 : 4) * sum;
+}
+const bankOrPot = () => G.cfg.pot ? POT : BANK;
+function pay(from, to, amt) {
+  if (from >= 0) G.players[from].cash -= amt;
+  if (to === POT) G.pot += amt; else if (to >= 0) G.players[to].cash += amt;
+}
+
+/* ---------- turn flow ---------- */
+function charge(pi, amt, to, resume, why) {
+  const p = G.players[pi];
+  if (amt <= 0) return true;
+  if (p.cash >= amt) { pay(pi, to, amt); return true; }
+  G.debt = { amt, to, resume, why };
+  G.phase = 'debt';
+  note(`${P(pi)} owes ${money(amt)} ${why} but has only ${money(p.cash)} in cash.`);
+  return false;
+}
+function finish() {
+  const p = cur();
+  G.ctx = null;
+  if (p.out) return;
+  G.phase = (G.extra && !p.brig) ? 'roll' : 'end';
+}
+function roll(forced) {
+  if (G.phase !== 'roll') return;
+  const d = forced || [r6(), r6()];
+  G.dice = d; G.rollId++;
+  const pi = G.turn, p = cur(), sum = d[0] + d[1], dbl = d[0] === d[1];
+  G.msg = `${P(pi)} rolled ${d[0]} + ${d[1]}${dbl ? ', doubles' : ''}.`;
+  log(G.msg);
+  if (p.brig) {
+    if (dbl) { p.brig = false; p.brigTurns = 0; G.extra = false; note(`${P(pi)} rolled doubles and walks out of the Brig.`); return move(pi, sum); }
+    p.brigTurns++;
+    G.extra = false;
+    if (p.brigTurns >= 3) {
+      note(`Third try without doubles. ${P(pi)} must pay the ${money(FINE)} fine.`);
+      if (charge(pi, FINE, bankOrPot(), 'brigMove', 'for the Brig fine')) releaseAndMove();
+      return;
+    }
+    note(`No doubles. ${P(pi)} stays in the Brig.`);
+    G.phase = 'end';
+    return;
+  }
+  if (dbl) {
+    G.doubles++;
+    if (G.doubles >= 3) { note(`Three doubles in a row! The Harbormaster sends ${P(pi)} to the Brig.`); toBrig(pi); G.phase = 'end'; return; }
+    G.extra = true;
+  } else G.extra = false;
+  move(pi, sum);
+}
+function releaseAndMove() {
+  const p = cur();
+  p.brig = false; p.brigTurns = 0; G.extra = false;
+  move(G.turn, G.dice[0] + G.dice[1]);
+}
+function move(pi, steps, ctx) {
+  const p = G.players[pi], from = p.pos;
+  const to = ((from + steps) % 40 + 40) % 40;
+  if (steps > 0 && from + steps >= 40) { p.cash += SALARY; log(`${P(pi)} ${to === 0 ? 'lands on' : 'passes'} Set Sail and collects ${money(SALARY)}.`); }
+  p.pos = to;
+  G.moveFx = { p: pi, dir: Math.sign(steps), id: ++G.moveId };
+  G.ctx = ctx || null;
+  G.phase = 'land';
+}
+function moveTo(pi, target, ctx) { move(pi, (target - G.players[pi].pos + 40) % 40, ctx); }
+function toBrig(pi) {
+  const p = G.players[pi];
+  p.pos = 10; p.brig = true; p.brigTurns = 0;
+  G.extra = false; G.doubles = 0;
+  G.moveFx = { p: pi, dir: 0, id: ++G.moveId };
+}
+function resolveLanding() {
+  if (G.phase !== 'land') return;
+  const pi = G.turn, p = cur(), s = SP[p.pos], ctx = G.ctx || {};
+  G.moveFx = null;
+  G.phase = 'resolving';
+  switch (s.t) {
+    case 'start': case 'brig': return finish();
+    case 'rest':
+      if (G.cfg.pot && G.pot > 0) { note(`${P(pi)} drifts into Calm Waters and scoops up the ${money(G.pot)} pot.`); p.cash += G.pot; G.pot = 0; }
+      else note(`${P(pi)} rests in Calm Waters.`);
+      return finish();
+    case 'gobrig': note(`The Harbormaster catches ${P(pi)}! Off to the Brig.`); toBrig(pi); return finish();
+    case 'tax':
+      note(`${P(pi)} pays the ${s.name}: ${money(s.amount)}.`);
+      if (charge(pi, s.amount, bankOrPot(), 'after', `for the ${s.name}`)) finish();
+      return;
+    case 'card': return draw(s.deck);
+    default: {
+      const pr = G.props[p.pos];
+      if (pr.o === -1) { G.phase = 'buy'; note(`${s.name} is for sale at ${money(s.price)}.`); return; }
+      if (pr.o === pi) { note(`${P(pi)} moors at their own ${s.name}.`); return finish(); }
+      if (pr.m) { note(`${s.name} is mortgaged, so no rent is due.`); return finish(); }
+      let rent;
+      if (s.t === 'util' && ctx.util) {
+        const d = [r6(), r6()]; G.dice = d; G.rollId++;
+        rent = 10 * (d[0] + d[1]);
+        log(`${P(pi)} rolls ${d[0]} + ${d[1]} for the works fee.`);
+      } else rent = rentFor(p.pos, ctx);
+      note(`${P(pi)} pays ${P(pr.o)} ${money(rent)} for ${s.name}.`);
+      if (charge(pi, rent, pr.o, 'after', `to ${P(pr.o)}`)) finish();
+    }
+  }
+}
+function draw(deck) {
+  const idx = G.decks[deck].shift();
+  const card = DECKS[deck][idx];
+  if (!card.fx.pardon) G.decks[deck].push(idx);
+  G.card = { deck, idx };
+  G.phase = 'card';
+  G.msg = `${P(G.turn)} draws a ${DECK_NAME[deck]} card.`;
+  log(`${P(G.turn)} draws a ${DECK_NAME[deck]} card: “${card.txt}”`);
+}
+function applyCard() {
+  if (G.phase !== 'card' || !G.card) return;
+  const { deck, idx } = G.card, fx = DECKS[deck][idx].fx, pi = G.turn, p = cur();
+  G.card = null;
+  G.phase = 'resolving';
+  if (fx.to !== undefined) return moveTo(pi, fx.to);
+  if (fx.fwd) return move(pi, fx.fwd);
+  if (fx.near) {
+    let j = p.pos;
+    do { j = (j + 1) % 40; } while (SP[j].t !== fx.near);
+    return moveTo(pi, j, fx.near === 'transit' ? { double: true } : { util: true });
+  }
+  if (fx.brig) { note(`${P(pi)} is marched to the Brig.`); toBrig(pi); return finish(); }
+  if (fx.pardon) { p.pardons.push(deck); note(`${P(pi)} pockets a Harbormaster’s pardon.`); return finish(); }
+  const fee = (amt, why) => {
+    if (!amt) { note(`${P(pi)} owes nothing.`); return finish(); }
+    note(`${P(pi)} pays ${money(amt)} ${why}.`);
+    if (charge(pi, amt, bankOrPot(), 'after', why)) finish();
+  };
+  if (fx.cash > 0) { p.cash += fx.cash; note(`${P(pi)} collects ${money(fx.cash)}.`); return finish(); }
+  if (fx.cash < 0) return fee(-fx.cash, 'from the card');
+  if (fx.repairs) {
+    let h = 0, inn = 0;
+    owned(pi).forEach(i => { const x = G.props[i].h; if (x === 5) inn++; else h += x; });
+    return fee(h * fx.repairs[0] + inn * fx.repairs[1], `for ${h} house${h === 1 ? '' : 's'} and ${inn} inn${inn === 1 ? '' : 's'}`);
+  }
+  if (fx.perProp) { const n = owned(pi).length; return fee(n * fx.perProp, `for ${n} propert${n === 1 ? 'y' : 'ies'}`); }
+  if (fx.payEach) {
+    const others = alive().filter(i => i !== pi), amt = fx.payEach * others.length;
+    note(`${P(pi)} pays ${money(fx.payEach)} to each player.`);
+    if (p.cash >= amt) { others.forEach(o => pay(pi, o, fx.payEach)); return finish(); }
+    G.debt = { amt, to: EACH, each: fx.payEach, resume: 'after', why: 'to the other players' };
+    G.phase = 'debt';
+    return;
+  }
+  if (fx.collectEach) {
+    let total = 0;
+    alive().filter(i => i !== pi).forEach(o => {
+      const op = G.players[o];
+      if (op.cash < fx.collectEach) botRaise(o, fx.collectEach);
+      const amt = Math.max(0, Math.min(op.cash, fx.collectEach));
+      pay(o, pi, amt); total += amt;
+    });
+    note(`${P(pi)} collects ${money(total)} from the other players.`);
+    return finish();
+  }
+  finish();
+}
+function payDebt() {
+  const d = G.debt, pi = G.turn, p = cur();
+  if (G.phase !== 'debt' || !d || p.cash < d.amt) return;
+  if (d.to === EACH) alive().filter(i => i !== pi).forEach(o => pay(pi, o, d.each));
+  else pay(pi, d.to, d.amt);
+  log(`${P(pi)} settles the ${money(d.amt)} debt.`);
+  G.debt = null;
+  if (d.resume === 'brigMove') { G.phase = 'resolving'; return releaseAndMove(); }
+  finish();
+}
+function bankrupt() {
+  const pi = G.turn, p = cur(), d = G.debt;
+  const cred = d && d.to >= 0 ? d.to : BANK;
+  let raised = 0;
+  owned(pi).forEach(i => { const pr = G.props[i]; if (pr.h) { raised += pr.h * SP[i].house / 2; pr.h = 0; } });
+  p.cash += raised;
+  if (cred >= 0) {
+    const c = G.players[cred];
+    c.cash += Math.max(0, p.cash);
+    owned(pi).forEach(i => { G.props[i].o = cred; });
+    c.pardons.push(...p.pardons);
+    note(`${P(pi)} is bankrupt. ${P(cred)} takes their cash and property.`);
+  } else {
+    owned(pi).forEach(i => { G.props[i] = { o: -1, h: 0, m: false }; });
+    p.pardons.forEach(dk => G.decks[dk].push(PARDON[dk]));
+    note(`${P(pi)} is bankrupt. Their property goes back on the market.`);
+  }
+  p.cash = 0; p.pardons = []; p.out = true; p.brig = false;
+  G.debt = null;
+  if (alive().length <= 1) return gameOver('last');
+  nextTurn();
+}
+function nextTurn() {
+  const prev = G.turn;
+  let n = prev;
+  do { n = (n + 1) % G.players.length; } while (G.players[n].out && n !== prev);
+  if (n <= prev) G.round++;
+  G.turn = n; G.phase = 'roll'; G.doubles = 0; G.extra = false;
+  G.ctx = null; G.card = null; G.debt = null; G.turnNo++;
+  const p = G.players[n];
+  G.msg = p.brig ? `${P(n)} is sitting in the Brig.` : `${P(n)}’s turn.`;
+}
+function endTurn() { if (G.phase === 'end') nextTurn(); }
+function gameOver(reason) {
+  G.phase = 'over';
+  const ranks = G.players.map((p, i) => i).sort((a, b) => (G.players[a].out - G.players[b].out) || (netWorth(b) - netWorth(a)));
+  G.over = { reason, ranks };
+  const w = ranks[0];
+  note(reason === 'last' ? `${P(w)} is the last captain afloat and wins Lantern Harbor!` : `Final tally: ${P(w)} wins with a net worth of ${money(netWorth(w))}.`);
+}
+
+/* ---------- buying & auctions ---------- */
+function buy() {
+  if (G.phase !== 'buy') return;
+  const pi = G.turn, p = cur(), i = p.pos, s = SP[i];
+  if (p.cash < s.price) return;
+  p.cash -= s.price; G.props[i].o = pi;
+  note(`${P(pi)} buys ${s.name} for ${money(s.price)}.`);
+  if (s.g && ownsSet(pi, s.g)) log(`${P(pi)} now holds every ${GROUPS[s.g].name} street. Rents there double.`);
+  finish();
+}
+function decline() {
+  if (G.phase !== 'buy') return;
+  if (G.cfg.auctions) return startAuction();
+  note(`${P(G.turn)} passes on ${SP[cur().pos].name}.`);
+  finish();
+}
+function startAuction() {
+  const i = cur().pos, order = [];
+  for (let k = 0; k < G.players.length; k++) { const j = (G.turn + k) % G.players.length; if (!G.players[j].out) order.push(j); }
+  G.auction = { pos: i, high: 0, lead: -1, order, k: 0 };
+  G.phase = 'auction';
+  note(`${SP[i].name} goes up for auction.`);
+}
+function bid(amt) {
+  const a = G.auction; if (G.phase !== 'auction') return;
+  const b = a.order[a.k], p = G.players[b];
+  if (amt <= a.high || amt > p.cash) return;
+  a.high = amt; a.lead = b;
+  log(`${P(b)} bids ${money(amt)}.`);
+  a.k = (a.k + 1) % a.order.length;
+  checkAuction();
+}
+function passBid() {
+  const a = G.auction; if (G.phase !== 'auction') return;
+  const b = a.order[a.k];
+  log(`${P(b)} drops out of the bidding.`);
+  a.order.splice(a.k, 1);
+  if (a.k >= a.order.length) a.k = 0;
+  checkAuction();
+}
+function checkAuction() {
+  const a = G.auction;
+  if (a.order.length === 0) { note(`No bids. ${SP[a.pos].name} stays on the market.`); G.auction = null; return finish(); }
+  if (a.order.length === 1 && a.lead === a.order[0]) {
+    const w = a.lead, s = SP[a.pos];
+    G.players[w].cash -= a.high; G.props[a.pos].o = w;
+    note(`${P(w)} wins ${s.name} at auction for ${money(a.high)}.`);
+    if (s.g && ownsSet(w, s.g)) log(`${P(w)} now holds every ${GROUPS[s.g].name} street.`);
+    G.auction = null;
+    return finish();
+  }
+  if (a.order[a.k] === a.lead) a.k = (a.k + 1) % a.order.length;
+}
+
+/* ---------- the Brig ---------- */
+function payFine() {
+  const p = cur();
+  if (G.phase !== 'roll' || !p.brig || p.cash < FINE) return;
+  pay(G.turn, bankOrPot(), FINE);
+  p.brig = false; p.brigTurns = 0;
+  note(`${P(G.turn)} pays the ${money(FINE)} fine and leaves the Brig.`);
+}
+function usePardon() {
+  const p = cur();
+  if (G.phase !== 'roll' || !p.brig || !p.pardons.length) return;
+  const dk = p.pardons.pop();
+  G.decks[dk].push(PARDON[dk]);
+  p.brig = false; p.brigTurns = 0;
+  note(`${P(G.turn)} shows a pardon and leaves the Brig.`);
+}
+
+/* ---------- building & mortgages ---------- */
+function buildCheck(pi, i) {
+  const s = SP[i], pr = G.props[i];
+  if (s.t !== 'prop') return 'Only streets take houses.';
+  if (pr.o !== pi) return 'You don’t own this street.';
+  if (!ownsSet(pi, s.g)) return `Own every ${GROUPS[s.g].name} street to build here.`;
+  if (GROUP_IDX[s.g].some(j => G.props[j].m)) return 'Lift the mortgages in this set first.';
+  if (pr.h >= 5) return 'This street already has an inn.';
+  if (pr.h > Math.min(...GROUP_IDX[s.g].map(j => G.props[j].h))) return 'Build evenly: add to the other streets in the set first.';
+  if (G.players[pi].cash < s.house) return `You need ${money(s.house)} in cash.`;
+  return '';
+}
+function sellCheck(pi, i) {
+  const s = SP[i], pr = G.props[i];
+  if (s.t !== 'prop' || pr.o !== pi) return 'Nothing to sell.';
+  if (!pr.h) return 'No buildings here.';
+  if (pr.h < Math.max(...GROUP_IDX[s.g].map(j => G.props[j].h))) return 'Sell evenly: start with the streets that have more.';
+  return '';
+}
+function mortgageCheck(pi, i) {
+  const s = SP[i], pr = G.props[i];
+  if (pr.o !== pi) return 'You don’t own this.';
+  if (pr.m) return 'Already mortgaged.';
+  if (s.g && groupHasHouses(s.g)) return 'Sell the buildings in this set first.';
+  return '';
+}
+function unmortgageCheck(pi, i) {
+  const pr = G.props[i];
+  if (pr.o !== pi || !pr.m) return 'Not mortgaged.';
+  if (G.players[pi].cash < unmortgageCost(i)) return `You need ${money(unmortgageCost(i))} in cash.`;
+  return '';
+}
+function build(i, quiet) {
+  const pr = G.props[i], pi = pr.o;
+  if (buildCheck(pi, i)) return;
+  G.players[pi].cash -= SP[i].house; pr.h++;
+  if (!quiet) note(`${P(pi)} builds ${pr.h === 5 ? 'an inn' : 'a house'} on ${SP[i].name}.`);
+}
+function sellHouse(i) {
+  const pr = G.props[i], pi = pr.o;
+  if (sellCheck(pi, i)) return;
+  const was = pr.h;
+  pr.h--; G.players[pi].cash += SP[i].house / 2;
+  note(`${P(pi)} sells ${was === 5 ? 'the inn' : 'a house'} on ${SP[i].name} for ${money(SP[i].house / 2)}.`);
+}
+function mortgage(i) {
+  const pr = G.props[i], pi = pr.o;
+  if (mortgageCheck(pi, i)) return;
+  pr.m = true; G.players[pi].cash += SP[i].mort;
+  note(`${P(pi)} mortgages ${SP[i].name} for ${money(SP[i].mort)}.`);
+}
+function unmortgage(i) {
+  const pr = G.props[i], pi = pr.o;
+  if (unmortgageCheck(pi, i)) return;
+  G.players[pi].cash -= unmortgageCost(i); pr.m = false;
+  note(`${P(pi)} lifts the mortgage on ${SP[i].name} for ${money(unmortgageCost(i))}.`);
+}
+
+/* ---------- trading ---------- */
+const tradable = pi => owned(pi).filter(i => !(SP[i].g && groupHasHouses(SP[i].g)));
+function tradeCheck(o) {
+  const A = G.players[o.from], B = G.players[o.to];
+  if (!B || B.out || o.from === o.to) return 'Pick someone to trade with.';
+  const g = o.give, r = o.get;
+  if (!g.props.length && !r.props.length && !g.pardons && !r.pardons) return g.cash || r.cash ? 'Add a property or a pardon. Cash alone doesn’t trade.' : 'Pick what changes hands.';
+  for (const i of g.props) if (G.props[i].o !== o.from || (SP[i].g && groupHasHouses(SP[i].g))) return `${SP[i].name} can’t be traded right now.`;
+  for (const i of r.props) if (G.props[i].o !== o.to || (SP[i].g && groupHasHouses(SP[i].g))) return `${SP[i].name} can’t be traded right now.`;
+  if (g.cash < 0 || r.cash < 0) return 'Cash amounts can’t be negative.';
+  if (g.cash > A.cash) return `${A.name} only has ${money(A.cash)}.`;
+  if (r.cash > B.cash) return `${B.name} only has ${money(B.cash)}.`;
+  if (g.pardons > A.pardons.length || r.pardons > B.pardons.length) return 'That pardon isn’t available.';
+  const feeA = r.props.filter(i => G.props[i].m).reduce((s, i) => s + mortFee(i), 0);
+  const feeB = g.props.filter(i => G.props[i].m).reduce((s, i) => s + mortFee(i), 0);
+  if (A.cash - g.cash + r.cash < feeA) return `${A.name} can’t cover the ${money(feeA)} mortgage transfer fee.`;
+  if (B.cash - r.cash + g.cash < feeB) return `${B.name} can’t cover the ${money(feeB)} mortgage transfer fee.`;
+  return '';
+}
+function describeSide(sd) {
+  const parts = sd.props.map(i => SP[i].name);
+  if (sd.cash) parts.push(money(sd.cash));
+  if (sd.pardons) parts.push('a pardon');
+  return parts.length ? parts.join(', ') : 'nothing';
+}
+function execTrade(o) {
+  const A = G.players[o.from], B = G.players[o.to];
+  o.give.props.forEach(i => { G.props[i].o = o.to; });
+  o.get.props.forEach(i => { G.props[i].o = o.from; });
+  A.cash += o.get.cash - o.give.cash;
+  B.cash += o.give.cash - o.get.cash;
+  for (let k = 0; k < o.give.pardons; k++) B.pardons.push(A.pardons.pop());
+  for (let k = 0; k < o.get.pardons; k++) A.pardons.push(B.pardons.pop());
+  const feeA = o.get.props.filter(i => G.props[i].m).reduce((s, i) => s + mortFee(i), 0);
+  const feeB = o.give.props.filter(i => G.props[i].m).reduce((s, i) => s + mortFee(i), 0);
+  A.cash -= feeA; B.cash -= feeB;
+  note(`Trade done: ${P(o.from)} gives ${describeSide(o.give)}; ${P(o.to)} gives ${describeSide(o.get)}.`);
+  if (feeA || feeB) log(`Mortgage transfer fees paid: ${[feeA ? `${P(o.from)} ${money(feeA)}` : '', feeB ? `${P(o.to)} ${money(feeB)}` : ''].filter(Boolean).join(', ')}.`);
+}
+
+/* ---------- computer players ---------- */
+function setBonus(pi, ownerOf) {
+  let b = 0;
+  for (const g in GROUP_IDX) {
+    const grp = GROUP_IDX[g], tot = grp.reduce((s, i) => s + SP[i].price, 0);
+    const n = grp.filter(i => ownerOf(i) === pi).length;
+    if (n === grp.length) b += tot * 0.9; else if (n === grp.length - 1 && n > 0) b += tot * 0.15;
+  }
+  const tr = PROP_IDX.filter(i => SP[i].t === 'transit' && ownerOf(i) === pi).length;
+  b += [0, 0, 40, 100, 180][tr];
+  if (PROP_IDX.filter(i => SP[i].t === 'util' && ownerOf(i) === pi).length === 2) b += 50;
+  return b;
+}
+function tradeScoreFor(pi, o) {
+  const moved = new Map();
+  o.give.props.forEach(i => moved.set(i, o.to));
+  o.get.props.forEach(i => moved.set(i, o.from));
+  const before = i => G.props[i].o, after = i => moved.has(i) ? moved.get(i) : G.props[i].o;
+  const other = pi === o.from ? o.to : o.from;
+  const mine = pi === o.from ? o.give : o.get, theirs = pi === o.from ? o.get : o.give;
+  const val = i => SP[i].price * (G.props[i].m ? 0.45 : 1);
+  let v = 0;
+  theirs.props.forEach(i => { v += val(i); });
+  mine.props.forEach(i => { v -= val(i); });
+  v += theirs.cash - mine.cash + 40 * (theirs.pardons - mine.pardons);
+  v += setBonus(pi, after) - setBonus(pi, before);
+  v -= 0.7 * (setBonus(other, after) - setBonus(other, before));
+  if (G.players[pi].cash - mine.cash + theirs.cash < 60) v -= 80;
+  return v;
+}
+const botAccepts = (pi, o) => tradeScoreFor(pi, o) > 20;
+function opponentNeeds(pi, i) {
+  const s = SP[i];
+  if (!s.g) return false;
+  const rest = GROUP_IDX[s.g].filter(j => j !== i), o = G.props[rest[0]].o;
+  return o >= 0 && o !== pi && rest.every(j => G.props[j].o === o);
+}
+function botWantsBuy(pi, i) {
+  const s = SP[i], p = G.players[pi];
+  if (p.cash < s.price) return false;
+  if (s.g && GROUP_IDX[s.g].every(j => j === i || G.props[j].o === pi)) return true;
+  return p.cash - s.price >= (opponentNeeds(pi, i) ? 40 : 110);
+}
+function botMaxBid(pi, i) {
+  const s = SP[i], p = G.players[pi];
+  let f = 0.85;
+  if (s.g) {
+    const grp = GROUP_IDX[s.g], mine = grp.filter(j => G.props[j].o === pi).length;
+    if (mine === grp.length - 1) f = 1.6; else if (mine > 0) f = 1.15;
+    if (opponentNeeds(pi, i)) f = Math.max(f, 1.3);
+  } else if (s.t === 'transit') f = 0.95 + 0.2 * countType(pi, 'transit');
+  else f = 0.7 + 0.3 * countType(pi, 'util');
+  return Math.min(Math.floor(s.price * f), p.cash - 40);
+}
+function botRaise(pi, need) {
+  const p = G.players[pi];
+  for (let guard = 0; p.cash < need && guard < 200; guard++) {
+    const cands = owned(pi).filter(i => !mortgageCheck(pi, i));
+    const loose = cands.filter(i => !(SP[i].g && ownsSet(pi, SP[i].g))).sort((a, b) => SP[a].price - SP[b].price);
+    if (loose.length) { mortgage(loose[0]); continue; }
+    const sellable = owned(pi).filter(i => !sellCheck(pi, i)).sort((a, b) => SP[a].house - SP[b].house);
+    if (sellable.length) { sellHouse(sellable[0]); continue; }
+    if (cands.length) { mortgage(cands[0]); continue; }
+    break;
+  }
+  return p.cash >= need;
+}
+function botManage(pi) {
+  const p = G.players[pi];
+  let did = false, built = 0;
+  for (const i of owned(pi)) {
+    if (G.props[i].m && p.cash - unmortgageCost(i) >= 450) { unmortgage(i); did = true; }
+  }
+  for (let guard = 0; guard < 40; guard++) {
+    let best = -1, bs = -1;
+    for (const i of owned(pi)) {
+      if (buildCheck(pi, i)) continue;
+      const s = SP[i], h = G.props[i].h;
+      if (p.cash - s.house < 200) continue;
+      const gain = (s.rent[h + 1] - (h ? s.rent[h] : s.rent[0] * 2)) / s.house;
+      if (gain > bs) { bs = gain; best = i; }
+    }
+    if (best < 0) break;
+    build(best, true); built++; did = true;
+  }
+  if (built) note(`${P(pi)} builds ${built === 1 ? 'a house' : built + ' houses'}.`);
+  return did;
+}
+function botPropose(pi) {
+  if (G.botTradeTurn === G.turnNo) return false;
+  G.botTradeTurn = G.turnNo;
+  const me = G.players[pi];
+  for (const g of Object.keys(GROUPS)) {
+    const grp = GROUP_IDX[g];
+    if (grp.filter(i => G.props[i].o === pi).length !== grp.length - 1) continue;
+    const j = grp.find(i => G.props[i].o !== pi), x = G.props[j].o;
+    if (x < 0 || G.players[x].out) continue;
+    const key = pi + '>' + j, memo = G.offers[key] || { n: 0, t: -999 };
+    const xp = G.players[x];
+    if (!xp.bot && G.turnNo - memo.t < 4 * alive().length) continue;
+    let offer = null;
+    for (const k of tradable(pi)) {
+      if (!SP[k].g || SP[k].g === g) continue;
+      const kg = GROUP_IDX[SP[k].g];
+      if (kg.filter(q => G.props[q].o === x).length !== kg.length - 1) continue;
+      const o = { from: pi, to: x, give: { props: [k], cash: Math.max(0, Math.min(SP[j].price - SP[k].price, me.cash - 100)), pardons: 0 }, get: { props: [j], cash: 0, pardons: 0 } };
+      if (!tradeCheck(o) && tradeScoreFor(pi, o) > 0) { offer = o; break; }
+    }
+    if (!offer) {
+      const mult = 1.5 + 0.35 * Math.min(memo.n, 4);
+      const cash = Math.min(Math.round(SP[j].price * (G.props[j].m ? 0.6 : 1) * mult / 10) * 10, me.cash - 150);
+      if (cash < SP[j].price * 0.8) continue;
+      offer = { from: pi, to: x, give: { props: [], cash, pardons: 0 }, get: { props: [j], cash: 0, pardons: 0 } };
+      if (tradeCheck(offer) || tradeScoreFor(pi, offer) <= 0) continue;
+    }
+    G.offers[key] = { n: memo.n + 1, t: G.turnNo };
+    if (xp.bot) {
+      if (botAccepts(x, offer)) execTrade(offer);
+      else log(`${P(x)} turns down ${P(pi)}’s offer for ${SP[j].name}.`);
+      return true;
+    }
+    G.trade = offer;
+    note(`${P(pi)} makes ${P(x)} an offer for ${SP[j].name}.`);
+    return true;
+  }
+  return false;
+}
+function botStep() {
+  const ph = G.phase;
+  if (ph === 'auction') {
+    const a = G.auction, b = a.order[a.k], p = G.players[b];
+    const max = botMaxBid(b, a.pos);
+    let next = a.high + (a.high < SP[a.pos].price * 0.5 ? 50 : 10);
+    if (next > max) next = a.high + 10;
+    if (next <= max && next <= p.cash) bid(next); else passBid();
+    return;
+  }
+  const pi = G.turn, p = cur();
+  switch (ph) {
+    case 'roll':
+      if (botManage(pi)) return;
+      if (botPropose(pi)) return;
+      if (p.brig) {
+        if (p.pardons.length) return usePardon();
+        const open = PROP_IDX.filter(i => G.props[i].o < 0).length;
+        if (open >= 8 && p.cash >= FINE + 150) return payFine();
+      }
+      return roll();
+    case 'buy': return botWantsBuy(pi, p.pos) ? buy() : decline();
+    case 'card': return applyCard();
+    case 'debt':
+      botRaise(pi, G.debt.amt);
+      return p.cash >= G.debt.amt ? payDebt() : bankrupt();
+    case 'end':
+      if (botManage(pi)) return;
+      return endTurn();
+  }
+}
+</script>
+
+<script>
+"use strict";
+/* ================= interface ================= */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const PAWN_COLORS = ['#f2734f', '#47b8f2', '#93d453', '#b58cf7', '#f5c247', '#f064ab'];
+const CREW_NAMES = ['Skipper', 'Navigator', 'Bosun', 'Lookout', 'Purser', 'Deckhand'];
+const SPEEDS = { relaxed: { bot: 1150, step: 190 }, normal: { bot: 720, step: 150 }, quick: { bot: 320, step: 85 } };
+const KEY = 'lantern-harbor:game', PREF = 'lantern-harbor:crew';
+const app = $('#app'), board = $('#board'), center = $('#center'), stage = $('#stage');
+const tileEls = [];
+let pawnEls = [], shown = [], seenRoll = -1, animBusy = false, tumbling = false, botT = null;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const UI = { modal: null, setup: null, draft: null, confirmBk: false, overSeen: false, toastT: null };
+
+const ICONS = {
+  start: '<path d="M4 12h14M13 7l5 5-5 5"/><path d="M4 6v12"/>',
+  brig: '<rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M9 4v16M15 4v16M4 12h16"/>',
+  rest: '<path d="M10 21l1-12h2l1 12z"/><path d="M9 9h6M10.5 9V6.5h3V9M12 4v2.5"/><path d="M4 6.5l4 1.8M20 6.5l-4 1.8M4 11.5l4-1.2M20 11.5l-4-1.2"/><path d="M3 21h18"/>',
+  gobrig: '<path d="M3 12h9M9 8l4 4-4 4"/><rect x="15" y="5" width="6" height="14" rx="1"/><path d="M18 5v14"/>',
+  tide: '<path d="M2 9.5c2.5-3 5-3 7.5 0s5 3 7.5 0 3.5-2.5 5-1"/><path d="M2 15.5c2.5-3 5-3 7.5 0s5 3 7.5 0 3.5-2.5 5-1"/>',
+  guild: '<circle cx="12" cy="12" r="9"/><path d="M12 6.5l1.7 3.5 3.8.5-2.8 2.6.7 3.8L12 15.1l-3.4 1.8.7-3.8-2.8-2.6 3.8-.5z"/>',
+  tax: '<circle cx="12" cy="12" r="8.5"/><path d="M14.8 9.4c-.4-1-1.5-1.7-2.8-1.7-1.6 0-2.8.8-2.8 2 0 2.8 5.8 1.5 5.8 4.4 0 1.2-1.3 2.1-3 2.1-1.4 0-2.6-.7-3-1.8M12 6v1.6M12 16.2V18"/>',
+  ferry: '<path d="M3 15h18l-2.5 5h-13z"/><path d="M12 15V3l6.5 10H12"/><path d="M12 6l-5 7h5"/>',
+  tram: '<rect x="5" y="7" width="14" height="11" rx="2"/><path d="M5 12h14M9 18l-1.5 3M15 18l1.5 3M12 7V4M8 4h8"/>',
+  funicular: '<path d="M2 21L22 7"/><path d="M7 13.5l6-4.2 3.3 4.7-6 4.2z"/>',
+  airship: '<ellipse cx="12" cy="9" rx="9" ry="4.5"/><path d="M9.5 13.3l.8 3h3.4l.8-3M3 9H1.5"/>',
+  mill: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="1.6"/><path d="M12 4.5v15M4.5 12h15M6.7 6.7l10.6 10.6M17.3 6.7L6.7 17.3"/>',
+  lamp: '<path d="M8.5 9h7l-1.2 6.5H9.7z"/><path d="M10 9V7h4v2M12 4v3M12 15.5V21M8.5 21h7"/>',
+};
+const icon = n => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
+
+/* ---------- small helpers ---------- */
+const pcol = i => G.players[i].color;
+const init = i => (G.players[i].name.trim()[0] || '?').toUpperCase();
+const pname = i => `<b class="pn" style="--pc:${pcol(i)}">${esc(G.players[i].name)}</b>`;
+const fmt = s => esc(s).replace(/@(\d+)@/g, (_, i) => G.players[+i] ? pname(+i) : '');
+const dot = (i, cls = '') => `<span class="dot ${cls}" style="--pc:${pcol(i)}">${esc(init(i))}</span>`;
+const btn = (label, act, cls = '', disabled = false, arg) => `<button class="btn ${cls}" data-act="${act}"${arg !== undefined ? ` data-arg="${arg}"` : ''}${disabled ? ' disabled' : ''}>${label}</button>`;
+const tileColor = i => SP[i].g ? GROUPS[SP[i].g].color : SP[i].t === 'transit' ? '#d4e3de' : '#8fb0b2';
+const tileInk = i => SP[i].g ? GROUPS[SP[i].g].ink : '#0e2229';
+const speed = () => SPEEDS[G && G.cfg.speed] || SPEEDS.normal;
+const animPending = () => animBusy || !!(G && (G.rollId !== seenRoll || G.players.some((p, i) => shown[i] !== p.pos)));
+const humanTurn = ph => G && G.phase === ph && !G.trade && !cur().bot && !animPending();
+const canManage = () => G && ['roll', 'end', 'debt', 'buy'].includes(G.phase) && !G.trade && !cur().bot && !animPending();
+const canTrade = () => G && ['roll', 'end', 'debt'].includes(G.phase) && !G.trade && !cur().bot && !animPending() && alive().length > 1;
+
+function defaultSetup() {
+  return { players: [
+    { name: 'Skipper', bot: false, color: 0 }, { name: 'Navigator', bot: false, color: 1 },
+    { name: 'Bosun', bot: true, color: 2 }, { name: 'Lookout', bot: true, color: 3 },
+  ], cash: 1500, auctions: true, pot: false, speed: 'normal' };
+}
+function save() { try { if (G) localStorage.setItem(KEY, JSON.stringify(G)); } catch (e) {} }
+function loadSaved() {
+  try { const g = JSON.parse(localStorage.getItem(KEY) || 'null'); return g && g.v === 1 && Array.isArray(g.players) ? g : null; } catch (e) { return null; }
+}
+function savePrefs(s) { try { localStorage.setItem(PREF, JSON.stringify(s)); } catch (e) {} }
+function loadPrefs() {
+  try { const s = JSON.parse(localStorage.getItem(PREF) || 'null'); if (s && Array.isArray(s.players) && s.players.length >= 2) return s; } catch (e) {}
+  return null;
+}
+
+/* ---------- board construction ---------- */
+function cell(i) {
+  if (i === 0) return [11, 11, 'b'];
+  if (i < 10) return [11, 11 - i, 'b'];
+  if (i === 10) return [11, 1, 'l'];
+  if (i < 20) return [11 - (i - 10), 1, 'l'];
+  if (i === 20) return [1, 1, 't'];
+  if (i < 30) return [1, 1 + (i - 20), 't'];
+  if (i === 30) return [1, 11, 'r'];
+  return [1 + (i - 30), 11, 'r'];
+}
+function tileHTML(s) {
+  switch (s.t) {
+    case 'prop': return `<div class="band" style="--g:${GROUPS[s.g].color}"><span class="hs"></span></div><div class="body"><div class="nm">${esc(s.name)}</div><div class="pr"></div></div>`;
+    case 'start': return `<div class="corner c-start">${icon('start')}<b>Set Sail</b><small>Collect $200 as you pass</small></div>`;
+    case 'brig': return `<div class="corner c-brig"><div class="cell">${icon('brig')}<b>The Brig</b></div><small class="visit">Just visiting</small></div>`;
+    case 'rest': return `<div class="corner c-rest">${icon('rest')}<b>Calm Waters</b><small class="potv">Free rest</small></div>`;
+    case 'gobrig': return `<div class="corner c-gob">${icon('gobrig')}<b>Harbor&shy;master!</b><small>Go to the Brig</small></div>`;
+    case 'card': return `<div class="body special"><div class="nm">${s.name}</div>${icon(s.deck)}<div class="pr"><span class="price">Draw</span></div></div>`;
+    case 'tax': return `<div class="body special"><div class="nm">${esc(s.name)}</div>${icon('tax')}<div class="pr"><span class="price">${money(s.amount)}</span></div></div>`;
+    default: return `<div class="body special"><div class="nm">${esc(s.name)}</div>${icon(s.icon)}<div class="pr"></div></div>`;
+  }
+}
+function compassSVG() {
+  let pts = '', ticks = '';
+  for (let k = 0; k < 8; k++) {
+    const L = k % 2 ? 54 : 96, w = k % 2 ? 7 : 12;
+    pts += `<g transform="rotate(${k * 45})"><path d="M0 ${-L}L${w} ${-w}L0 0Z" fill="currentColor"/><path d="M0 ${-L}L${-w} ${-w}L0 0Z" fill="currentColor" opacity=".45"/></g>`;
+  }
+  for (let k = 0; k < 72; k++) ticks += `<line x1="0" y1="-100" x2="0" y2="${k % 9 === 0 ? -91 : -96}" transform="rotate(${k * 5})"/>`;
+  return `<svg viewBox="-110 -110 220 220" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.2"><circle r="100"/><circle r="88"/><circle r="30"/>${ticks}</g>${pts}</svg>`;
+}
+function buildBoard() {
+  SP.forEach((s, i) => {
+    const [r, c, side] = cell(i);
+    const el = document.createElement('div');
+    el.className = `tile s-${side} t-${s.t}${i % 10 === 0 ? ' corner-tile' : ''}`;
+    el.style.gridArea = `${r} / ${c}`;
+    el.dataset.i = i;
+    if (s.deck) el.dataset.deck = s.deck;
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.setAttribute('aria-label', s.t === 'card' ? `${s.name} card space` : s.name);
+    el.innerHTML = tileHTML(s);
+    board.insertBefore(el, center);
+    tileEls[i] = el;
+  });
+  $('#compass').innerHTML = compassSVG();
+  document.querySelectorAll('.die').forEach(d => { d.innerHTML = '<i></i>'.repeat(9); });
+}
+function buildPawns() {
+  pawnEls.forEach(e => e.remove());
+  pawnEls = G ? G.players.map((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'pawn';
+    el.style.setProperty('--pc', p.color);
+    el.textContent = init(i);
+    el.setAttribute('aria-hidden', 'true');
+    board.appendChild(el);
+    return el;
+  }) : [];
+}
+
+/* ---------- layout ---------- */
+function layout() {
+  const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+  const wide = vw >= 976;
+  let bs = wide ? Math.min(vh - 32, vw - 32 - 24 - 360, 1000) : Math.min(vw - 32, 760);
+  bs = Math.max(240, Math.floor(bs));
+  const u = (bs - 12) / 12.2;
+  app.classList.toggle('stack', !wide);
+  app.style.setProperty('--bs', bs + 'px');
+  board.style.setProperty('--u', u.toFixed(2) + 'px');
+  board.classList.toggle('compact', u < 46);
+  board.classList.toggle('tiny', u < 34);
+  placePawns();
+}
+function placePawns() {
+  tileEls.forEach(t => t.classList.remove('here'));
+  if (!G || !pawnEls.length) return;
+  const b = board.getBoundingClientRect();
+  const u = parseFloat(board.style.getPropertyValue('--u')) || 40;
+  const pw = Math.round(Math.max(16, Math.min(34, u * 0.46)));
+  const spots = {};
+  G.players.forEach((p, i) => {
+    if (p.out) { pawnEls[i].hidden = true; return; }
+    const pos = shown[i], key = pos + (p.brig && pos === 10 ? 'b' : '');
+    (spots[key] = spots[key] || []).push(i);
+  });
+  for (const key in spots) {
+    const ids = spots[key], pos = parseInt(key, 10), r = tileEls[pos].getBoundingClientRect();
+    let fx = 0.5, fy = 0.5;
+    if (pos === 10) { if (key.endsWith('b')) { fx = 0.66; fy = 0.33; } else { fx = 0.2; fy = 0.55; } }
+    const cx = r.left - b.left + r.width * fx, cy = r.top - b.top + r.height * fy;
+    ids.forEach((pi, k) => {
+      let dx = 0, dy = 0;
+      if (ids.length > 1) { const a = -Math.PI / 2 + k * 2 * Math.PI / ids.length, rad = pw * (ids.length > 3 ? 0.62 : 0.5); dx = Math.cos(a) * rad; dy = Math.sin(a) * rad; }
+      const el = pawnEls[pi];
+      el.hidden = false;
+      el.style.width = el.style.height = pw + 'px';
+      el.style.fontSize = Math.round(pw * 0.5) + 'px';
+      el.style.transform = `translate(${(cx + dx - pw / 2).toFixed(1)}px, ${(cy + dy - pw / 2).toFixed(1)}px)`;
+      el.classList.toggle('active', pi === G.turn && G.phase !== 'over');
+    });
+  }
+  if (G.phase !== 'over' && !G.players[G.turn].out) tileEls[shown[G.turn]].classList.add('here');
+}
+
+/* ---------- rendering ---------- */
+function render() {
+  renderTiles(); renderStage(); renderPlayers(); renderLog(); renderModal(); placePawns();
+  $('#btn-trade').disabled = !canTrade();
+  $('#btn-tally').disabled = !G || G.phase === 'over';
+}
+function renderTiles() {
+  for (const i of PROP_IDX) {
+    const el = tileEls[i], pr = G ? G.props[i] : { o: -1, h: 0, m: false };
+    el.classList.toggle('mort', pr.m);
+    el.querySelector('.pr').innerHTML = pr.o >= 0
+      ? `<span class="own" style="--pc:${pcol(pr.o)}">${esc(init(pr.o))}</span>${pr.m ? '<span class="mtag">M</span>' : ''}`
+      : `<span class="price">${money(SP[i].price)}</span>`;
+    const hs = el.querySelector('.hs');
+    if (hs) hs.innerHTML = pr.h === 5 ? '<i class="inn"></i>' : '<i></i>'.repeat(pr.h);
+  }
+  const pot = tileEls[20].querySelector('.potv');
+  pot.textContent = G && G.cfg.pot ? `Pot: ${money(G.pot)}` : 'Free rest';
+}
+function setDice(d) {
+  document.querySelectorAll('.die').forEach((el, k) => {
+    const on = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] }[d[k]] || [];
+    [...el.children].forEach((pip, j) => pip.classList.toggle('on', on.includes(j)));
+  });
+  $('#dice').setAttribute('aria-label', `Dice showing ${d[0]} and ${d[1]}`);
+}
+function miniDeed(i) {
+  const s = SP[i], g = s.g ? GROUPS[s.g] : null;
+  const label = g ? g.name : s.t === 'transit' ? 'Transit' : 'Works';
+  const row = s.t === 'prop' ? `Price ${money(s.price)} · rent ${money(s.rent[0])}` : s.t === 'transit' ? `Price ${money(s.price)} · fare $25–$200` : `Price ${money(s.price)} · 4× or 10× dice`;
+  return `<button class="mini" data-act="deed" data-arg="${i}" style="--g:${tileColor(i)};--gi:${tileInk(i)}"><span class="mini-band">${label}</span><span class="mini-name">${esc(s.name)}</span><span class="mini-row">${row}</span></button>`;
+}
+function cardHTML(c) {
+  return `<div class="lcard ${c.deck}"><div class="lc-h">${icon(c.deck)}<span>${DECK_NAME[c.deck]} card</span></div><p>${esc(DECKS[c.deck][c.idx].txt)}</p></div>`;
+}
+function renderStage() {
+  if (!G) {
+    $('#dice').hidden = true;
+    stage.innerHTML = `<p class="msg">Forty berths around the water, and every one is for sale. Gather a crew to begin.</p><div class="acts">${btn('Set up a game', 'newgame', 'primary')}</div>`;
+    return;
+  }
+  $('#dice').hidden = false;
+  if (!tumbling) setDice(G.dice);
+  const pi = G.turn, p = cur(), a = actor();
+  const busy = animPending();
+  let h = '';
+  if (G.phase === 'over') {
+    const w = G.over.ranks[0];
+    h += `<div class="who">${dot(w)}<span>${pname(w)} wins</span></div><p class="msg">${fmt(G.msg)}</p><div class="acts">${btn('See results', 'results')}${btn('New game', 'newgame', 'primary')}</div>`;
+    stage.innerHTML = h;
+    return;
+  }
+  h += `<div class="who">${dot(pi)}<span>${pname(pi)}’s turn</span><span class="mono">${money(p.cash)}</span></div>`;
+  h += `<p class="msg">${tumbling ? 'Rolling…' : fmt(G.msg)}</p>`;
+  const human = a >= 0 && !G.players[a].bot;
+  let panel = '', acts = '', hint = '';
+  switch (G.phase) {
+    case 'roll':
+      if (p.brig) hint = `In the Brig, attempt ${p.brigTurns + 1} of 3. Roll doubles to walk free, pay the ${money(FINE)} fine, or use a pardon.`;
+      else if (G.extra) hint = 'Doubles. Roll again.';
+      else if (human) hint = 'Trade or tend your property, then roll.';
+      if (human) acts = btn('Roll dice', 'roll', 'primary') + (p.brig ? btn(`Pay ${money(FINE)} fine`, 'fine', '', p.cash < FINE) + (p.pardons.length ? btn('Use pardon', 'pardon') : '') : '');
+      break;
+    case 'buy': {
+      const s = SP[p.pos];
+      panel = miniDeed(p.pos);
+      if (human) {
+        acts = btn(`Buy for ${money(s.price)}`, 'buy', 'primary', p.cash < s.price) + btn(G.cfg.auctions ? 'Send to auction' : 'Pass', 'decline');
+        if (p.cash < s.price) hint = 'Not enough cash. Mortgage or sell to raise it, or send it to auction.';
+      }
+      break;
+    }
+    case 'card':
+      if (G.card) panel = cardHTML(G.card);
+      if (human) acts = btn('Continue', 'card', 'primary');
+      break;
+    case 'debt': {
+      const d = G.debt;
+      panel = `<div class="debtline">Owes <b>${money(d.amt)}</b> ${fmt(d.why)} · cash ${money(p.cash)}</div>`;
+      if (human) {
+        hint = 'Tap your property to sell houses or mortgage, or propose a trade.';
+        acts = btn(`Pay ${money(d.amt)}`, 'paydebt', 'primary', p.cash < d.amt) +
+          (UI.confirmBk ? btn('Yes, declare bankruptcy', 'bankrupt', 'danger') + btn('Keep trying', 'bankrupt-no', 'ghost') : btn('Declare bankruptcy', 'bankrupt-ask', 'ghost'));
+      }
+      break;
+    }
+    case 'end':
+      if (human) { acts = btn('End turn', 'end', 'primary'); hint = 'Trade or tend your property, or hand over the helm.'; }
+      break;
+    case 'auction': {
+      const au = G.auction, b = au.order[au.k], bp = G.players[b];
+      panel = `<div class="auc">${miniDeed(au.pos)}<div class="bidline">${au.lead >= 0 ? `High bid <b>${money(au.high)}</b> by ${pname(au.lead)}` : 'No bids yet'}</div>
+        <div class="bidders">${G.players.map((pl, i) => pl.out ? '' : dot(i, au.order.includes(i) ? (i === b ? 'now' : '') : 'dim')).join('')}</div>
+        <div>${pname(b)} to bid</div></div>`;
+      if (human) acts = [10, 50, 100].map(inc => btn(money(au.high + inc), 'bid', inc === 10 ? 'primary' : '', au.high + inc > bp.cash, inc)).join('') + btn('Drop out', 'passbid', 'ghost');
+      break;
+    }
+  }
+  if (busy) acts = '';
+  else if (G.trade && !G.players[G.trade.to].bot) hint = `Waiting for ${esc(G.players[G.trade.to].name)} to answer a trade offer.`;
+  else if (!human && a >= 0) hint = `<span class="think">${esc(G.players[a].name)} is deciding</span>`;
+  stage.innerHTML = h + panel + (hint ? `<p class="hint">${hint}</p>` : '') + (acts ? `<div class="acts">${acts}</div>` : '');
+}
+function renderPlayers() {
+  const el = $('#players');
+  if (!G) { el.innerHTML = '<p class="muted">No game yet. Press New game to gather a crew.</p>'; return; }
+  el.innerHTML = G.players.map((p, i) => {
+    const cls = ['pl'];
+    if (i === G.turn && G.phase !== 'over') cls.push('now');
+    if (p.out) cls.push('out');
+    const sub = [p.out ? 'Bankrupt' : `Worth ${money(netWorth(i))}`];
+    if (p.brig) sub.push('<span class="warn">In the Brig</span>');
+    if (p.pardons.length) sub.push(`Pardon ×${p.pardons.length}`);
+    const ledger = LEDGER.map(grp => `<span class="lg">${grp.map(j => {
+      const pr = G.props[j], on = pr.o === i;
+      return `<button class="lc${on ? ' on' : ''}${on && pr.m ? ' m' : ''}" data-act="deed" data-arg="${j}" style="--g:${tileColor(j)};--gi:${tileInk(j)}" title="${esc(SP[j].name)}" aria-label="${esc(SP[j].name)}${on ? ', owned' : ''}">${on && pr.h ? `<span class="hn">${pr.h === 5 ? 'I' : pr.h}</span>` : ''}</button>`;
+    }).join('')}</span>`).join('');
+    return `<div class="${cls.join(' ')}" style="--pc:${p.color}"><div class="pl-top">${dot(i)}<span class="pl-name">${esc(p.name)}</span>${p.bot ? '<span class="tag">Computer</span>' : ''}<span class="pl-cash">${money(p.cash)}</span></div><div class="pl-sub">${sub.join(' <span aria-hidden="true">·</span> ')}</div><div class="ledger">${ledger}</div></div>`;
+  }).join('');
+}
+function renderLog() {
+  const el = $('#log');
+  if (!G) { el.innerHTML = ''; return; }
+  el.innerHTML = G.log.slice(-90).reverse().map(x => `<li><span class="t">R${x.r}</span>${fmt(x.m)}</li>`).join('');
+}
+
+/* ---------- modals ---------- */
+function openModal(m) { UI.modal = m; renderModal(true); scheduleBot(); }
+function closeModal() {
+  if (G && G.phase === 'over') UI.overSeen = true;
+  UI.modal = null; renderModal(true); scheduleBot();
+}
+function closable() {
+  const k = $('#modal-root').dataset.k || '';
+  if (k.startsWith('offer')) return false;
+  if (k.startsWith('setup') && !G) return false;
+  return true;
+}
+function renderModal(force) {
+  const root = $('#modal-root');
+  let m = UI.modal;
+  if (G && G.trade && !G.players[G.trade.to].bot) m = { kind: 'offer' };
+  else if (G && G.phase === 'over' && !UI.overSeen && (!m || m.kind !== 'setup')) m = { kind: 'over' };
+  if (!m) { root.innerHTML = ''; root.dataset.k = ''; return; }
+  const key = m.kind + (m.i !== undefined ? ':' + m.i : '');
+  if (!force && root.dataset.k === key && (m.kind === 'setup' || m.kind === 'trade')) return;
+  const keep = root.dataset.k === key ? (root.querySelector('.modal') || {}).scrollTop || 0 : 0;
+  root.dataset.k = key;
+  root.innerHTML = `<div class="scrim"><div class="modal" role="dialog" aria-modal="true">${MODALS[m.kind](m)}</div></div>`;
+  root.querySelector('.modal').scrollTop = keep;
+}
+const MODALS = {
+  setup() {
+    const s = UI.setup;
+    const inProgress = G && G.phase !== 'over';
+    const seg = (k, opts) => `<div class="seg">${opts.map(([v, l]) => `<button class="${s[k] === v ? 'on' : ''}" data-act="su-opt" data-arg="${k}:${v}">${l}</button>`).join('')}</div>`;
+    return `<h2>Gather your crew</h2>
+      <p class="lede">Two to six players share this screen and pass it around. Computer captains can fill empty seats.</p>
+      ${inProgress ? `<div class="resume"><span>A game is in progress (round ${G.round}). Starting a new one replaces it.</span>${btn('Back to the game', 'close', 'ghost')}</div>` : ''}
+      <div class="crew">${s.players.map((p, k) => `<div class="crow">
+        <button class="cdot" style="--pc:${PAWN_COLORS[p.color]}" data-act="su-color" data-arg="${k}" aria-label="Change color for player ${k + 1}">${esc((p.name.trim()[0] || '?').toUpperCase())}</button>
+        <input class="cname" id="su-name-${k}" value="${esc(p.name)}" maxlength="14" aria-label="Name of player ${k + 1}" autocomplete="off">
+        <div class="seg"><button class="${p.bot ? '' : 'on'}" data-act="su-bot" data-arg="${k}:0">Human</button><button class="${p.bot ? 'on' : ''}" data-act="su-bot" data-arg="${k}:1">Computer</button></div>
+        <button class="x" data-act="su-del" data-arg="${k}" aria-label="Remove player ${k + 1}"${s.players.length <= 2 ? ' disabled' : ''}>×</button></div>`).join('')}</div>
+      ${s.players.length < 6 ? `<div class="addp">${btn('Add a player', 'su-add', 'ghost')}</div>` : ''}
+      <div class="opts">
+        <div class="opt"><span>Starting cash</span>${seg('cash', [[1000, '$1,000'], [1500, '$1,500'], [2000, '$2,000']])}</div>
+        <div class="opt"><span>Auctions<small>When someone passes on a property, everyone bids for it.</small></span>${seg('auctions', [[true, 'On'], [false, 'Off']])}</div>
+        <div class="opt"><span>Calm Waters pot<small>Taxes, fines and card fees pile up in the middle. Land on Calm Waters to take the lot.</small></span>${seg('pot', [[true, 'On'], [false, 'Off']])}</div>
+        <div class="opt"><span>Computer speed</span>${seg('speed', [['relaxed', 'Relaxed'], ['normal', 'Normal'], ['quick', 'Quick']])}</div>
+      </div>
+      <div class="mf">${btn(inProgress ? 'Start a new game' : 'Start game', 'su-start', 'primary')}</div>`;
+  },
+  space(m) {
+    const i = m.i, s = SP[i];
+    if (!s.price) return infoHTML(s);
+    const pr = G ? G.props[i] : { o: -1, h: 0, m: false };
+    let rows = [], curRow = -1, foot = '';
+    if (s.t === 'prop') {
+      rows = [['Rent', s.rent[0]], ['Rent with the full set', s.rent[0] * 2], ...[1, 2, 3, 4].map(k => [`With ${k} house${k > 1 ? 's' : ''}`, s.rent[k]]), ['With an inn', s.rent[5]]];
+      if (pr.o >= 0) curRow = pr.h ? pr.h + 1 : ownsSet(pr.o, s.g) ? 1 : 0;
+      foot = `Houses cost ${money(s.house)} each. An inn replaces 4 houses for one more ${money(s.house)}.<br>Mortgage value ${money(s.mort)}.`;
+    } else if (s.t === 'transit') {
+      rows = TRANSIT_RENT.map((r, k) => [`Fare if ${k + 1} transit line${k ? 's are' : ' is'} owned`, r]);
+      if (pr.o >= 0) curRow = countType(pr.o, 'transit') - 1;
+      foot = `Mortgage value ${money(s.mort)}.`;
+    } else {
+      rows = [['Fee with one works', '4× dice'], ['Fee with both works', '10× dice']];
+      if (pr.o >= 0) curRow = countType(pr.o, 'util') - 1;
+      foot = `Mortgage value ${money(s.mort)}.`;
+    }
+    const table = `<table>${rows.map(([l, v], k) => `<tr class="${k === curRow && !pr.m ? 'cur' : ''}"><td>${l}</td><td>${typeof v === 'number' ? money(v) : v}</td></tr>`).join('')}</table>`;
+    const label = s.g ? `${GROUPS[s.g].name} · ${GROUP_IDX[s.g].length} streets` : s.t === 'transit' ? 'Transit line' : 'Works';
+    let own = '';
+    if (G) {
+      own = pr.o >= 0
+        ? `<div class="deed-own">${dot(pr.o)}<span>Owned by ${pname(pr.o)}${pr.m ? ' · mortgaged' : ''}${pr.h ? ` · ${pr.h === 5 ? 'an inn' : pr.h + (pr.h > 1 ? ' houses' : ' house')}` : ''}</span></div>`
+        : `<div class="deed-own"><span>For sale at ${money(s.price)}.</span></div>`;
+    }
+    let acts = '';
+    if (G && pr.o === G.turn && canManage()) {
+      const pi = G.turn, inDebt = G.phase === 'debt', list = [];
+      const act = (label, a, why) => `<div class="dact">${btn(label, a, '', !!why, i)}${why ? `<small>${esc(why)}</small>` : ''}</div>`;
+      if (s.t === 'prop') {
+        list.push(act(pr.h === 4 ? `Build an inn · ${money(s.house)}` : `Build a house · ${money(s.house)}`, 'build', inDebt ? 'Settle your debt first.' : buildCheck(pi, i)));
+        if (pr.h) list.push(act(`Sell ${pr.h === 5 ? 'the inn' : 'a house'} · +${money(s.house / 2)}`, 'sell', sellCheck(pi, i)));
+      }
+      list.push(pr.m
+        ? act(`Lift mortgage · ${money(unmortgageCost(i))}`, 'unmort', inDebt ? 'Settle your debt first.' : unmortgageCheck(pi, i))
+        : act(`Mortgage · +${money(s.mort)}`, 'mort', mortgageCheck(pi, i)));
+      acts = `<div class="dacts">${list.join('')}</div>`;
+    }
+    return `<div class="deed" style="--g:${tileColor(i)};--gi:${tileInk(i)}"><div class="deed-h"><small>${label}</small><div>${esc(s.name)}</div></div>${table}<div class="deed-foot">${foot}</div></div>${own}${acts}<div class="mf">${btn('Close', 'close', 'ghost')}</div>`;
+  },
+  trade() {
+    const d = UI.draft, me = G.turn;
+    const partners = alive().filter(i => i !== me);
+    const side = (k, pi) => {
+      const sd = d[k], pl = G.players[pi], list = tradable(pi);
+      return `<div class="tside"><h4>${pname(pi)} gives</h4>
+        <div class="pchips">${list.length ? list.map(i => `<button class="pchip ${sd.props.includes(i) ? 'on' : ''}" data-act="tt" data-arg="${k}:${i}" style="--g:${tileColor(i)}" aria-pressed="${sd.props.includes(i)}">${esc(SP[i].name)}${G.props[i].m ? ' <em>mortgaged</em>' : ''}</button>`).join('') : '<p class="muted">No property to trade.</p>'}</div>
+        <label class="tfield">Cash <input type="number" inputmode="numeric" id="tc-${k}" min="0" step="10" max="${pl.cash}" value="${sd.cash || ''}" placeholder="0"><small>of ${money(pl.cash)}</small></label>
+        ${pl.pardons.length ? `<label class="tfield" style="margin-top:8px"><input type="checkbox" id="tp-${k}"${sd.pardons ? ' checked' : ''}> A Brig pardon</label>` : ''}</div>`;
+    };
+    return `<h2>Propose a trade</h2><p class="lede">Streets in a set with buildings can’t change hands. Whoever receives a mortgaged property pays a 10% transfer fee.</p>
+      <div class="partners">${partners.map(i => `<button class="btn ${i === d.to ? 'on' : ''}" data-act="tp" data-arg="${i}">${dot(i)} ${esc(G.players[i].name)}</button>`).join('')}</div>
+      <div class="tgrid">${side('give', me)}${side('get', d.to)}</div>
+      <p class="tmsg" id="tmsg"></p>
+      <div class="mf">${btn('Cancel', 'close', 'ghost')}${btn(G.players[d.to].bot ? 'Send offer' : `Send to ${esc(G.players[d.to].name)}`, 'trade-send', 'primary')}</div>`;
+  },
+  offer() {
+    const o = G.trade;
+    const list = sd => `<ul class="tlist">${sd.props.map(i => `<li style="--g:${tileColor(i)}">${esc(SP[i].name)}${G.props[i].m ? ' (mortgaged)' : ''}</li>`).join('')}${sd.cash ? `<li>${money(sd.cash)}</li>` : ''}${sd.pardons ? '<li>A Brig pardon</li>' : ''}${!sd.props.length && !sd.cash && !sd.pardons ? '<li>Nothing</li>' : ''}</ul>`;
+    const fee = o.give.props.filter(i => G.props[i].m).reduce((s, i) => s + mortFee(i), 0);
+    return `<p class="eyebrow">Trade offer</p><h2>Pass the screen to ${esc(G.players[o.to].name)}</h2>
+      <p class="lede">${pname(o.from)} proposes a trade with ${pname(o.to)}.</p>
+      <div class="tgrid"><div class="tside"><h4>${pname(o.from)} gives</h4>${list(o.give)}</div><div class="tside"><h4>${pname(o.to)} gives</h4>${list(o.get)}</div></div>
+      ${fee ? `<p class="tmsg">${esc(G.players[o.to].name)} would pay ${money(fee)} in mortgage transfer fees.</p>` : ''}
+      <div class="mf">${btn('Decline', 'trade-no', 'ghost')}${btn('Accept', 'trade-yes', 'primary')}</div>`;
+  },
+  over() {
+    const o = G.over;
+    const rows = o.ranks.map((pi, k) => `<tr><td>${k + 1}</td><td>${dot(pi)} ${esc(G.players[pi].name)}</td><td>${G.players[pi].out ? 'Bankrupt' : money(netWorth(pi))}</td></tr>`).join('');
+    return `<p class="eyebrow">${o.reason === 'last' ? 'Last captain afloat' : 'Final tally by net worth'}</p><h2>${esc(G.players[o.ranks[0]].name)} wins</h2>
+      <table class="rank">${rows}</table>
+      <div class="mf">${btn('View the board', 'close', 'ghost')}${btn('New game', 'newgame', 'primary')}</div>`;
+  },
+  confirm(m) {
+    return `<h2>${m.title}</h2><p class="lede">${m.text}</p><div class="mf">${btn('Keep playing', 'close', 'ghost')}${btn(m.yes, m.act, 'primary')}</div>`;
+  },
+  rules() {
+    return `<div class="rules"><h2>How to play</h2>
+      <p>Take turns rolling two dice and sailing clockwise around the harbor. Buy the places you land on, charge rent to everyone who stops there, and be the last captain with money left.</p>
+      <h3>Your turn</h3><ul>
+        <li>Before or after rolling you can trade, build, sell or mortgage.</li>
+        <li>Roll doubles and you go again. Three doubles in a row sends you to the Brig.</li>
+        <li>Pass or land on Set Sail to collect $200.</li></ul>
+      <h3>Property</h3><ul>
+        <li>Land on an unowned property to buy it at the listed price. If you pass, it goes to auction and anyone can bid (when auctions are on).</li>
+        <li>Streets come in color sets of two or three. Owning a full set doubles the base rent.</li>
+        <li>Transit lines charge $25, $50, $100 or $200 depending on how many of the four the owner holds.</li>
+        <li>Works charge 4× the dice roll, or 10× if the owner has both.</li></ul>
+      <h3>Building</h3><ul>
+        <li>With a full set and no mortgages in it, build houses evenly across the set. After four houses, a street can take an inn.</li>
+        <li>Buildings sell back for half their cost, evenly across the set.</li></ul>
+      <h3>Mortgages</h3><ul>
+        <li>Mortgage a property for half its price. It charges no rent until you lift the mortgage for that amount plus 10%.</li>
+        <li>Sell a set’s buildings before mortgaging any street in it.</li></ul>
+      <h3>The Brig</h3><ul>
+        <li>You land there from the Harbormaster corner, some cards, or three doubles in a row.</li>
+        <li>Get out by rolling doubles, paying $50, or playing a pardon. After three failed rolls you pay $50 and move.</li>
+        <li>Landing on the Brig by a normal roll is just a visit.</li></ul>
+      <h3>Cards</h3><ul><li>Tide cards mostly move you around. Guild cards mostly cost or pay money. A pardon can be kept or traded.</li></ul>
+      <h3>Debt and winning</h3><ul>
+        <li>If you owe more than you have, sell buildings, mortgage, or trade to raise it. If you still can’t pay, you’re bankrupt, and whoever you owe takes what you have.</li>
+        <li>The last player still afloat wins. To finish early, use Final tally to rank everyone by net worth.</li></ul>
+      <div class="mf">${btn('Close', 'close', 'primary')}</div></div>`;
+  },
+};
+function infoHTML(s) {
+  const pot = G && G.cfg.pot;
+  const text = {
+    start: `Collect ${money(SALARY)} every time you pass or land here.`,
+    brig: 'If the Harbormaster sent you, you’re locked up: roll doubles, pay $50, or play a pardon to leave. After three failed rolls you pay $50 and move. Landing here by a normal roll is just a visit.',
+    rest: pot ? `A free rest. Land here to collect the pot, currently ${money(G.pot)}.` : 'A free rest. Nothing happens here.',
+    gobrig: 'Go straight to the Brig. You don’t pass Set Sail and don’t collect $200.',
+    tax: `Pay ${money(s.amount || 0)}${pot ? ' into the Calm Waters pot' : ' to the harbor'}.`,
+    card: s.deck === 'tide' ? 'Draw a Tide card. Tide cards mostly move you around the harbor.' : 'Draw a Guild card. Guild cards mostly pay out or cost you money.',
+  }[s.t];
+  return `<div class="deed" style="--g:var(--chart-3);--gi:var(--ink)"><div class="deed-h"><small>${s.t === 'card' ? 'Card space' : s.t === 'tax' ? 'Fee' : 'Corner'}</small><div>${esc(s.t === 'card' ? s.name + ' card' : s.name)}</div></div><div class="deed-info">${text}</div></div><div class="mf">${btn('Close', 'close', 'ghost')}</div>`;
+}
+function openSpace(i) { openModal({ kind: 'space', i }); }
+function openTrade() {
+  const others = alive().filter(i => i !== G.turn);
+  UI.draft = { to: others[0], give: { props: [], cash: 0, pardons: 0 }, get: { props: [], cash: 0, pardons: 0 } };
+  openModal({ kind: 'trade' });
+}
+function draftOffer() {
+  const d = UI.draft;
+  return { from: G.turn, to: d.to, give: { props: [...d.give.props], cash: d.give.cash || 0, pardons: d.give.pardons || 0 }, get: { props: [...d.get.props], cash: d.get.cash || 0, pardons: d.get.pardons || 0 } };
+}
+function updateTradeMsg(showErr) {
+  const el = $('#tmsg'); if (!el) return;
+  const err = tradeCheck(draftOffer());
+  el.textContent = err || 'Ready to send.';
+  el.classList.toggle('err', !!err && showErr);
+}
+function sendTrade() {
+  const o = draftOffer(), err = tradeCheck(o);
+  if (err) { updateTradeMsg(true); return; }
+  UI.modal = null;
+  if (G.players[o.to].bot) {
+    if (botAccepts(o.to, o)) { execTrade(o); toast(`${P(o.to)} accepts the trade.`); }
+    else { log(`${P(o.to)} turns down ${P(o.from)}’s offer.`); toast(`${P(o.to)} turns it down.`); }
+  } else {
+    G.trade = o;
+    log(`${P(o.from)} offers ${P(o.to)} a trade.`);
+  }
+  commit();
+}
+function toast(m) {
+  const t = $('#toast');
+  t.innerHTML = fmt(m); t.hidden = false;
+  clearTimeout(UI.toastT);
+  UI.toastT = setTimeout(() => { t.hidden = true; }, 3200);
+}
+
+/* ---------- game loop ---------- */
+function commit() { save(); render(); runAnims(); }
+async function tumble() {
+  if (reduceMotion) { setDice(G.dice); return; }
+  tumbling = true; renderStage();
+  document.querySelectorAll('.die').forEach(d => { d.classList.remove('tumble'); void d.offsetWidth; d.classList.add('tumble'); });
+  for (let k = 0; k < 5; k++) { setDice([r6(), r6()]); await sleep(75); }
+  tumbling = false; setDice(G.dice); renderStage();
+  await sleep(140);
+}
+async function walk(i, dir, target) {
+  const ms = speed().step;
+  for (let guard = 0; shown[i] !== target && guard < 40; guard++) {
+    shown[i] = (shown[i] + dir + 40) % 40;
+    placePawns();
+    await sleep(ms);
+  }
+  shown[i] = target;
+}
+async function runAnims() {
+  if (animBusy || !G) return;
+  animBusy = true;
+  try {
+    for (let pass = 0; pass < 4; pass++) {
+      let did = false;
+      if (G.rollId !== seenRoll) { seenRoll = G.rollId; did = true; await tumble(); }
+      for (let i = 0; i < G.players.length; i++) {
+        const p = G.players[i];
+        if (shown[i] === p.pos) continue;
+        did = true;
+        const fx = G.moveFx;
+        if (fx && fx.p === i && fx.dir && !reduceMotion) await walk(i, fx.dir, p.pos);
+        else shown[i] = p.pos;
+      }
+      placePawns();
+      if (!did) break;
+    }
+  } finally { animBusy = false; }
+  if (G.phase === 'land') { resolveLanding(); commit(); return; }
+  render();
+  scheduleBot();
+}
+function scheduleBot() {
+  clearTimeout(botT); botT = null;
+  if (!G || G.phase === 'over' || G.phase === 'land' || G.trade || animPending()) return;
+  if (UI.modal && (UI.modal.kind === 'setup' || UI.modal.kind === 'confirm')) return;
+  const a = actor();
+  if (a < 0 || !G.players[a].bot) return;
+  botT = setTimeout(() => {
+    botT = null;
+    if (!G || G.trade || animPending()) return;
+    const a2 = actor();
+    if (a2 < 0 || !G.players[a2].bot) return;
+    try { botStep(); } catch (err) { console.error(err); }
+    commit();
+  }, speed().bot * (G.phase === 'auction' ? 0.55 : 1));
+}
+function startGame() {
+  const s = UI.setup;
+  const players = s.players.map((p, k) => ({ name: (p.name || '').trim() || `Player ${k + 1}`, bot: p.bot, color: PAWN_COLORS[p.color] }));
+  if (players.length < 2) { toast('Add at least two players.'); return; }
+  savePrefs(s);
+  newGame({ cash: s.cash, auctions: s.auctions, pot: s.pot, speed: s.speed, players });
+  shown = G.players.map(p => p.pos); seenRoll = G.rollId;
+  buildPawns();
+  UI.modal = null; UI.overSeen = false; UI.confirmBk = false;
+  renderModal(true);
+  commit();
+}
+
+/* ---------- input ---------- */
+const H = {
+  roll() { if (humanTurn('roll')) { roll(); commit(); } },
+  fine() { if (humanTurn('roll')) { payFine(); commit(); } },
+  pardon() { if (humanTurn('roll')) { usePardon(); commit(); } },
+  buy() { if (humanTurn('buy')) { buy(); commit(); } },
+  decline() { if (humanTurn('buy')) { decline(); commit(); } },
+  card() { if (humanTurn('card')) { applyCard(); commit(); } },
+  end() { if (humanTurn('end')) { endTurn(); commit(); } },
+  paydebt() { if (humanTurn('debt')) { payDebt(); commit(); } },
+  'bankrupt-ask'() { UI.confirmBk = true; renderStage(); },
+  'bankrupt-no'() { UI.confirmBk = false; renderStage(); },
+  bankrupt() { if (humanTurn('debt')) { UI.confirmBk = false; bankrupt(); commit(); } },
+  bid(arg) { if (G && G.phase === 'auction' && !G.players[actor()].bot && !animPending()) { bid(G.auction.high + Number(arg)); commit(); } },
+  passbid() { if (G && G.phase === 'auction' && !G.players[actor()].bot && !animPending()) { passBid(); commit(); } },
+  deed(arg) { openSpace(Number(arg)); },
+  build(arg) { if (canManage() && G.phase !== 'debt') { build(Number(arg)); commit(); } },
+  sell(arg) { if (canManage()) { sellHouse(Number(arg)); commit(); } },
+  mort(arg) { if (canManage()) { mortgage(Number(arg)); commit(); } },
+  unmort(arg) { if (canManage() && G.phase !== 'debt') { unmortgage(Number(arg)); commit(); } },
+  close() { closeModal(); },
+  rules() { openModal({ kind: 'rules' }); },
+  results() { openModal({ kind: 'over' }); },
+  newgame() { UI.setup = loadPrefs() || UI.setup || defaultSetup(); openModal({ kind: 'setup' }); },
+  tally() { if (G && G.phase !== 'over') openModal({ kind: 'confirm', title: 'End the game now?', text: 'Everyone still afloat is ranked by net worth: cash, property at its price (half if mortgaged), and buildings at cost.', yes: 'End and tally', act: 'tally-yes' }); },
+  'tally-yes'() { UI.modal = null; UI.overSeen = false; gameOver('tally'); commit(); },
+  trade() { if (canTrade()) openTrade(); },
+  tp(arg) { UI.draft.to = Number(arg); UI.draft.get = { props: [], cash: 0, pardons: 0 }; renderModal(true); updateTradeMsg(false); },
+  tt(arg) {
+    const [k, i] = arg.split(':'), L = UI.draft[k].props, n = Number(i), j = L.indexOf(n);
+    if (j < 0) L.push(n); else L.splice(j, 1);
+    renderModal(true); updateTradeMsg(false);
+  },
+  'trade-send'() { sendTrade(); },
+  'trade-yes'() {
+    if (!G || !G.trade) return;
+    const o = G.trade; G.trade = null;
+    const err = tradeCheck(o);
+    if (err) { log(`The trade fell through: ${err}`); toast(err); } else execTrade(o);
+    commit();
+  },
+  'trade-no'() {
+    if (!G || !G.trade) return;
+    log(`${P(G.trade.to)} declines ${P(G.trade.from)}’s offer.`);
+    G.trade = null; commit();
+  },
+  'su-color'(arg) {
+    const s = UI.setup, k = Number(arg), used = new Set(s.players.map(p => p.color));
+    for (let n = 1; n < 6; n++) { const c = (s.players[k].color + n) % 6; if (!used.has(c)) { s.players[k].color = c; break; } }
+    renderModal(true);
+  },
+  'su-bot'(arg) { const [k, v] = arg.split(':'); UI.setup.players[Number(k)].bot = v === '1'; renderModal(true); },
+  'su-del'(arg) { if (UI.setup.players.length > 2) { UI.setup.players.splice(Number(arg), 1); renderModal(true); } },
+  'su-add'() {
+    const s = UI.setup; if (s.players.length >= 6) return;
+    const usedC = new Set(s.players.map(p => p.color)), usedN = new Set(s.players.map(p => p.name));
+    const color = [0, 1, 2, 3, 4, 5].find(c => !usedC.has(c));
+    const name = CREW_NAMES.find(n => !usedN.has(n)) || `Player ${s.players.length + 1}`;
+    s.players.push({ name, bot: true, color });
+    renderModal(true);
+  },
+  'su-opt'(arg) {
+    const [k, v] = arg.split(':');
+    UI.setup[k] = v === 'true' ? true : v === 'false' ? false : isNaN(Number(v)) ? v : Number(v);
+    renderModal(true);
+  },
+  'su-start'() { startGame(); },
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (b) { if (!b.disabled && H[b.dataset.act]) H[b.dataset.act](b.dataset.arg, b); return; }
+  const t = e.target.closest('.tile');
+  if (t) { openSpace(Number(t.dataset.i)); return; }
+  if (e.target.classList.contains('scrim') && closable()) closeModal();
+});
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('tile')) { e.preventDefault(); openSpace(Number(e.target.dataset.i)); }
+  if (e.key === 'Escape' && $('#modal-root').dataset.k && closable()) closeModal();
+});
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t.id && t.id.startsWith('su-name-')) {
+    const k = Number(t.id.slice(8)); UI.setup.players[k].name = t.value;
+    const d = t.parentElement.querySelector('.cdot'); if (d) d.textContent = (t.value.trim()[0] || '?').toUpperCase();
+  } else if (t.id === 'tc-give' || t.id === 'tc-get') {
+    UI.draft[t.id.slice(3)].cash = Math.max(0, Math.floor(Number(t.value) || 0)); updateTradeMsg(false);
+  }
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.id === 'tp-give' || t.id === 'tp-get') { UI.draft[t.id.slice(3)].pardons = t.checked ? 1 : 0; updateTradeMsg(false); }
+});
+window.addEventListener('resize', layout);
+
+/* ---------- boot ---------- */
+function start(data) {
+  buildBoard();
+  UI.setup = loadPrefs() || defaultSetup();
+  const g = (data && data.game) || loadSaved();
+  if (g && g.v === 1) {
+    G = g;
+    if (G.phase === 'resolving') G.phase = 'end';
+    shown = G.players.map(p => p.pos); seenRoll = G.rollId;
+    buildPawns();
+    UI.overSeen = G.phase === 'over';
+  } else {
+    UI.modal = { kind: 'setup' };
+  }
+  layout();
+  render();
+  runAnims();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+  try { window.claude?.hot?.snapshot?.(() => ({ game: G })); } catch (e) {}
+}
+window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+</script>
+</body>
+</html>
