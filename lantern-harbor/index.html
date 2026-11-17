@@ -242,6 +242,39 @@ button{font:inherit;color:inherit}
 .rules li{margin:3px 0}
 .toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:60;transform:translateX(-50%);max-width:calc(100% - 32px);padding:10px 16px;border-radius:999px;background:var(--bone);color:var(--ink);font-weight:600;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .toast .pn{color:var(--ink)}
+/* ---------- online play ---------- */
+.netbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 12px;border:1px solid var(--brass);border-radius:10px}
+.netbar .code{font:700 20px/1 var(--mono);letter-spacing:.14em;color:var(--brass)}
+.netbar .grow{flex:1;min-width:8em;color:var(--mist);font-size:13px}
+.netbar .btn{min-height:32px;padding:.45em .8em;font-size:13px}
+.chatlog{list-style:none;margin:0 0 8px;padding:0;max-height:220px;overflow:auto;display:grid;gap:5px;font-size:14px;color:var(--foam-2)}
+.chatlog li{overflow-wrap:anywhere}
+.chatlog .empty{color:var(--mist)}
+.chatform{display:flex;gap:8px}
+.chatform input,.tinput{min-width:0;padding:9px 10px;background:var(--sea);border:1px solid var(--rule);border-radius:8px;color:var(--foam);font:500 15px var(--body)}
+.chatform input{flex:1}
+.tag.you{color:var(--brass);border-color:var(--brass)}
+.tag.away{color:var(--danger);border-color:var(--danger)}
+.pl-acts{display:flex;flex-wrap:wrap;gap:6px}
+.pl-acts .btn{min-height:30px;padding:.45em .8em;font-size:13px}
+.seg.modes{margin:0 0 16px}
+.field{display:grid;gap:6px;font-size:14px;color:var(--foam-2)}
+.ojoin{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+@media (max-width:560px){.ojoin{grid-template-columns:1fr}}
+.ocard{display:grid;gap:10px;align-content:start;padding:12px;background:var(--sea);border:1px solid var(--rule);border-radius:10px}
+.ocard h3{margin:0;font:800 19px/1.1 var(--display);text-transform:uppercase;letter-spacing:.05em}
+.ocard p{margin:0;color:var(--mist);font-size:13.5px}
+.codein{font:600 18px var(--mono);letter-spacing:.2em;text-transform:uppercase}
+.invite{display:grid;gap:8px;justify-items:start;margin:12px 0 16px;padding:12px;background:var(--sea);border:1px solid var(--rule);border-radius:10px}
+.roomcode{font:700 38px/1 var(--mono);letter-spacing:.18em;color:var(--brass)}
+.invite .link{font:500 13px/1.3 var(--mono);color:var(--foam-2);overflow-wrap:anywhere;user-select:all}
+.lseats{display:grid;gap:8px}
+.lseat{display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--sea);border:1px solid var(--rule);border-radius:10px;min-width:0}
+.lseat .ls-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.lseat .dot{font-size:17px}
+.dotbtn{padding:0;border:0;background:none;border-radius:50%;cursor:pointer}
+.lchat{margin-top:16px;padding-top:14px;border-top:1px solid var(--rule)}
+.lchat .chatlog{max-height:150px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -259,16 +292,22 @@ button{font:inherit;color:inherit}
     </div>
   </div>
   <aside class="panel" id="panel">
+    <section class="netbar" id="netbar" hidden></section>
     <section>
       <p class="eyebrow">Crew</p>
       <div class="players" id="players"></div>
+    </section>
+    <section class="chatbox" id="chatbox" hidden>
+      <p class="eyebrow">Chat</p>
+      <ol class="chatlog" id="chatlog"></ol>
+      <form class="chatform" autocomplete="off"><input id="chatin" maxlength="300" placeholder="Message the table" aria-label="Chat message"><button class="btn" type="submit">Send</button></form>
     </section>
     <p class="hint-p">Tap any space for its details. On your turn, tap your own streets to build, sell or mortgage.</p>
     <div class="tools">
       <button class="btn" id="btn-trade" data-act="trade">Propose a trade</button>
       <button class="btn" data-act="rules">Rules</button>
       <button class="btn" id="btn-tally" data-act="tally">Final tally</button>
-      <button class="btn" data-act="newgame">New game</button>
+      <button class="btn" id="btn-new" data-act="newgame">New game</button>
     </div>
     <section class="logbox">
       <p class="eyebrow">Harbor log</p>
@@ -279,6 +318,8 @@ button{font:inherit;color:inherit}
 <div id="modal-root"></div>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script id="engine">
 "use strict";
 /* ================= Lantern Harbor rules engine (no DOM) ================= */
@@ -394,14 +435,14 @@ const r6 = () => 1 + Math.floor(Math.random() * 6);
 const money = n => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const P = i => `@${i}@`;
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-function log(m) { G.log.push({ r: G.round, m }); if (G.log.length > 250) G.log.splice(0, G.log.length - 250); }
+function log(m) { G.log.push({ r: G.round, m }); if (G.log.length > 150) G.log.splice(0, G.log.length - 150); }
 function note(m) { log(m); G.msg = m; }
 
 function newGame(cfg) {
   G = {
-    v: 1,
+    v: 1, gameId: Math.random().toString(36).slice(2, 10),
     cfg: { cash: cfg.cash, auctions: cfg.auctions, pot: cfg.pot, speed: cfg.speed },
-    players: cfg.players.map(p => ({ name: p.name, color: p.color, bot: !!p.bot, cash: cfg.cash, pos: 0, brig: false, brigTurns: 0, pardons: [], out: false })),
+    players: cfg.players.map(p => ({ name: p.name, color: p.color, bot: !!p.bot, cid: p.cid || null, cash: cfg.cash, pos: 0, brig: false, brigTurns: 0, pardons: [], out: false })),
     props: SP.map(s => s.price ? { o: -1, h: 0, m: false } : null),
     turn: 0, phase: 'roll', dice: [3, 4], rollId: 0, moveId: 0, doubles: 0, extra: false,
     decks: { tide: shuffle([...DECKS.tide.keys()]), guild: shuffle([...DECKS.guild.keys()]) },
@@ -509,7 +550,6 @@ function toBrig(pi) {
 function resolveLanding() {
   if (G.phase !== 'land') return;
   const pi = G.turn, p = cur(), s = SP[p.pos], ctx = G.ctx || {};
-  G.moveFx = null;
   G.phase = 'resolving';
   switch (s.t) {
     case 'start': case 'brig': return finish();
@@ -1020,9 +1060,9 @@ const tileColor = i => SP[i].g ? GROUPS[SP[i].g].color : SP[i].t === 'transit' ?
 const tileInk = i => SP[i].g ? GROUPS[SP[i].g].ink : '#0e2229';
 const speed = () => SPEEDS[G && G.cfg.speed] || SPEEDS.normal;
 const animPending = () => animBusy || !!(G && (G.rollId !== seenRoll || G.players.some((p, i) => shown[i] !== p.pos)));
-const humanTurn = ph => G && G.phase === ph && !G.trade && !cur().bot && !animPending();
-const canManage = () => G && ['roll', 'end', 'debt', 'buy'].includes(G.phase) && !G.trade && !cur().bot && !animPending();
-const canTrade = () => G && ['roll', 'end', 'debt'].includes(G.phase) && !G.trade && !cur().bot && !animPending() && alive().length > 1;
+const humanTurn = ph => G && G.phase === ph && !G.trade && !cur().bot && mine(G.turn) && !animPending();
+const canManage = () => G && ['roll', 'end', 'debt', 'buy'].includes(G.phase) && !G.trade && !cur().bot && mine(G.turn) && !animPending();
+const canTrade = () => G && ['roll', 'end', 'debt'].includes(G.phase) && !G.trade && !cur().bot && mine(G.turn) && !animPending() && alive().length > 1;
 
 function defaultSetup() {
   return { players: [
@@ -1150,9 +1190,10 @@ function placePawns() {
 
 /* ---------- rendering ---------- */
 function render() {
-  renderTiles(); renderStage(); renderPlayers(); renderLog(); renderModal(); placePawns();
+  renderTiles(); renderStage(); renderPlayers(); renderLog(); renderNet(); renderModal(); placePawns();
   $('#btn-trade').disabled = !canTrade();
-  $('#btn-tally').disabled = !G || G.phase === 'over';
+  $('#btn-tally').disabled = !G || G.phase === 'over' || (NET.on && !isHost());
+  $('#btn-new').textContent = NET.on ? (isHost() ? 'Back to lobby' : 'Leave room') : 'New game';
 }
 function renderTiles() {
   for (const i of PROP_IDX) {
@@ -1202,7 +1243,7 @@ function renderStage() {
   }
   h += `<div class="who">${dot(pi)}<span>${pname(pi)}’s turn</span><span class="mono">${money(p.cash)}</span></div>`;
   h += `<p class="msg">${tumbling ? 'Rolling…' : fmt(G.msg)}</p>`;
-  const human = a >= 0 && !G.players[a].bot;
+  const human = a >= 0 && !G.players[a].bot && mine(a);
   let panel = '', acts = '', hint = '';
   switch (G.phase) {
     case 'roll':
@@ -1247,8 +1288,12 @@ function renderStage() {
     }
   }
   if (busy) acts = '';
-  else if (G.trade && !G.players[G.trade.to].bot) hint = `Waiting for ${esc(G.players[G.trade.to].name)} to answer a trade offer.`;
-  else if (!human && a >= 0) hint = `<span class="think">${esc(G.players[a].name)} is deciding</span>`;
+  else if (NET.on && (!NET.lobby || !NET.lobby.started)) { acts = ''; hint = 'Paused while the room is in the lobby.'; }
+  else if (G.trade && !G.players[G.trade.to].bot) hint = `<span class="think">Waiting for ${esc(G.players[G.trade.to].name)} to answer a trade offer</span>`;
+  else if (!human && a >= 0) {
+    const ap = G.players[a];
+    hint = ap.bot ? `<span class="think">${esc(ap.name)} is deciding</span>` : `<span class="think">Waiting for ${esc(ap.name)}${here(ap.cid) ? '' : ', who is away'}</span>`;
+  }
   stage.innerHTML = h + panel + (hint ? `<p class="hint">${hint}</p>` : '') + (acts ? `<div class="acts">${acts}</div>` : '');
 }
 function renderPlayers() {
@@ -1265,7 +1310,16 @@ function renderPlayers() {
       const pr = G.props[j], on = pr.o === i;
       return `<button class="lc${on ? ' on' : ''}${on && pr.m ? ' m' : ''}" data-act="deed" data-arg="${j}" style="--g:${tileColor(j)};--gi:${tileInk(j)}" title="${esc(SP[j].name)}" aria-label="${esc(SP[j].name)}${on ? ', owned' : ''}">${on && pr.h ? `<span class="hn">${pr.h === 5 ? 'I' : pr.h}</span>` : ''}</button>`;
     }).join('')}</span>`).join('');
-    return `<div class="${cls.join(' ')}" style="--pc:${p.color}"><div class="pl-top">${dot(i)}<span class="pl-name">${esc(p.name)}</span>${p.bot ? '<span class="tag">Computer</span>' : ''}<span class="pl-cash">${money(p.cash)}</span></div><div class="pl-sub">${sub.join(' <span aria-hidden="true">·</span> ')}</div><div class="ledger">${ledger}</div></div>`;
+    let tags = p.bot ? '<span class="tag">Computer</span>' : '', acts = '';
+    if (NET.on && !p.out) {
+      if (p.cid === NET.cid) tags += '<span class="tag you">You</span>';
+      else if (p.cid && !here(p.cid)) tags += '<span class="tag away">Away</span>';
+      const seated = G.players.some(q => q.cid === NET.cid && !q.out);
+      if (!p.bot && p.cid && p.cid !== NET.cid && !here(p.cid)) acts += btn('Let the computer play', 'seat-bot', '', false, i);
+      if (!seated && p.cid && !here(p.cid)) acts += btn('Take this seat', 'seat-take', '', false, i);
+      if (p.bot && p.cid === NET.cid) acts += btn('Take back my seat', 'seat-back', 'primary', false, i);
+    }
+    return `<div class="${cls.join(' ')}" style="--pc:${p.color}"><div class="pl-top">${dot(i)}<span class="pl-name">${esc(p.name)}</span>${tags}<span class="pl-cash">${money(p.cash)}</span></div><div class="pl-sub">${sub.join(' <span aria-hidden="true">·</span> ')}</div><div class="ledger">${ledger}</div>${acts ? `<div class="pl-acts">${acts}</div>` : ''}</div>`;
   }).join('');
 }
 function renderLog() {
@@ -1282,29 +1336,41 @@ function closeModal() {
 }
 function closable() {
   const k = $('#modal-root').dataset.k || '';
-  if (k.startsWith('offer')) return false;
+  if (k.startsWith('offer') || k.startsWith('lobby')) return false;
   if (k.startsWith('setup') && !G) return false;
   return true;
 }
 function renderModal(force) {
   const root = $('#modal-root');
   let m = UI.modal;
-  if (G && G.trade && !G.players[G.trade.to].bot) m = { kind: 'offer' };
+  if (NET.on && (!G || !NET.lobby || !NET.lobby.started)) { if (!m || !['rules', 'confirm'].includes(m.kind)) m = { kind: 'lobby' }; }
+  else if (G && G.trade && !G.players[G.trade.to].bot && mine(G.trade.to)) m = { kind: 'offer' };
   else if (G && G.phase === 'over' && !UI.overSeen && (!m || m.kind !== 'setup')) m = { kind: 'over' };
   if (!m) { root.innerHTML = ''; root.dataset.k = ''; return; }
   const key = m.kind + (m.i !== undefined ? ':' + m.i : '');
   if (!force && root.dataset.k === key && (m.kind === 'setup' || m.kind === 'trade')) return;
-  const keep = root.dataset.k === key ? (root.querySelector('.modal') || {}).scrollTop || 0 : 0;
+  const same = root.dataset.k === key, kept = {};
+  const keep = same ? (root.querySelector('.modal') || {}).scrollTop || 0 : 0;
+  let focusId = '';
+  if (same) {
+    root.querySelectorAll('input[data-keep]').forEach(el => { kept[el.id] = el.value; });
+    if (document.activeElement && root.contains(document.activeElement)) focusId = document.activeElement.id;
+  }
   root.dataset.k = key;
   root.innerHTML = `<div class="scrim"><div class="modal" role="dialog" aria-modal="true">${MODALS[m.kind](m)}</div></div>`;
+  for (const id in kept) { const el = document.getElementById(id); if (el) el.value = kept[id]; }
+  if (focusId) { const el = document.getElementById(focusId); if (el) el.focus(); }
   root.querySelector('.modal').scrollTop = keep;
+  if (m.kind === 'lobby') renderChat();
 }
 const MODALS = {
   setup() {
     const s = UI.setup;
     const inProgress = G && G.phase !== 'over';
     const seg = (k, opts) => `<div class="seg">${opts.map(([v, l]) => `<button class="${s[k] === v ? 'on' : ''}" data-act="su-opt" data-arg="${k}:${v}">${l}</button>`).join('')}</div>`;
-    return `<h2>Gather your crew</h2>
+    const modes = `<div class="seg modes">${[['local', 'On this screen'], ['online', 'Online']].map(([v, l]) => `<button class="${(s.mode === 'online') === (v === 'online') ? 'on' : ''}" data-act="su-opt" data-arg="mode:${v}">${l}</button>`).join('')}</div>`;
+    if (s.mode === 'online') return `<h2>Play online</h2>${modes}${onlinePane()}${inProgress ? `<div class="mf">${btn('Back to the game', 'close', 'ghost')}</div>` : ''}`;
+    return `<h2>Gather your crew</h2>${modes}
       <p class="lede">Two to six players share this screen and pass it around. Computer captains can fill empty seats.</p>
       ${inProgress ? `<div class="resume"><span>A game is in progress (round ${G.round}). Starting a new one replaces it.</span>${btn('Back to the game', 'close', 'ghost')}</div>` : ''}
       <div class="crew">${s.players.map((p, k) => `<div class="crow">
@@ -1398,6 +1464,37 @@ const MODALS = {
   confirm(m) {
     return `<h2>${m.title}</h2><p class="lede">${m.text}</p><div class="mf">${btn('Keep playing', 'close', 'ghost')}${btn(m.yes, m.act, 'primary')}</div>`;
   },
+  lobby() {
+    const L = NET.lobby;
+    if (!L) return `<p class="eyebrow">Room ${NET.code}</p><h2>Connecting</h2><p class="lede">Reaching the room…</p><div class="mf">${btn('Leave', 'net-leave', 'ghost')}</div>`;
+    if (L.started && !G) return `<p class="eyebrow">Room ${NET.code}</p><h2>Setting sail</h2><p class="lede">The game is starting…</p><div class="mf">${btn('Leave', 'net-leave', 'ghost')}</div>`;
+    const host = isHost(), mySeat = L.seats.findIndex(s => s.cid === NET.cid), cfg = L.cfg;
+    const hostSeat = L.seats.find(s => s.cid === L.host);
+    const seats = L.seats.map((s, k) => {
+      const d = `<span class="dot" style="--pc:${PAWN_COLORS[s.color] || PAWN_COLORS[0]}">${esc((String(s.name).trim()[0] || '?').toUpperCase())}</span>`;
+      const tag = s.bot ? '<span class="tag">Computer</span>' : s.cid === NET.cid ? '<span class="tag you">You</span>' : here(s.cid) ? '' : '<span class="tag away">Away</span>';
+      const canColor = s.cid === NET.cid || (host && s.bot);
+      return `<div class="lseat">${canColor ? `<button class="dotbtn" data-act="lb-color" data-arg="${k}" aria-label="Change color">${d}</button>` : d}<span class="ls-name">${esc(s.name)}</span>${tag}${host && s.cid !== NET.cid ? `<button class="x" data-act="lb-del" data-arg="${k}" aria-label="Remove ${esc(s.name)}">×</button>` : ''}</div>`;
+    }).join('');
+    const seg = (k, opts) => `<div class="seg">${opts.map(([v, l]) => `<button class="${cfg[k] === v ? 'on' : ''}" data-act="lb-opt" data-arg="${k}:${v}">${l}</button>`).join('')}</div>`;
+    const opts = host ? `<div class="opts">
+        <div class="opt"><span>Starting cash</span>${seg('cash', [[1000, '$1,000'], [1500, '$1,500'], [2000, '$2,000']])}</div>
+        <div class="opt"><span>Auctions</span>${seg('auctions', [[true, 'On'], [false, 'Off']])}</div>
+        <div class="opt"><span>Calm Waters pot</span>${seg('pot', [[true, 'On'], [false, 'Off']])}</div>
+        <div class="opt"><span>Computer speed</span>${seg('speed', [['relaxed', 'Relaxed'], ['normal', 'Normal'], ['quick', 'Quick']])}</div></div>`
+      : `<p class="hint-p" style="margin-top:14px">Starting cash ${money(cfg.cash)} · auctions ${cfg.auctions ? 'on' : 'off'} · Calm Waters pot ${cfg.pot ? 'on' : 'off'} · computer speed ${esc(cfg.speed)}</p>`;
+    const more = (host && L.seats.length < 6 ? btn('Add a computer player', 'lb-add', 'ghost') : '') + (mySeat < 0 && L.seats.length < 6 ? btn('Take a seat', 'lb-sit', 'primary') : '');
+    const foot = host
+      ? btn('Leave', 'net-leave', 'ghost') + btn(G ? 'Start a new game' : 'Start game', 'lb-start', 'primary', L.seats.length < 2)
+      : `<span class="hint-p" style="margin-right:auto;align-self:center">Waiting for ${esc(hostSeat ? hostSeat.name : 'the host')} to start.</span>${btn('Leave', 'net-leave', 'ghost')}`;
+    return `<p class="eyebrow">Online room</p><h2>In the lobby</h2>
+      <div class="invite"><div class="roomcode">${NET.code}</div><div class="link">${esc(inviteLink())}</div>${btn('Copy invite link', 'net-copy')}</div>
+      <div class="lseats">${seats}</div>
+      ${more ? `<div class="addp">${more}</div>` : ''}
+      ${opts}
+      <div class="lchat"><p class="eyebrow">Chat</p><ol class="chatlog"></ol><form class="chatform" autocomplete="off"><input id="lchat-in" data-keep maxlength="300" placeholder="Message the room" aria-label="Chat message"><button class="btn" type="submit">Send</button></form></div>
+      <div class="mf">${foot}</div>`;
+  },
   rules() {
     return `<div class="rules"><h2>How to play</h2>
       <p>Take turns rolling two dice and sailing clockwise around the harbor. Buy the places you land on, charge rent to everyone who stops there, and be the last captain with money left.</p>
@@ -1424,6 +1521,10 @@ const MODALS = {
       <h3>Debt and winning</h3><ul>
         <li>If you owe more than you have, sell buildings, mortgage, or trade to raise it. If you still can’t pay, you’re bankrupt, and whoever you owe takes what you have.</li>
         <li>The last player still afloat wins. To finish early, use Final tally to rank everyone by net worth.</li></ul>
+      <h3>Playing online</h3><ul>
+        <li>Choose Online when setting up. One person creates a room and sends the five-letter code or invite link. Everyone else joins from their own computer or phone.</li>
+        <li>The room’s creator picks the options, adds computer players and starts the game. The chat sits beside the board.</li>
+        <li>If someone drops out, anyone can hand their seat to the computer. They can take it back when they return, or a newcomer can take the empty seat.</li></ul>
       <div class="mf">${btn('Close', 'close', 'primary')}</div></div>`;
   },
 };
@@ -1468,15 +1569,15 @@ function sendTrade() {
   }
   commit();
 }
-function toast(m) {
+function toast(m, raw) {
   const t = $('#toast');
-  t.innerHTML = fmt(m); t.hidden = false;
+  t.innerHTML = raw ? esc(m) : fmt(m); t.hidden = false;
   clearTimeout(UI.toastT);
   UI.toastT = setTimeout(() => { t.hidden = true; }, 3200);
 }
 
 /* ---------- game loop ---------- */
-function commit() { save(); render(); runAnims(); }
+function commit() { if (NET.on) netPush(); else save(); render(); runAnims(); }
 async function tumble() {
   if (reduceMotion) { setDice(G.dice); return; }
   tumbling = true; renderStage();
@@ -1513,19 +1614,24 @@ async function runAnims() {
       if (!did) break;
     }
   } finally { animBusy = false; }
-  if (G.phase === 'land') { resolveLanding(); commit(); return; }
+  if (!G) return;
+  if (G.phase === 'land') {
+    if (controls(G.turn)) { resolveLanding(); commit(); } else render();
+    return;
+  }
   render();
   scheduleBot();
 }
 function scheduleBot() {
   clearTimeout(botT); botT = null;
   if (!G || G.phase === 'over' || G.phase === 'land' || G.trade || animPending()) return;
+  if (NET.on && (!NET.lobby || !NET.lobby.started || !iRunBots())) return;
   if (UI.modal && (UI.modal.kind === 'setup' || UI.modal.kind === 'confirm')) return;
   const a = actor();
   if (a < 0 || !G.players[a].bot) return;
   botT = setTimeout(() => {
     botT = null;
-    if (!G || G.trade || animPending()) return;
+    if (!G || G.trade || animPending() || !iRunBots()) return;
     const a2 = actor();
     if (a2 < 0 || !G.players[a2].bot) return;
     try { botStep(); } catch (err) { console.error(err); }
@@ -1545,6 +1651,251 @@ function startGame() {
   commit();
 }
 
+/* ---------- online play (Firebase Realtime Database) ----------
+   Room data lives under lanternHarbor/rooms/<CODE>:
+     lobby     JSON string {host, started, cfg, seats:[{name,color,bot,cid}]}
+     game      {rev, json, by}: the whole game state; every change bumps rev in a transaction
+     chat/*    {cid, name, color, text, t}
+     presence/<cid>  {name, t}, removed on disconnect
+   Whoever controls the acting seat applies the move and pushes the new state. Computer
+   seats are run by the first connected human seat, so exactly one browser drives them. */
+const FB_CONFIG = {
+  apiKey: 'AIzaSyDFDcQ8YMAC-Br0buGGNQcrkiCL7hUEyxY',
+  authDomain: 'spaceattack-88bd3.firebaseapp.com',
+  databaseURL: 'https://spaceattack-88bd3-default-rtdb.firebaseio.com',
+  projectId: 'spaceattack-88bd3',
+};
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', CODE_RE = /^[A-Z2-9]{5}$/;
+const NAMEKEY = 'lantern-harbor:name', ROOMKEY = 'lantern-harbor:room', CIDKEY = 'lantern-harbor:cid';
+const NET = { on: false, db: null, code: '', cid: '', name: '', rev: -1, lobby: null, presence: {}, chat: [], refs: [], meRef: null, inflight: false, dirty: false, retry: null, joinedAt: 0, offset: 0, error: '' };
+const rid = (n, chars) => [...crypto.getRandomValues(new Uint8Array(n))].map(x => chars[x % chars.length]).join('');
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} },
+};
+NET.cid = (() => {
+  try { let c = sessionStorage.getItem(CIDKEY); if (!c) { c = rid(14, 'abcdefghijkmnpqrstuvwxyz23456789'); sessionStorage.setItem(CIDKEY, c); } return c; }
+  catch (e) { return rid(14, 'abcdefghijkmnpqrstuvwxyz23456789'); }
+})();
+const netAvailable = () => typeof firebase !== 'undefined' && !!firebase.database;
+const roomPath = sub => `lanternHarbor/rooms/${NET.code}${sub ? '/' + sub : ''}`;
+const inviteLink = () => location.origin + location.pathname + '#' + NET.code;
+const here = c => !!c && !!NET.presence[c];
+function mine(i) { return !NET.on || (!!G && !!G.players[i] && G.players[i].cid === NET.cid); }
+function isHost() {
+  const L = NET.lobby;
+  if (!NET.on || !L) return false;
+  if (L.host === NET.cid) return true;
+  if (here(L.host)) return false;
+  const seated = L.seats.filter(s => !s.bot && here(s.cid)).map(s => s.cid);
+  return (seated[0] || Object.keys(NET.presence).sort()[0]) === NET.cid;
+}
+function botRunner() {
+  if (G) { const p = G.players.find(q => !q.bot && !q.out && here(q.cid)); if (p) return p.cid; }
+  if (NET.lobby && here(NET.lobby.host)) return NET.lobby.host;
+  return Object.keys(NET.presence).sort()[0] || '';
+}
+const iRunBots = () => !NET.on || botRunner() === NET.cid;
+const controls = i => G.players[i].bot ? iRunBots() : mine(i);
+function netDb() {
+  if (NET.db) return NET.db;
+  const app = firebase.apps.find(a => a.name === 'lantern-harbor') || firebase.initializeApp(FB_CONFIG, 'lantern-harbor');
+  NET.db = app.database();
+  if (window.LH_EMULATOR) NET.db.useEmulator(window.LH_EMULATOR.host, window.LH_EMULATOR.port);
+  return NET.db;
+}
+function netMsg(t) { NET.error = t; const el = $('#net-msg'); if (el) el.textContent = t; }
+function netError(err) {
+  console.error(err);
+  const denied = /permission/i.test(String(err && (err.code || err.message)));
+  netMsg(denied ? 'The game server turned the request down. Its database rules may not allow Lantern Harbor rooms yet.'
+    : (err && err.message) || 'Lost touch with the game server. Check your connection and try again.');
+  toast(NET.error, true);
+}
+function netName() {
+  const n = (UI.netName || '').trim().slice(0, 14);
+  if (!n) { netMsg('Enter your name first.'); return ''; }
+  NET.name = n; store.set(NAMEKEY, n);
+  return n;
+}
+async function createRoom() {
+  const db = netDb(), s = UI.setup;
+  for (let k = 0; k < 8; k++) {
+    const code = rid(5, CODE_CHARS);
+    const lobby = { host: NET.cid, started: false, cfg: { cash: s.cash, auctions: s.auctions, pot: s.pot, speed: s.speed },
+      seats: [{ name: NET.name, color: s.players[0] ? s.players[0].color : 0, bot: false, cid: NET.cid }] };
+    const res = await db.ref(`lanternHarbor/rooms/${code}/lobby`).transaction(cur => cur === null ? JSON.stringify(lobby) : undefined);
+    if (res.committed) return enterRoom(code);
+  }
+  throw new Error('Couldn’t find a free room code. Try again.');
+}
+async function joinRoom(code) {
+  const ref = netDb().ref(`lanternHarbor/rooms/${code}/lobby`);
+  const snap = await ref.get();
+  if (!snap.exists()) throw new Error(`There’s no room ${code}. Check the code with whoever made it.`);
+  await ref.transaction(cur => {
+    if (cur === null) return null;
+    const L = JSON.parse(cur), me = L.seats.find(x => x.cid === NET.cid);
+    if (me) { if (L.started || me.name === NET.name) return cur; me.name = NET.name; return JSON.stringify(L); }
+    if (L.started || L.seats.length >= 6) return cur;
+    const used = new Set(L.seats.map(x => x.color));
+    L.seats.push({ name: NET.name, color: [0, 1, 2, 3, 4, 5].find(c => !used.has(c)), bot: false, cid: NET.cid });
+    return JSON.stringify(L);
+  });
+  enterRoom(code);
+}
+function enterRoom(code) {
+  netDetach();
+  const db = netDb();
+  Object.assign(NET, { on: true, code, rev: -1, lobby: null, presence: {}, chat: [], inflight: false, dirty: false, retry: null, joinedAt: Date.now(), error: '' });
+  store.set(ROOMKEY, code);
+  try { history.replaceState(null, '', '#' + code); } catch (e) {}
+  G = null; shown = []; buildPawns();
+  UI.modal = null; UI.overSeen = false; UI.confirmBk = false;
+  const listen = (ref, ev, fn) => { ref.on(ev, fn, netError); NET.refs.push([ref, ev, fn]); };
+  listen(db.ref(roomPath('lobby')), 'value', s => {
+    try { NET.lobby = s.val() ? JSON.parse(s.val()) : null; } catch (e) { NET.lobby = null; }
+    render(); scheduleBot();
+  });
+  listen(db.ref(roomPath('game')), 'value', s => applyRemote(s.val(), false));
+  listen(db.ref(roomPath('chat')).limitToLast(80), 'child_added', s => onChat(s.val()));
+  listen(db.ref(roomPath('presence')), 'value', s => { NET.presence = s.val() || {}; render(); scheduleBot(); });
+  NET.meRef = db.ref(roomPath('presence/' + NET.cid));
+  listen(db.ref('.info/connected'), 'value', s => {
+    if (s.val() !== true || !NET.meRef) return;
+    NET.meRef.onDisconnect().remove();
+    NET.meRef.set({ name: NET.name || 'Guest', t: firebase.database.ServerValue.TIMESTAMP });
+  });
+  listen(db.ref('.info/serverTimeOffset'), 'value', s => { NET.offset = s.val() || 0; });
+  renderChat(); render();
+}
+function netDetach() {
+  NET.refs.forEach(([r, ev, fn]) => r.off(ev, fn));
+  NET.refs = [];
+  if (NET.meRef) { try { NET.meRef.onDisconnect().cancel(); NET.meRef.remove(); } catch (e) {} NET.meRef = null; }
+  clearTimeout(botT);
+  NET.on = false;
+}
+function leaveRoom() {
+  netDetach();
+  Object.assign(NET, { code: '', lobby: null, chat: [], presence: {}, rev: -1 });
+  store.set(ROOMKEY, null);
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  G = loadSaved(); UI.modal = null;
+  if (G) { shown = G.players.map(p => p.pos); seenRoll = G.rollId; UI.overSeen = G.phase === 'over'; }
+  else UI.modal = { kind: 'setup' };
+  buildPawns(); render(); renderModal(true); runAnims();
+}
+function lobbyEdit(fn) {
+  if (!NET.on) return;
+  netDb().ref(roomPath('lobby')).transaction(cur => {
+    if (cur === null) return null;
+    let L; try { L = JSON.parse(cur); } catch (e) { return; }
+    return fn(L) === false ? undefined : JSON.stringify(L);
+  }).catch(netError);
+}
+function hostStart() {
+  const L = NET.lobby;
+  if (!L || !isHost() || L.seats.length < 2) return;
+  newGame({ cash: L.cfg.cash, auctions: L.cfg.auctions, pot: L.cfg.pot, speed: L.cfg.speed,
+    players: L.seats.map(s => ({ name: s.name, color: PAWN_COLORS[s.color] || PAWN_COLORS[0], bot: s.bot, cid: s.bot ? null : s.cid })) });
+  shown = G.players.map(p => p.pos); seenRoll = G.rollId;
+  buildPawns(); UI.overSeen = false; UI.confirmBk = false;
+  netPush();
+  lobbyEdit(L2 => { L2.started = true; });
+  render(); runAnims();
+}
+function netPush() {
+  if (!NET.on || !G) return;
+  if (NET.inflight) { NET.dirty = true; return; }
+  NET.inflight = true; NET.dirty = false;
+  const base = NET.rev, next = Math.max(base, 0) + 1, json = JSON.stringify(G), by = NET.cid, carries = NET.retry;
+  NET.rev = next;
+  netDb().ref(roomPath('game')).transaction(cur => {
+    if (cur === null) return base <= 0 ? { rev: next, json, by } : undefined;
+    return cur.rev === base ? { rev: next, json, by } : undefined;
+  }, (err, committed, snap) => {
+    NET.inflight = false;
+    if (err || !committed) {
+      NET.dirty = false;
+      if (err) netError(err);
+      applyRemote(snap && snap.val(), true);
+      const r = NET.retry; NET.retry = null;
+      if (r && r.left > 0 && G && r.fn() !== false) { NET.retry = { fn: r.fn, left: r.left - 1 }; commit(); }
+      else if (!err) toast('Someone else moved at the same moment. Synced to their move.', true);
+      return;
+    }
+    if (carries && NET.retry === carries) NET.retry = null;
+    if (NET.dirty) netPush();
+  }, false);
+}
+/* A change made outside your own turn (seat hand-offs). If it collides with someone's move,
+   it is applied again on top of that move instead of being dropped. */
+function metaAction(fn) {
+  if (!G || fn() === false) return;
+  if (NET.on) NET.retry = { fn, left: 6 };
+  commit();
+}
+function applyRemote(v, force) {
+  if (!NET.on) return;
+  if (!v) { if (NET.rev < 0) NET.rev = 0; render(); return; }
+  if (!force && (NET.inflight || (G && (v.rev < NET.rev || (v.rev === NET.rev && v.by === NET.cid))))) return;
+  let g;
+  try { g = JSON.parse(v.json); } catch (e) { return; }
+  if (!g || !Array.isArray(g.players)) return;
+  g.players.forEach(p => { if (!/^#[0-9a-f]{6}$/i.test(p.color)) p.color = '#93b4b5'; });
+  const fresh = !G || G.gameId !== g.gameId;
+  NET.rev = v.rev; G = g;
+  if (fresh) {
+    shown = G.players.map(p => p.pos); seenRoll = G.rollId;
+    buildPawns(); UI.overSeen = G.phase === 'over'; UI.confirmBk = false;
+    if (UI.modal && UI.modal.kind !== 'rules') UI.modal = null;
+  }
+  if (UI.modal && UI.modal.kind === 'trade' && !canTrade()) UI.modal = null;
+  render(); runAnims();
+}
+function onChat(m) {
+  if (!m || typeof m.text !== 'string') return;
+  NET.chat.push(m);
+  if (NET.chat.length > 80) NET.chat.shift();
+  renderChat();
+  if (m.cid !== NET.cid && (m.t || 0) > NET.joinedAt + NET.offset) toast(`${m.name || 'Guest'}: ${m.text}`, true);
+}
+function renderChat() {
+  document.querySelectorAll('.chatlog').forEach(ol => {
+    ol.innerHTML = NET.chat.length
+      ? NET.chat.map(m => `<li><b class="pn" style="--pc:${/^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#93b4b5'}">${esc(m.name || 'Guest')}</b> ${esc(m.text)}</li>`).join('')
+      : '<li class="empty">No messages yet. Say hello.</li>';
+    ol.scrollTop = ol.scrollHeight;
+  });
+}
+function sendChat(text) {
+  text = String(text || '').trim().slice(0, 300);
+  if (!text || !NET.on) return;
+  const k = G ? G.players.findIndex(p => p.cid === NET.cid) : -1;
+  const seat = NET.lobby && NET.lobby.seats.find(s => s.cid === NET.cid);
+  const name = k >= 0 ? G.players[k].name : seat ? seat.name : NET.name || 'Guest';
+  const color = k >= 0 ? G.players[k].color : seat ? PAWN_COLORS[seat.color] : '#93b4b5';
+  netDb().ref(roomPath('chat')).push().set({ cid: NET.cid, name, color, text, t: firebase.database.ServerValue.TIMESTAMP }).catch(netError);
+}
+function renderNet() {
+  const bar = $('#netbar'), box = $('#chatbox');
+  bar.hidden = box.hidden = !NET.on;
+  if (!NET.on) return;
+  const n = Object.keys(NET.presence).length;
+  bar.innerHTML = `<span class="code" aria-label="Room code">${NET.code}</span><span class="grow">Online room · ${n} connected</span>${btn('Copy invite link', 'net-copy', 'ghost')}${btn('Leave', 'net-leave-ask', 'ghost')}`;
+}
+function onlinePane() {
+  if (!netAvailable()) return `<p class="lede">Online play needs the copy of the game at <a href="https://sgnoohc.github.io/monet/lantern-harbor/" target="_blank" rel="noopener" style="color:var(--brass)">sgnoohc.github.io/monet/lantern-harbor</a>. Open it there to play with people on other computers.</p>`;
+  return `<p class="lede">Everyone plays from their own computer or phone and joins with a five-letter room code. Chat is built in.</p>
+    <label class="field">Your name<input class="tinput" id="net-name" maxlength="14" value="${esc(UI.netName || '')}" autocomplete="off"></label>
+    <div class="ojoin">
+      <div class="ocard"><h3>Start a room</h3><p>You choose the options and add computer players, then send the code to everyone else.</p>${btn('Create a room', 'net-create', 'primary')}</div>
+      <div class="ocard"><h3>Join a room</h3><p>Type the code someone sent you.</p><input class="tinput codein" id="net-code" maxlength="5" placeholder="K7QPM" value="${esc(UI.joinCode || '')}" autocomplete="off" aria-label="Room code">${btn('Join', 'net-join')}</div>
+    </div>
+    <p class="tmsg err" id="net-msg" role="alert">${esc(NET.error || '')}</p>`;
+}
+
 /* ---------- input ---------- */
 const H = {
   roll() { if (humanTurn('roll')) { roll(); commit(); } },
@@ -1558,8 +1909,8 @@ const H = {
   'bankrupt-ask'() { UI.confirmBk = true; renderStage(); },
   'bankrupt-no'() { UI.confirmBk = false; renderStage(); },
   bankrupt() { if (humanTurn('debt')) { UI.confirmBk = false; bankrupt(); commit(); } },
-  bid(arg) { if (G && G.phase === 'auction' && !G.players[actor()].bot && !animPending()) { bid(G.auction.high + Number(arg)); commit(); } },
-  passbid() { if (G && G.phase === 'auction' && !G.players[actor()].bot && !animPending()) { passBid(); commit(); } },
+  bid(arg) { if (G && G.phase === 'auction' && !G.players[actor()].bot && mine(actor()) && !animPending()) { bid(G.auction.high + Number(arg)); commit(); } },
+  passbid() { if (G && G.phase === 'auction' && !G.players[actor()].bot && mine(actor()) && !animPending()) { passBid(); commit(); } },
   deed(arg) { openSpace(Number(arg)); },
   build(arg) { if (canManage() && G.phase !== 'debt') { build(Number(arg)); commit(); } },
   sell(arg) { if (canManage()) { sellHouse(Number(arg)); commit(); } },
@@ -1568,8 +1919,18 @@ const H = {
   close() { closeModal(); },
   rules() { openModal({ kind: 'rules' }); },
   results() { openModal({ kind: 'over' }); },
-  newgame() { UI.setup = loadPrefs() || UI.setup || defaultSetup(); openModal({ kind: 'setup' }); },
-  tally() { if (G && G.phase !== 'over') openModal({ kind: 'confirm', title: 'End the game now?', text: 'Everyone still afloat is ranked by net worth: cash, property at its price (half if mortgaged), and buildings at cost.', yes: 'End and tally', act: 'tally-yes' }); },
+  newgame() {
+    if (NET.on) {
+      if (isHost()) openModal({ kind: 'confirm', title: 'Back to the lobby?', text: 'Everyone returns to the lobby, where you can change seats and options and start a new game.', yes: 'Go to the lobby', act: 'lb-reopen' });
+      else H['net-leave-ask']();
+      return;
+    }
+    const mode = UI.setup && UI.setup.mode;
+    UI.setup = loadPrefs() || UI.setup || defaultSetup();
+    if (mode) UI.setup.mode = mode;
+    openModal({ kind: 'setup' });
+  },
+  tally() { if (G && G.phase !== 'over' && (!NET.on || isHost())) openModal({ kind: 'confirm', title: 'End the game now?', text: 'Everyone still afloat is ranked by net worth: cash, property at its price (half if mortgaged), and buildings at cost.', yes: 'End and tally', act: 'tally-yes' }); },
   'tally-yes'() { UI.modal = null; UI.overSeen = false; gameOver('tally'); commit(); },
   trade() { if (canTrade()) openTrade(); },
   tp(arg) { UI.draft.to = Number(arg); UI.draft.get = { props: [], cash: 0, pardons: 0 }; renderModal(true); updateTradeMsg(false); },
@@ -1580,14 +1941,14 @@ const H = {
   },
   'trade-send'() { sendTrade(); },
   'trade-yes'() {
-    if (!G || !G.trade) return;
+    if (!G || !G.trade || !mine(G.trade.to)) return;
     const o = G.trade; G.trade = null;
     const err = tradeCheck(o);
     if (err) { log(`The trade fell through: ${err}`); toast(err); } else execTrade(o);
     commit();
   },
   'trade-no'() {
-    if (!G || !G.trade) return;
+    if (!G || !G.trade || !mine(G.trade.to)) return;
     log(`${P(G.trade.to)} declines ${P(G.trade.from)}’s offer.`);
     G.trade = null; commit();
   },
@@ -1612,6 +1973,76 @@ const H = {
     renderModal(true);
   },
   'su-start'() { startGame(); },
+  'net-create'() { if (!netName()) return; netMsg(''); createRoom().catch(netError); },
+  'net-join'() {
+    const c = (UI.joinCode || '').trim().toUpperCase();
+    if (!CODE_RE.test(c)) { netMsg('Room codes are five letters or numbers, like K7QPM.'); return; }
+    if (!netName()) return;
+    netMsg(''); joinRoom(c).catch(netError);
+  },
+  'net-copy'() {
+    const link = inviteLink(), fallback = () => toast(`Invite link: ${link}`, true);
+    try { navigator.clipboard.writeText(link).then(() => toast('Invite link copied. Send it to the other players.', true), fallback); } catch (e) { fallback(); }
+  },
+  'net-leave'() { UI.modal = null; leaveRoom(); },
+  'net-leave-ask'() { openModal({ kind: 'confirm', title: 'Leave this room?', text: 'Your seat stays in the game. While you’re away, another player can hand it to the computer, and you can come back with the room code.', yes: 'Leave room', act: 'net-leave' }); },
+  'lb-start'() { hostStart(); },
+  'lb-reopen'() { UI.modal = null; renderModal(true); lobbyEdit(L => { L.started = false; }); },
+  'lb-opt'(arg) {
+    if (!isHost()) return;
+    const [k, v] = arg.split(':'), val = v === 'true' ? true : v === 'false' ? false : isNaN(Number(v)) ? v : Number(v);
+    lobbyEdit(L => { L.cfg[k] = val; });
+  },
+  'lb-add'() {
+    if (!isHost()) return;
+    lobbyEdit(L => {
+      if (L.seats.length >= 6) return false;
+      const usedC = new Set(L.seats.map(s => s.color)), usedN = new Set(L.seats.map(s => s.name));
+      L.seats.push({ name: CREW_NAMES.find(n => !usedN.has(n)) || `Computer ${L.seats.length + 1}`, color: [0, 1, 2, 3, 4, 5].find(c => !usedC.has(c)), bot: true, cid: null });
+    });
+  },
+  'lb-del'(arg) { if (isHost()) lobbyEdit(L => { const s = L.seats[Number(arg)]; if (!s || s.cid === NET.cid) return false; L.seats.splice(Number(arg), 1); }); },
+  'lb-sit'() {
+    lobbyEdit(L => {
+      if (L.seats.length >= 6 || L.seats.some(s => s.cid === NET.cid)) return false;
+      const used = new Set(L.seats.map(s => s.color));
+      L.seats.push({ name: NET.name || 'Guest', color: [0, 1, 2, 3, 4, 5].find(c => !used.has(c)), bot: false, cid: NET.cid });
+    });
+  },
+  'lb-color'(arg) {
+    const host = isHost();
+    lobbyEdit(L => {
+      const s = L.seats[Number(arg)];
+      if (!s || !(s.cid === NET.cid || (host && s.bot))) return false;
+      const used = new Set(L.seats.map(x => x.color));
+      for (let n = 1; n < 6; n++) { const c = (s.color + n) % 6; if (!used.has(c)) { s.color = c; return; } }
+      return false;
+    });
+  },
+  'seat-bot'(arg) {
+    const i = Number(arg);
+    if (NET.on) metaAction(() => {
+      const p = G.players[i];
+      if (!p || p.bot || p.out || here(p.cid)) return false;
+      p.bot = true; log(`${P(i)} is away, so the computer takes the helm for now.`);
+    });
+  },
+  'seat-take'(arg) {
+    const i = Number(arg);
+    if (NET.on) metaAction(() => {
+      const p = G.players[i];
+      if (!p || p.out || !p.cid || here(p.cid) || G.players.some(q => q.cid === NET.cid && !q.out)) return false;
+      p.cid = NET.cid; p.bot = false; log(`A new captain takes over ${P(i)}’s seat.`);
+    });
+  },
+  'seat-back'(arg) {
+    const i = Number(arg);
+    metaAction(() => {
+      const p = G.players[i];
+      if (!p || p.cid !== NET.cid || !p.bot) return false;
+      p.bot = false; log(`${P(i)} is back at the helm.`);
+    });
+  },
 };
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
@@ -1623,12 +2054,30 @@ document.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('tile')) { e.preventDefault(); openSpace(Number(e.target.dataset.i)); }
   if (e.key === 'Escape' && $('#modal-root').dataset.k && closable()) closeModal();
+  if (e.key === 'Enter' && e.target.id === 'net-code') H['net-join']();
+});
+document.addEventListener('submit', e => {
+  const f = e.target;
+  if (!f.classList || !f.classList.contains('chatform')) return;
+  e.preventDefault();
+  const inp = f.querySelector('input');
+  sendChat(inp.value); inp.value = '';
+});
+window.addEventListener('hashchange', () => {
+  const c = decodeURIComponent(location.hash.slice(1)).toUpperCase();
+  if (!CODE_RE.test(c) || c === NET.code || !netAvailable()) return;
+  if (NET.name) joinRoom(c).catch(netError);
+  else { UI.setup.mode = 'online'; UI.joinCode = c; openModal({ kind: 'setup' }); }
 });
 document.addEventListener('input', e => {
   const t = e.target;
   if (t.id && t.id.startsWith('su-name-')) {
     const k = Number(t.id.slice(8)); UI.setup.players[k].name = t.value;
     const d = t.parentElement.querySelector('.cdot'); if (d) d.textContent = (t.value.trim()[0] || '?').toUpperCase();
+  } else if (t.id === 'net-name') {
+    UI.netName = t.value;
+  } else if (t.id === 'net-code') {
+    UI.joinCode = t.value.toUpperCase();
   } else if (t.id === 'tc-give' || t.id === 'tc-get') {
     UI.draft[t.id.slice(3)].cash = Math.max(0, Math.floor(Number(t.value) || 0)); updateTradeMsg(false);
   }
@@ -1657,6 +2106,15 @@ function start(data) {
   render();
   runAnims();
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(layout);
+  UI.netName = store.get(NAMEKEY) || '';
+  NET.name = UI.netName;
+  const hashCode = decodeURIComponent((location.hash || '').slice(1)).toUpperCase();
+  const code = CODE_RE.test(hashCode) ? hashCode : (store.get(ROOMKEY) || '');
+  if (code && netAvailable()) {
+    const ask = () => { UI.setup.mode = 'online'; UI.joinCode = code; openModal({ kind: 'setup' }); };
+    if (NET.name) joinRoom(code).catch(err => { store.set(ROOMKEY, null); netError(err); ask(); });
+    else ask();
+  }
   try { window.claude?.hot?.snapshot?.(() => ({ game: G })); } catch (e) {}
 }
 window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});

@@ -1,6 +1,6 @@
 # Lantern Harbor
 
-A property-trading board game for 2–6 players sharing one screen, set in a harbor town at night.
+A property-trading board game for 2–6 players, set in a harbor town at night. Play on one shared screen, or online with everyone on their own computer or phone.
 
 **Play:** https://sgnoohc.github.io/monet/lantern-harbor/
 
@@ -15,6 +15,21 @@ A property-trading board game for 2–6 players sharing one screen, set in a har
 - The game in progress is kept in the browser's local storage, so a refresh picks up where you left off.
 
 Prices, rents, building costs and card effects follow the standard US edition of the classic property game. The streets, card wording, colors and board design are this game's own.
+
+## Playing online
+
+Choose **Online** in the setup screen. One person creates a room and sends the five-letter code or the invite link (`…/lantern-harbor/#CODE`). Everyone else joins from their own device.
+
+- The room's creator adds computer players, sets the options and starts the game. If they leave, the next connected player takes over those controls.
+- A chat box sits beside the board, and in the lobby.
+- If someone drops out, anyone can hand their seat to the computer. They can take it back when they return, or a newcomer can take the empty seat.
+- Refreshing the page rejoins the same room and seat.
+
+Rooms live in the Realtime Database of the `spaceattack-88bd3` Firebase project, under `lanternHarbor/rooms/<CODE>`. The rules in `../spaceattack/database.rules.json` let anyone who knows a room code read and write that room, and nothing else. Changes to that file only take effect once they're published in the Firebase console (Realtime Database → Rules).
+
+Each change to a game is written as the whole game state with a revision number, inside a transaction, so two screens can never both apply a move. The screen that owns the acting seat applies the move. Computer seats are run by the first connected human player's screen.
+
+The Claude-hosted copy of this page can't reach Firebase, so it offers single-screen play only and points to the GitHub copy for online games.
 
 ## Code
 
