@@ -3140,14 +3140,14 @@ function showSyncProgress(running) {
   }
 }
 
-async function runSyncNow(btn) {
+async function runSyncNow(mode = 'sync') {
   syncUi.busy = true;
   syncUi.running = { step: 0, steps: 3, label: 'Starting…' };
   renderSettings();
   const started = Date.now();
   let st = null;
   try {
-    st = await sb.syncNow();
+    st = await sb.syncNow(mode);
   } catch (e) {
     toast(cleanError(e));
   }
@@ -3171,10 +3171,11 @@ function syncResultLine(st, run, part, name) {
   if (!r) return null;
   const list = r.changes?.length ? `: ${r.changes.join(', ')}` : '';
   const [icon, text] = {
-    received: ['↓', `taken from ${syncWho(st, r.from)} (saved there ${formatListTime(r.at)})${list}`],
-    sent: ['↑', `sent from this Mac to ${syncPlace(run.folder)}${list}`],
-    same: ['=', r.from ? `already the same as the copy from ${syncWho(st, r.from)} (${formatListTime(r.at)})` : 'already the same'],
+    received: ['↓', `copied to this Mac from ${syncWho(st, r.from)}'s copy (saved ${formatListTime(r.at)})${list}`],
+    sent: ['↑', `copied from this Mac to the folder${list}`],
+    same: ['=', r.from ? `no change: this Mac already matches ${syncWho(st, r.from) === 'this Mac' ? 'the folder' : `${syncWho(st, r.from)}'s copy`}` : 'no change'],
     off: ['–', 'not synced: no passphrase on this Mac (see below)'],
+    none: ['–', 'not in the folder'],
   }[r.action] || ['', ''];
   return h('div', { class: `sync-line ${r.action}` },
     h('span', { class: 'sync-icon' }, icon),
@@ -3196,12 +3197,41 @@ function syncRunBox(st) {
       h('div', { class: 'sync-head' }, `✕ Sync stopped at ${formatTime(run.at)}`),
       h('div', { class: 'sync-line' }, run.error));
   }
-  const sent = run.settings?.action === 'sent' || run.logins?.action === 'sent';
+  const did = a => run.settings?.action === a || run.logins?.action === a;
+  const sent = did('sent');
+  const got = did('received');
+  const from = [run.settings, run.logins].find(r => r?.action === 'received')?.from;
+  const head = sent && got ? `⇅ Synced both ways at ${formatTime(run.at)}`
+    : sent ? `↑ Sent this Mac's setup at ${formatTime(run.at)}`
+    : got ? `↓ Got ${syncWho(st, from)}'s setup at ${formatTime(run.at)}`
+    : `✓ Already in sync at ${formatTime(run.at)}: nothing to copy either way`;
   return h('div', { class: 'sync-run done' },
-    h('div', { class: 'sync-head' }, `✓ All synced at ${formatTime(run.at)}`),
+    h('div', { class: 'sync-head' }, head),
     syncResultLine(st, run, 'settings', 'Settings'),
     syncResultLine(st, run, 'logins', 'Logins'),
-    sent ? h('div', { class: 'sync-note' }, 'OneDrive uploads the files in the background. Your other Mac takes them within 20 seconds of getting them, or as soon as you switch to Switchboard there.') : null);
+    sent ? h('div', { class: 'sync-note' }, "OneDrive uploads the files in the background. Your other Mac takes them within 20 seconds of getting them, or as soon as you switch to Switchboard there. If tags or backgrounds don't show up there, update Switchboard on that Mac.") : null,
+    run.oldFormat ? syncOldWarning(run.oldFormat) : null);
+}
+
+function syncOldWarning(mac) {
+  return h('div', { class: 'sync-warn' },
+    `The folder's copy was saved by an older Switchboard on ${mac}, which leaves out color tags and backgrounds (this Mac kept its own). `,
+    `Update Switchboard on ${mac} (git pull, then npm run package), then use “Copy this Mac's setup to the folder” on whichever Mac has the setup you want.`);
+}
+
+// Which way things stand, said before any button is pressed.
+function syncDirection(st) {
+  const f = st.files?.layout;
+  if (st.pending === 'get') {
+    return h('div', { class: 'sync-dir get' }, h('b', {}, '↓ The folder has newer settings'),
+      ` from ${syncWho(st, f?.from)} (saved ${formatListTime(f?.at)}). Sync now copies them to this Mac.`);
+  }
+  if (st.pending === 'send') {
+    return h('div', { class: 'sync-dir send' }, h('b', {}, '↑ This Mac has changes the folder doesn\'t'),
+      '. Sync now copies them to the folder, and your other Mac takes them from there.');
+  }
+  return h('div', { class: 'sync-dir same' }, h('b', {}, '✓ In sync'),
+    f ? `: this Mac matches the folder's copy (saved by ${syncWho(st, f.from)}, ${formatListTime(f.at)}).` : '.');
 }
 
 function syncSection() {
@@ -3229,7 +3259,20 @@ function syncSection() {
     h('div', { class: 'sync-what' }, 'Not synced'),
     h('div', {}, 'Sizes and zoom (each screen differs), Teams sign-in, and messages, which come from each service'));
 
-  const now = h('button', { class: 'btn primary', disabled: syncUi.busy, onclick: () => runSyncNow(now) }, syncUi.busy ? 'Syncing…' : 'Sync now');
+  const nowLabel = syncUi.busy ? 'Syncing…'
+    : st.pending === 'get' ? '↓ Sync now: get newer settings'
+    : st.pending === 'send' ? '↑ Sync now: send this Mac\'s changes'
+    : 'Sync now';
+  const now = h('button', { class: 'btn primary', disabled: syncUi.busy, onclick: () => runSyncNow('sync') }, nowLabel);
+  const otherMac = st.files?.layout?.from && st.files.layout.from !== st.device ? st.files.layout.from : 'your other Mac';
+  const send = h('button', {
+    class: 'btn', disabled: syncUi.busy,
+    onclick: () => confirm(`Copy this Mac's setup to the folder?\n\nIts groups, pins, nicknames, color tags, backgrounds, pictures and list options replace the folder's copy${st.hasPassphrase ? ', and so do its logins' : ''}. ${otherMac === 'your other Mac' ? 'Your other Mac' : otherMac} switches to them once OneDrive delivers them.`) && runSyncNow('send'),
+  }, '↑ Copy this Mac\'s setup to the folder…');
+  const get = h('button', {
+    class: 'btn', disabled: syncUi.busy || !st.files?.layout,
+    onclick: () => confirm(`Replace this Mac's setup with the folder's copy?\n\nThis Mac's groups, pins, nicknames, color tags, backgrounds, pictures and list options become the ones saved by ${syncWho(st, st.files?.layout?.from)}${st.hasPassphrase ? ', and so do its logins' : ''}.`) && runSyncNow('get'),
+  }, '↓ Copy the folder\'s setup to this Mac…');
   const change = h('button', { class: 'btn', disabled: syncUi.busy, onclick: () => runSync(change, () => sb.syncChoose()) }, 'Change folder…');
   const off = h('button', { class: 'btn danger', disabled: syncUi.busy, onclick: () => runSync(off, () => sb.syncDisable()) }, 'Turn off');
 
@@ -3241,8 +3284,12 @@ function syncSection() {
   const items = [title,
     h('p', {}, `This Mac is “${st.device}”. Both Macs share the folder ${syncPlace(st.folder)}.`),
     table,
-    h('div', { class: 'row' }, now, change, off),
+    syncUi.busy ? null : syncDirection(st),
+    h('div', { class: 'row' }, now),
+    h('div', { class: 'row sync-oneway' }, h('span', { class: 'sync-label' }, 'One way:'), send, get),
     syncRunBox(st),
+    !st.lastRun && st.files?.layout?.format === 1 && st.files.layout.from !== st.device ? syncOldWarning(st.files.layout.from) : null,
+    h('div', { class: 'row' }, change, off),
     st.error && !st.lastRun?.error ? h('p', { style: 'color:#e5484d' }, st.error) : null,
     h('p', { class: 'sync-note' }, `Automatic too: changes here are sent right away, and the folder is checked every 20 seconds and when you switch to Switchboard. The newer copy wins. ${lastText}`)];
   if (!st.hasPassphrase) {

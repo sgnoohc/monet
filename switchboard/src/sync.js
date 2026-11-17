@@ -17,6 +17,11 @@ const scrypt = promisify(crypto.scrypt);
 const POLL_MS = 20000;
 const PUSH_DELAY_MS = 1500;
 const DEVICE = os.hostname().replace(/\.local$/, '');
+// What layout.json holds. 2: color tags and chat backgrounds. A file without it
+// was written by an older Switchboard, which leaves those out (and drops them
+// when it reads a newer file), so Settings asks to update that Mac.
+const FORMAT = 2;
+const layoutOf = data => ({ view: data.view, webApps: data.webApps });
 
 const hash = obj => crypto.createHash('sha256').update(JSON.stringify(obj)).digest('hex');
 
@@ -116,10 +121,21 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
       lastSync: c.lastSync || null, // { at, from, what, changes }
       device: DEVICE,
       files,
+      pending: pending(),
       running,
       lastRun,
       error,
     };
+  }
+
+  // Which way "Sync now" would go: 'send' (this Mac has changes the folder
+  // doesn't), 'get' (the folder has newer settings), or null (the same).
+  function pending() {
+    if (!enabled()) return null;
+    const f = files.layout;
+    if (f && takesLayout(f.at)) return 'get';
+    if (!f || hash(getLayout()) !== cfg().layoutHash) return 'send';
+    return null;
   }
 
   const report = (patch = {}) => {
@@ -142,11 +158,11 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
     await fs.promises.mkdir(cfg().folder, { recursive: true });
     await fs.promises.writeFile(file(name), JSON.stringify(data));
     seen[name.replace('.json', '')] = (await fs.promises.stat(file(name))).mtimeMs;
-    files[name.replace('.json', '')] = { at: data.at, from: data.from };
+    files[name.replace('.json', '')] = { at: data.at, from: data.from, format: data.format || 1 };
   }
 
   const note = (name, read) => {
-    if (read?.data?.at) files[name] = { at: read.data.at, from: read.data.from };
+    if (read?.data?.at) files[name] = { at: read.data.at, from: read.data.from, format: read.data.format || 1 };
     return read;
   };
 
@@ -156,12 +172,12 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
     const h = hash(layout);
     if (h === cfg().layoutHash) return null; // nothing new since the last write or pull
     if (previous === undefined) {
-      const { v, at, from, ...rest } = (await readJson('layout.json'))?.data || {};
-      previous = v ? rest : null;
+      const data = (await readJson('layout.json'))?.data;
+      previous = data?.v === 1 ? layoutOf(data) : null;
     }
     const changes = previous ? layoutChanges(previous, layout) : ['everything (first copy)'];
     const at = Date.now();
-    await writeJson('layout.json', { v: 1, at, from: DEVICE, ...layout });
+    await writeJson('layout.json', { v: 1, format: FORMAT, at, from: DEVICE, ...layout });
     save({ layoutHash: h, layoutAt: at, lastSync: { at, from: DEVICE, what: 'settings', changes } });
     return changes;
   }
@@ -180,9 +196,9 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
     && !(localChangedAt > at && hash(getLayout()) !== cfg().layoutHash);
 
   function takeLayout(read) {
-    const { v, at, from, ...rest } = read.data;
+    const { at, from } = read.data;
     const before = getLayout();
-    applyLayout(rest);
+    applyLayout(layoutOf(read.data));
     const after = getLayout();
     const changes = layoutChanges(before, after);
     save({ layoutHash: hash(after), layoutAt: at, lastSync: { at, from, what: 'settings', changes } });
@@ -239,31 +255,37 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
     });
   }
 
-  // "Sync now": both ways, step by step, saying what went where.
-  async function syncNow() {
-    clearTimeout(pushTimer); // a waiting local change is sent in step 2
+  // Step by step, saying what went where. mode:
+  //   'sync'  both ways: the newer copy wins
+  //   'send'  this Mac's setup replaces the folder's (the other Mac then takes it)
+  //   'get'   the folder's setup replaces this Mac's
+  async function syncNow(mode) {
+    clearTimeout(pushTimer); // a waiting local change is sent here
     const steps = 3;
-    const where = cfg().folder;
     const step = (n, label) => {
-      running = { step: n, steps, label };
+      running = { step: n, steps, label, mode };
       report();
     };
-    const result = { at: 0, folder: where, settings: null, logins: null };
+    const result = { at: 0, mode, folder: cfg().folder, settings: null, logins: null };
 
     step(0, 'Reading the sync folder…');
     const layout = note('layout', await readJson('layout.json'));
     if (layout) seen.layout = layout.mtimeMs;
-    if (layout?.data?.v === 1 && takesLayout(layout.data.at)) {
-      step(1, `Taking settings from ${layout.data.from}…`);
+    const remote = layout?.data?.v === 1 ? layout.data : null;
+    if (mode === 'get' && !remote) throw new Error('The sync folder has no settings yet. Send them from the Mac that has your setup.');
+    if (remote && (mode === 'get' || (mode === 'sync' && takesLayout(remote.at)))) {
+      step(1, `Copying settings from ${remote.from} to this Mac…`);
       const got = takeLayout(layout);
-      result.settings = { action: 'received', from: got.from, at: layout.data.at, changes: got.changes };
+      result.settings = got.changes.length
+        ? { action: 'received', from: got.from, at: remote.at, changes: got.changes }
+        : { action: 'same', from: remote.from, at: remote.at };
     } else {
-      step(1, 'Comparing this Mac\'s settings with the folder…');
-      const { v, at, from, ...rest } = layout?.data || {};
-      const sent = await pushLayout(v ? rest : null);
+      step(1, mode === 'send' ? 'Copying this Mac\'s settings to the folder…' : 'Comparing this Mac\'s settings with the folder…');
+      if (mode === 'send') save({ layoutHash: null }); // written even when nothing seems new
+      const sent = await pushLayout(remote ? layoutOf(remote) : null);
       result.settings = sent
         ? { action: 'sent', changes: sent }
-        : { action: 'same', from: layout?.data?.from, at: layout?.data?.at };
+        : { action: 'same', from: remote?.from, at: remote?.at };
     }
 
     const passphrase = store.getSecret('syncPassphrase');
@@ -276,27 +298,32 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
       const theirs = box ? await open(box, passphrase) : null;
       if (logins) seen.logins = logins.mtimeMs;
       const mine = getLogins();
-      if (theirs && logins.data.at > (cfg().loginsAt || 0)) {
+      const take = theirs && (mode === 'get' || (mode === 'sync' && logins.data.at > (cfg().loginsAt || 0)));
+      if (take) {
+        step(2, `Copying logins from ${logins.data.from} to this Mac…`);
         const changes = loginChanges(mine, theirs);
         applyLogins(theirs);
         save({ loginsAt: logins.data.at, lastSync: { at: logins.data.at, from: logins.data.from, what: 'logins' } });
         result.logins = changes.length
           ? { action: 'received', from: logins.data.from, at: logins.data.at, changes }
           : { action: 'same', from: logins.data.from, at: logins.data.at };
-      } else {
+      } else if (mode !== 'get') {
         const changes = theirs ? loginChanges(theirs, mine) : ['all accounts (first copy)'];
-        if (changes.length) {
-          step(2, 'Sending this Mac\'s logins (encrypted)…');
+        if (changes.length || mode === 'send') {
+          step(2, 'Copying this Mac\'s logins to the folder (encrypted)…');
           await pushLogins();
-          result.logins = { action: 'sent', changes };
+          result.logins = changes.length ? { action: 'sent', changes } : { action: 'same', from: DEVICE, at: Date.now() };
         } else {
           result.logins = { action: 'same', from: logins.data.from, at: logins.data.at };
         }
+      } else {
+        result.logins = { action: 'none' };
       }
     }
 
     step(3, 'Done');
     result.at = Date.now();
+    result.oldFormat = remote && !remote.format && remote.from !== DEVICE && result.settings.action !== 'sent' ? remote.from : null;
     lastRun = result;
   }
 
@@ -311,14 +338,15 @@ function createSync({ store, getLayout, applyLayout, getLogins, applyLogins, onS
     status,
     start,
     poll,
-    // Both ways at once, reporting each step to Settings. Resolves when done.
-    syncNow() {
+    // mode: 'sync', 'send' or 'get' (see above). Resolves when done.
+    syncNow(mode = 'sync') {
+      if (!['sync', 'send', 'get'].includes(mode)) mode = 'sync';
       return serial(async () => {
         if (!enabled()) return;
         try {
-          await syncNow();
+          await syncNow(mode);
         } catch (e) {
-          lastRun = { at: Date.now(), folder: cfg().folder, error: e.message };
+          lastRun = { at: Date.now(), mode, folder: cfg().folder, error: e.message };
           throw e;
         } finally {
           running = null;

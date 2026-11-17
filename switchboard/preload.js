@@ -36,7 +36,7 @@ contextBridge.exposeInMainWorld('sb', {
   syncChoose: () => ipcRenderer.invoke('sync:choose'),
   syncDisable: () => ipcRenderer.invoke('sync:disable'),
   syncPassphrase: passphrase => ipcRenderer.invoke('sync:passphrase', passphrase),
-  syncNow: () => ipcRenderer.invoke('sync:now'),
+  syncNow: mode => ipcRenderer.invoke('sync:now', mode),
   setBadge: n => ipcRenderer.send('badge', n),
   focus: () => ipcRenderer.send('focus'),
   openExternal: url => ipcRenderer.send('open-external', url),

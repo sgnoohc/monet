@@ -326,8 +326,12 @@ const sync = createSync({
     const cfg = store.getConfig();
     return { view: cfg.view, webApps: cfg.webApps };
   },
+  // Parts an older Switchboard on the other Mac doesn't know about (it leaves
+  // them out) stay as they are here instead of being wiped.
   applyLayout: ({ view, webApps }) => {
-    store.setConfig({ view: cleanView(view), ...(Array.isArray(webApps) ? { webApps: cleanWebApps(webApps) } : {}) });
+    const mine = store.getConfig().view || {};
+    const theirs = view && typeof view === 'object' ? view : {};
+    store.setConfig({ view: cleanView({ ...mine, ...theirs }), ...(Array.isArray(webApps) ? { webApps: cleanWebApps(webApps) } : {}) });
     sendToUi('settings', settings());
   },
   getLogins,
@@ -611,8 +615,8 @@ function registerIpc() {
     await sync.setPassphrase(passphrase);
     return sync.status();
   });
-  ipcMain.handle('sync:now', async () => {
-    await sync.syncNow();
+  ipcMain.handle('sync:now', async (_e, mode) => {
+    await sync.syncNow(String(mode || 'sync'));
     return sync.status();
   });
 
