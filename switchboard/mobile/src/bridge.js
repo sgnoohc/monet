@@ -10,7 +10,7 @@ import MattermostProvider from '../../src/providers/mattermost';
 import SlackProvider from '../../src/providers/slack';
 import DemoProvider from '../../src/providers/demo';
 
-const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, people: {}, pins: [], otherCollapsed: false, compact: false, flat: false, bigPictures: true, tags: [], tagOf: {} };
+const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, people: {}, pins: [], otherCollapsed: false, compact: false, flat: false, bigPictures: true, dmNames: true, showTimes: true, tags: [], tagOf: {}, backgrounds: {} };
 
 // Stored in the app's private storage (not readable by other apps; backups are off).
 let config = { mattermost: { url: '' }, slack: [], view: { ...DEFAULT_VIEW } };
@@ -331,9 +331,13 @@ window.sb = {
     const { provider, convId } = route(key);
     return provider.fetchMessages(convId, before);
   },
-  async send(key, text) {
+  async send(key, text, opts) {
     const { provider, convId } = route(key);
-    return provider.send(convId, text);
+    return provider.send(convId, text, { replyTo: opts?.replyTo });
+  },
+  async thread(key, rootId) {
+    const { provider, convId } = route(key);
+    return provider.thread ? provider.thread(convId, rootId) : null;
   },
   async react(key, messageId, value, add) {
     const { provider, convId } = route(key);
@@ -351,13 +355,18 @@ window.sb = {
     emit('display', config.display);
     return config.display;
   },
+  async members(key) {
+    const { provider, convId } = route(key);
+    if (!provider.members) throw new Error('Not available for this chat');
+    return provider.members(convId);
+  },
   async pinned(key) {
     const { provider, convId } = route(key);
     return provider.pinned ? provider.pinned(convId) : [];
   },
-  async upload(key, files, text) {
+  async upload(key, files, text, opts) {
     const { provider, convId } = route(key);
-    return provider.upload(convId, files, text);
+    return provider.upload(convId, files, text, { replyTo: opts?.replyTo });
   },
   async fetchMedia(key, ref) {
     const { provider } = route(key);
@@ -381,9 +390,9 @@ window.sb = {
     await FileViewer.open({ data: await toBase64(new Blob([data])), name: a.name || 'file', type: type.split(';')[0].trim() });
   },
   async searchGifs(query) {
-    const discord = providers.get('discord');
-    if (!discord) throw new Error('GIF search uses your Discord account. Add Discord from your Mac first.');
-    return discord.searchGifs(query);
+    const source = providers.get('discord') || providers.get('mattermost');
+    if (!source?.searchGifs) throw new Error('GIF search needs Discord or Mattermost. Add one from your Mac first.');
+    return source.searchGifs(query);
   },
   async markRead(key) {
     const { provider, convId } = route(key);

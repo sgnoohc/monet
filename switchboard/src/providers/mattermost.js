@@ -153,6 +153,7 @@ class MattermostProvider extends EventEmitter {
       // The channel header (often links: zoom, notes, overleaf), shown under the title.
       topic: replaceShortcodes(c.header || c.purpose || '').trim(),
       hasPins: true,
+      hasMembers: kind !== 'dm',
     });
   }
 
@@ -197,6 +198,25 @@ class MattermostProvider extends EventEmitter {
     this.connect(); // reloads channels, so missed messages show as unread
   }
 
+  // GIF search through Giphy, with the key the server gives its own GIF picker
+  // (none when the server has GIFs turned off). Same shape as Discord's results.
+  async searchGifs(query) {
+    if (this.giphyKey === undefined) {
+      const cfg = await this.api('GET', '/config/client?format=old');
+      this.giphyKey = String(cfg.EnableGifPicker) === 'true' && cfg.GiphySdkKey ? cfg.GiphySdkKey : null;
+    }
+    if (!this.giphyKey) throw new Error('GIFs are turned off on your Mattermost server');
+    const params = `api_key=${encodeURIComponent(this.giphyKey)}&limit=40&rating=pg-13`;
+    const res = await fetch(query
+      ? `https://api.giphy.com/v1/gifs/search?${params}&q=${encodeURIComponent(query)}`
+      : `https://api.giphy.com/v1/gifs/trending?${params}`);
+    if (!res.ok) throw new Error(`GIF search failed (HTTP ${res.status})`);
+    const j = await res.json();
+    return (j.data || [])
+      .map(g => ({ url: g.url, gif: g.images?.original?.url, preview: g.images?.fixed_width?.mp4 || g.images?.fixed_width_small?.mp4 }))
+      .filter(g => g.gif && g.preview);
+  }
+
   // A person's own profile picture, as a ref the interface loads with fetchMedia
   // (it needs the login). None for people who never uploaded one: Mattermost
   // would only draw their initials, which Switchboard already does.
@@ -213,7 +233,10 @@ class MattermostProvider extends EventEmitter {
     return { data: new Uint8Array(await res.arrayBuffer()), type: res.headers.get('content-type') || '' };
   }
 
-  async upload(convId, files, text) {
+  // opts.replyTo: post the files as a reply in that post's thread.
+  async upload(convId, files, text, opts = {}) {
+    const target = opts.replyTo ? this.posts.get(opts.replyTo) : null;
+    const rootId = opts.replyTo ? target?.root_id || opts.replyTo : undefined;
     const form = new FormData();
     form.append('channel_id', convId);
     for (const f of files) form.append('files', new File([f.data], f.name, { type: f.type || 'application/octet-stream' }));
@@ -224,7 +247,7 @@ class MattermostProvider extends EventEmitter {
     });
     const j = await res.json().catch(() => null);
     if (!res.ok) throw new Error(j?.message ? `Mattermost: ${j.message}` : `Mattermost HTTP ${res.status}`);
-    const post = await this.api('POST', '/posts', { channel_id: convId, message: text || '', file_ids: j.file_infos.map(f => f.id) });
+    const post = await this.api('POST', '/posts', { channel_id: convId, message: text || '', file_ids: j.file_infos.map(f => f.id), root_id: rootId });
     return this.toMessage(post);
   }
 
@@ -315,6 +338,8 @@ class MattermostProvider extends EventEmitter {
       isSelf: p.user_id === this.me.id,
       mentionsMe,
       isReply: !!p.root_id && !root,
+      threadRoot: p.root_id || null, // the thread this post is in (replies always go to the root)
+      replyCount: p.root_id ? 0 : p.reply_count || 0,
       replyTo: root
         ? { id: root.id, ts: root.create_at, author: this.displayName(this.users.get(root.user_id)), text: root.message || (root.metadata?.files?.length ? '📎 Attachment' : '') }
         : null,
@@ -394,6 +419,19 @@ class MattermostProvider extends EventEmitter {
     return posts.map(p => this.toMessage(p));
   }
 
+  // Who is in a channel or group: the first 200 people, and how many there are in all.
+  async members(convId) {
+    const [stats, users] = await Promise.all([
+      this.api('GET', `/channels/${convId}/stats`).catch(() => null),
+      this.api('GET', `/users?in_channel=${convId}&per_page=200&page=0&active=true`),
+    ]);
+    for (const u of users) this.users.set(u.id, u);
+    return {
+      total: stats?.member_count ?? users.length,
+      people: users.map(u => ({ id: u.id, name: this.displayName(u), username: u.username, avatar: this.avatarOf(u.id), isSelf: u.id === this.me.id })),
+    };
+  }
+
   // The channel's pinned posts, newest first.
   async pinned(convId) {
     const r = await this.api('GET', `/channels/${convId}/pinned`);
@@ -402,8 +440,20 @@ class MattermostProvider extends EventEmitter {
     return posts.sort((a, b) => b.create_at - a.create_at).map(p => this.toMessage(p));
   }
 
-  async send(convId, text) {
-    return this.toMessage(await this.api('POST', '/posts', { channel_id: convId, message: text }));
+  // opts.replyTo: a post in the thread to answer; Mattermost files it under the thread's root.
+  async send(convId, text, opts = {}) {
+    const target = opts.replyTo ? this.posts.get(opts.replyTo) : null;
+    const rootId = opts.replyTo ? target?.root_id || opts.replyTo : undefined;
+    return this.toMessage(await this.api('POST', '/posts', { channel_id: convId, message: text, root_id: rootId }));
+  }
+
+  // A whole thread: the root first, then the replies in order.
+  async thread(convId, rootId) {
+    const r = await this.api('GET', `/posts/${rootId}/thread`);
+    const posts = Object.values(r.posts || {}).filter(p => !p.delete_at).sort((a, b) => a.create_at - b.create_at);
+    for (const p of posts) this.posts.set(p.id, p);
+    await this.ensureUsers(posts.map(p => p.user_id));
+    return posts.map(p => this.toMessage(p));
   }
 
   async markRead(convId) {

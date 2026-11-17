@@ -287,7 +287,6 @@ class SlackProvider extends EventEmitter {
 
   toMessage(m) {
     const u = this.users.get(m.user);
-    const replies = m.reply_count ? `\n💬 ${m.reply_count} ${m.reply_count === 1 ? 'reply' : 'replies'} in thread` : '';
     return {
       id: m.ts,
       ts: tsToMs(m.ts),
@@ -299,7 +298,10 @@ class SlackProvider extends EventEmitter {
       isSelf: m.user === this.me,
       mentionsMe: (m.text || '').includes(`<@${this.me}>`),
       system: !!m.subtype && !SHOWN_SUBTYPES.has(m.subtype),
-      text: this.renderText(m.text || '') + replies,
+      text: this.renderText(m.text || ''),
+      // Slack keeps thread replies out of the channel; the parent shows "N Replies" and opens them.
+      replyCount: m.thread_ts === m.ts ? m.reply_count || 0 : 0,
+      threadRoot: m.thread_ts && m.thread_ts !== m.ts ? m.thread_ts : null,
       reactions: (m.reactions || []).map(r => this.reactionInfo(r.name, r.count, r.users?.includes(this.me))),
       attachments: [
         // Slack files need the token to fetch: ref/thumbRef go through fetchMedia.
@@ -346,10 +348,21 @@ class SlackProvider extends EventEmitter {
     return msgs.map(m => this.toMessage(m));
   }
 
-  async send(convId, text) {
-    const r = await this.call('chat.postMessage', { channel: convId, text: escapeText(text) });
+  // opts.replyTo: the thread's parent message (ts). Thread replies stay out of the
+  // channel, so they come back marked inThread.
+  async send(convId, text, opts = {}) {
+    const r = await this.call('chat.postMessage', { channel: convId, text: escapeText(text), thread_ts: opts.replyTo });
+    if (opts.replyTo) return { ...this.toMessage({ ...r.message, user: r.message.user || this.me }), inThread: true };
     this.latest.set(convId, r.ts);
     return this.toMessage({ ...r.message, user: r.message.user || this.me });
+  }
+
+  // The parent message and its replies, oldest first.
+  async thread(convId, ts) {
+    const r = await this.call('conversations.replies', { channel: convId, ts, limit: '200' });
+    const msgs = r.messages || [];
+    await this.ensureUsers(msgs.flatMap(m => [m.user, ...this.mentionedIds(m.text)]));
+    return msgs.map(m => this.toMessage(m));
   }
 
   reactionInfo(name, count, me) {
@@ -397,7 +410,8 @@ class SlackProvider extends EventEmitter {
 
   // Slack's upload flow: get an upload URL per file, send the bytes, then share
   // them in the channel. The resulting message arrives over the socket.
-  async upload(convId, files, text) {
+  // opts.replyTo: the thread's parent message (ts) to post the files in.
+  async upload(convId, files, text, opts = {}) {
     try {
       const done = [];
       for (const f of files) {
@@ -406,7 +420,7 @@ class SlackProvider extends EventEmitter {
         if (!res.ok) throw new Error(`Slack upload failed (HTTP ${res.status})`);
         done.push({ id, title: f.name });
       }
-      await this.call('files.completeUploadExternal', { files: JSON.stringify(done), channel_id: convId, initial_comment: text || undefined });
+      await this.call('files.completeUploadExternal', { files: JSON.stringify(done), channel_id: convId, initial_comment: text || undefined, thread_ts: opts.replyTo });
     } catch (err) {
       if (/missing_scope/.test(err.message)) {
         throw new Error('Your Slack app needs file permissions: update it with the new manifest from Settings and reinstall it.');

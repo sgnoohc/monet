@@ -24,7 +24,7 @@ const state = {
   filter: 'all',
   query: '',
   loadingOlder: false,
-  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), people: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false, bigPictures: true, tags: [], tagOf: new Map() },
+  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), people: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false, bigPictures: true, dmNames: true, showTimes: true, tags: [], tagOf: new Map(), backgrounds: new Map() },
   editing: false,
   editTab: 'show', // Edit chooses which chats to 'show' or to 'pin'
   dragKey: null, // chat being dragged onto a group
@@ -53,6 +53,15 @@ function h(tag, attrs = {}, ...children) {
     if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
   }
   return el;
+}
+
+// h() leaves out empty children (null, false); replaceChildren and append do the
+// same here, so a piece that isn't shown never turns up as the text "null".
+for (const name of ['replaceChildren', 'append']) {
+  const native = Element.prototype[name];
+  Element.prototype[name] = function (...kids) {
+    return native.apply(this, kids.filter(k => k != null && k !== false));
+  };
 }
 
 const cleanError = e => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -225,8 +234,11 @@ function saveView() {
     compact: v.compact,
     flat: v.flat,
     bigPictures: v.bigPictures,
+    dmNames: v.dmNames,
+    showTimes: v.showTimes,
     tags: v.tags,
     tagOf: Object.fromEntries(v.tagOf),
+    backgrounds: Object.fromEntries(v.backgrounds),
   }).catch(e => toast(cleanError(e)));
 }
 
@@ -263,6 +275,30 @@ function setFlat(on, announce = false) {
   saveView();
   renderSidebar();
   if (!$('#settings').hidden) renderSettings();
+}
+
+function setShowTimes(on) {
+  state.view.showTimes = on;
+  saveView();
+  if (state.openKey && state.messages.has(state.openKey)) {
+    const box = $('#messages');
+    const top = box.scrollTop;
+    renderMessages(state.openKey);
+    if (stickToBottom) scrollToBottom();
+    else box.scrollTop = top;
+  }
+}
+
+function setDmNames(on) {
+  state.view.dmNames = on;
+  saveView();
+  if (state.openKey && state.messages.has(state.openKey)) {
+    const box = $('#messages');
+    const top = box.scrollTop;
+    renderMessages(state.openKey);
+    if (stickToBottom) scrollToBottom();
+    else box.scrollTop = top;
+  }
 }
 
 function setBigPictures(on) {
@@ -832,7 +868,8 @@ function showPane(name) {
 
 function renderHeader(c) {
   const svc = SERVICES[c.service];
-  $('#chat-header').replaceChildren(
+  // Filtered: replaceChildren would show a skipped (null) button as the text "null".
+  $('#chat-header').replaceChildren(...[
     ...(MOBILE ? [h('button', { class: 'back-btn', 'aria-label': 'Back', onclick: closeConversation }, '‹')] : []),
     h('button', {
       class: `person-btn${tagFor(c) ? ' tagged' : ''}`,
@@ -858,9 +895,10 @@ function renderHeader(c) {
       c.topic
         ? h('div', { class: 'chat-sub chat-topic', title: 'Channel header and pinned messages', onclick: () => openChannelInfo(c) }, ...linkify(c.topic.replace(/\s*\n\s*/g, ' · ')))
         : h('div', { class: 'chat-sub' }, displayTitle(c) !== c.title ? `${c.title} · ${c.subtitle}` : c.subtitle)),
+    c.hasMembers ? membersButton(c) : null,
     c.hasPins ? pinButton(c) : null,
     h('span', { class: `svc-tag svc-${c.service}` }, svc?.name || c.service),
-  );
+  ].filter(Boolean));
   $('#composer-input').placeholder = `Message ${displayTitle(c)}`;
 }
 
@@ -874,6 +912,66 @@ function pinsOf(key, fresh = false) {
   return list;
 }
 
+// Who is in a channel, fetched when it opens and kept for a few minutes.
+const memberCache = new Map(); // key -> { at, list: Promise<{ total, people }> }
+function membersOf(key, fresh = false) {
+  const hit = memberCache.get(key);
+  if (hit && !fresh && Date.now() - hit.at < 300000) return hit.list;
+  const list = sb.members(key);
+  list.catch(() => memberCache.delete(key));
+  memberCache.set(key, { at: Date.now(), list });
+  return list;
+}
+
+// "👥 27" in the header; opens the info panel at the member list.
+function membersButton(c) {
+  const btn = h('button', { class: 'pin-btn', hidden: true, title: 'Who is in this chat', onclick: () => openChannelInfo(c, 'members') });
+  membersOf(c.key).then(m => {
+    btn.textContent = `👥 ${m.total}`;
+    btn.hidden = false;
+  }, () => {});
+  return btn;
+}
+
+// Members in the info panel; a filter box when there are many. Tapping someone
+// opens your direct message with them when you have one, else their color and picture.
+function memberSection(c, close) {
+  const list = h('div', { class: 'member-list' }, h('p', {}, 'Loading…'));
+  const heading = h('h3', {}, 'Members');
+  const section = h('section', { class: 'members-section' }, heading, list);
+  membersOf(c.key, true).then(({ total, people }) => {
+    const sorted = [...people].sort((a, b) => (b.isSelf - a.isSelf) || a.name.localeCompare(b.name));
+    heading.textContent = `Members (${total})`;
+    const rows = query => sorted
+      .filter(p => !query || `${p.name} ${p.username}`.toLowerCase().includes(query))
+      .map(p => {
+        const dm = [...state.convs.values()].find(x => x.provider === c.provider && x.peerId === p.id);
+        return h('button', {
+          class: 'member',
+          title: p.isSelf ? '' : dm ? `Open your chat with ${p.name}` : `Color or picture for ${p.name}`,
+          onclick: () => {
+            if (p.isSelf) return;
+            close();
+            if (dm) openConversation(dm.key);
+            else openPersonDialog(c.key, { id: p.id, name: p.name, avatar: p.avatar });
+          },
+        },
+        avatarEl(p.name, p.avatar, 'member-avatar', lookOf(personKey(c.key, p))),
+        h('span', { class: 'member-name' }, p.isSelf ? `${p.name} (you)` : p.name),
+        p.username ? h('span', { class: 'member-user' }, `@${p.username}`) : null);
+      });
+    const more = total > people.length ? h('p', {}, `…and ${total - people.length} more`) : null;
+    const box = h('div', {});
+    const show = query => box.replaceChildren(...rows(query), ...(query ? [] : [more].filter(Boolean)));
+    const filter = people.length > 12
+      ? h('input', { class: 'member-filter', type: 'search', placeholder: 'Find a member', oninput: e => show(e.target.value.trim().toLowerCase()) })
+      : null;
+    show('');
+    list.replaceChildren(...[filter, box].filter(Boolean));
+  }, e => list.replaceChildren(h('p', {}, cleanError(e))));
+  return section;
+}
+
 // "📌 3" in the header when the chat has pinned messages; opens the info panel.
 function pinButton(c) {
   const btn = h('button', { class: 'pin-btn', hidden: true, title: 'Pinned messages', onclick: () => openChannelInfo(c) });
@@ -884,9 +982,9 @@ function pinButton(c) {
   return btn;
 }
 
-// The channel header in full, then the pinned messages (newest first). Tapping
-// one jumps to it in the chat.
-function openChannelInfo(c) {
+// The channel header in full, the pinned messages (newest first; tapping one
+// jumps to it in the chat), then who is in it. focus 'members' scrolls there.
+function openChannelInfo(c, focus = null) {
   const modal = h('div', { class: 'modal', onclick: e => e.target === modal && close() });
   const onKey = e => {
     if (e.key !== 'Escape') return;
@@ -903,10 +1001,12 @@ function openChannelInfo(c) {
   modal.append(h('div', { class: 'dialog info-dialog' },
     h('h2', {}, displayTitle(c)),
     c.topic ? h('section', {}, h('h3', {}, 'Header'), h('div', { class: 'info-topic' }, ...richText(c.topic))) : null,
-    h('section', {}, h('h3', {}, 'Pinned messages'), list),
+    c.hasPins ? h('section', {}, h('h3', {}, 'Pinned messages'), list) : null,
+    c.hasMembers ? memberSection(c, () => close()) : null,
     h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => close() }, 'Close'))));
   document.addEventListener('keydown', onKey, true);
   document.body.append(modal);
+  if (focus === 'members') modal.querySelector('.members-section')?.scrollIntoView({ block: 'start' });
   pinsOf(c.key, true).then(pins => {
     if (!pins.length) return list.replaceChildren(h('p', {}, 'Nothing is pinned in this chat.'));
     list.replaceChildren(...pins.map(m => h('div', {
@@ -935,6 +1035,7 @@ async function openConversation(key) {
   showPane('chat');
   document.body.classList.add('chat-open');
   renderHeader(conv);
+  applyChatBackground();
   renderStaged();
   if (state.share) deliverShare();
   state.floatKey = !conv.muted && (conv.unread || conv.mentions) ? key : null;
@@ -1122,7 +1223,18 @@ async function openAttachment(a) {
 // the bubble only had a preview.
 function showLightbox(src, a) {
   const key = state.openKey;
-  const close = () => box.remove();
+  // Esc closes the picture, and only the picture: a thread or panel it was opened from stays.
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    close();
+  };
+  const close = () => {
+    box.remove();
+    window.removeEventListener('keydown', onKey, true);
+  };
+  window.addEventListener('keydown', onKey, true);
   const img = h('img', { src, alt: a.name, onclick: e => e.stopPropagation() });
   const box = h('div', { class: 'lightbox', onclick: close },
     img,
@@ -1200,25 +1312,35 @@ function unstage(key, file) {
   renderStaged();
 }
 
+// A file waiting to be sent: a preview, its name and size, and ✕ to drop it.
+function stagedFileEl(f, remove) {
+  let preview;
+  if (/^image\//.test(f.type)) {
+    if (!previewUrls.has(f)) previewUrls.set(f, URL.createObjectURL(f));
+    preview = h('img', { src: previewUrls.get(f), alt: '' });
+  } else {
+    preview = h('span', { class: 'staged-icon' }, '📄');
+  }
+  return h('div', { class: 'staged-file', title: f.name || 'Pasted image' },
+    preview,
+    h('div', { class: 'staged-meta' }, h('span', { class: 'staged-name' }, f.name || 'Pasted image'), h('span', {}, formatSize(f.size))),
+    h('button', { class: 'staged-remove', title: 'Remove', 'aria-label': 'Remove', onclick: remove }, '✕'));
+}
+
+// Files as the upload call wants them; pasted images get a name.
+const filePayload = files => Promise.all(files.map(async (f, i) => ({
+  name: f.name || `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`,
+  type: f.type,
+  data: new Uint8Array(await f.arrayBuffer()),
+})));
+
 function renderStaged() {
   const key = state.openKey;
   const files = stagedFiles.get(key) || [];
   const tray = $('#staged');
   tray.hidden = !files.length;
   tray.replaceChildren(
-    ...files.map(f => {
-      let preview;
-      if (/^image\//.test(f.type)) {
-        if (!previewUrls.has(f)) previewUrls.set(f, URL.createObjectURL(f));
-        preview = h('img', { src: previewUrls.get(f), alt: '' });
-      } else {
-        preview = h('span', { class: 'staged-icon' }, '📄');
-      }
-      return h('div', { class: 'staged-file', title: f.name || 'Pasted image' },
-        preview,
-        h('div', { class: 'staged-meta' }, h('span', { class: 'staged-name' }, f.name || 'Pasted image'), h('span', {}, formatSize(f.size))),
-        h('button', { class: 'staged-remove', title: 'Remove', 'aria-label': 'Remove', onclick: () => unstage(key, f) }, '✕'));
-    }),
+    ...files.map(f => stagedFileEl(f, () => unstage(key, f))),
     files.length ? h('div', { class: 'staged-hint' }, MOBILE ? 'Tap send to share' : 'Press Enter to send · Esc to remove all') : null);
 }
 
@@ -1243,11 +1365,7 @@ async function sendFiles(files) {
   autosize();
   toast(`Sending ${files.length === 1 ? files[0].name || 'image' : `${files.length} files`}…`);
   try {
-    const payload = await Promise.all(files.map(async (f, i) => ({
-      name: f.name || `pasted-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`,
-      type: f.type,
-      data: new Uint8Array(await f.arrayBuffer()),
-    })));
+    const payload = await filePayload(files);
     const message = await sb.upload(key, payload, text);
     if (message) onMessage({ key, message });
     else setTimeout(refreshOpen, 1500); // Slack: the message arrives over the socket
@@ -1288,7 +1406,9 @@ function reactionChips(m, convKey) {
   h('span', {}, r.count))));
 }
 
-function bubbleEl(m, { key, last, showName, showAvatar, quote = true }) {
+// quote: show the faded original above a reply (off in the thread view, and for
+// a run of replies to the same message). replies: how many replies this one has.
+function bubbleEl(m, { key, last, showName, showAvatar, quote = true, replies = 0 }) {
   const look = showName || showAvatar ? lookOf(personKey(key, m.author)) : null;
   const parts = [];
   if (m.text) {
@@ -1305,13 +1425,19 @@ function bubbleEl(m, { key, last, showName, showAvatar, quote = true }) {
   }, m.author.name) : null;
   const label = author || m.isReply ? [author, author && m.isReply ? ' · ' : null, m.isReply ? 'reply in thread' : null] : null;
   if (m.replyTo && quote) {
+    // Like iMessage: a faded copy of the original above the reply, joined to it
+    // by a thin curved line; tapping it opens the thread.
     parts.unshift(h('div', {
-      class: 'reply-quote',
-      title: m.replyTo.id ? 'Show the original message' : null,
-      onclick: () => jumpToMessage(m.replyTo.id, m.replyTo.ts),
+      class: 'reply-ghost',
+      title: m.replyTo.id ? `Reply to ${m.replyTo.author || 'a message'}: open the thread` : null,
+      onclick: () => m.replyTo.id && openThread(key, threadRootOf(m)),
     },
-    h('div', { class: 'reply-author' }, `↪ ${m.replyTo.author || 'Reply'}`),
-    m.replyTo.text ? h('div', { class: 'reply-text' }, m.replyTo.text.replace(/\s+/g, ' ').trim()) : null));
+    h('div', { class: 'reply-ghost-bubble' },
+      m.replyTo.author ? h('span', { class: 'reply-ghost-author' }, `${m.replyTo.author}: `) : null,
+      (m.replyTo.text || '').replace(/\s+/g, ' ').trim() || 'Message')));
+  }
+  if (replies > 0) {
+    parts.push(h('button', { class: 'reply-count', onclick: () => openThread(key, m.id) }, `${replies} ${replies === 1 ? 'Reply' : 'Replies'}`));
   }
   const stack = h('div', {
     class: 'msg-stack',
@@ -1327,7 +1453,9 @@ function bubbleEl(m, { key, last, showName, showAvatar, quote = true }) {
   },
   label ? h('div', { class: 'msg-name' }, label) : null,
   ...parts,
-  reactionChips(m, key));
+  reactionChips(m, key),
+  // When it was sent, under the last message of each run (hover any message for its own time).
+  last && state.view.showTimes ? h('div', { class: 'msg-time' }, formatTime(m.ts)) : null);
   const reactBtn = MOBILE ? null : h('button', {
     class: 'react-btn',
     title: 'React',
@@ -1395,6 +1523,7 @@ function openReactionPicker(m, anchor, point = null) {
         },
       }, emoji);
     }),
+    state.openKey && !m.system ? h('button', { class: 'copy', onclick: () => { closePicker(); openThread(state.openKey, threadRootOf(m), { reply: true }); } }, 'Reply') : null,
     m.text ? h('button', { class: 'copy', onclick: () => { sb.copyText(m.text); closePicker(); toast('Copied'); } }, 'Copy') : null);
   showPopover(picker);
   const box = anchor.getBoundingClientRect();
@@ -1689,6 +1818,255 @@ function setLook(pkey, changes) {
 }
 
 // A square crop, small enough to keep in the settings file.
+// ----- chat backgrounds, like iMessage: a gradient or your own picture behind
+// a chat. A chat without one uses the background for all chats ("*"). -----
+
+const BACKGROUNDS = [
+  { id: 'sky', name: 'Sky' },
+  { id: 'mint', name: 'Mint' },
+  { id: 'sunset', name: 'Sunset' },
+  { id: 'lavender', name: 'Lavender' },
+  { id: 'sand', name: 'Sand' },
+  { id: 'aurora', name: 'Aurora' },
+  { id: 'night', name: 'Night' },
+];
+
+// What a chat shows: its own choice, else the one for all chats. { preset } / { image } / null
+function backgroundOf(key) {
+  const own = state.view.backgrounds.get(key);
+  if (own) return own.preset === 'none' ? null : own;
+  return state.view.backgrounds.get('*') || null;
+}
+
+let shownPhotoUrl = null;
+function applyChatBackground() {
+  const pane = $('#chat-pane');
+  const bg = state.openKey ? backgroundOf(state.openKey) : null;
+  pane.classList.toggle('has-bg', !!bg);
+  for (const b of BACKGROUNDS) pane.classList.toggle(`bg-${b.id}`, bg?.preset === b.id);
+  pane.classList.toggle('bg-image', !!(bg?.image || bg?.photo));
+  if (!bg?.photo) {
+    shownPhotoUrl = null;
+    pane.style.setProperty('--chat-bg-image', bg?.image ? `url("${bg.image}")` : 'none');
+    return;
+  }
+  const url = photoBgUrl(bg.photo);
+  if (url === shownPhotoUrl) return;
+  shownPhotoUrl = url;
+  // Loaded first, then swapped in, so the old picture stays until the new one is ready.
+  const img = new Image();
+  img.onload = () => {
+    if (shownPhotoUrl === url) pane.style.setProperty('--chat-bg-image', `url("${url}")`);
+  };
+  img.src = url;
+}
+
+// A bigger window wants a bigger picture (the size steps keep this rare).
+let bgResizeTimer;
+new ResizeObserver(() => {
+  clearTimeout(bgResizeTimer);
+  bgResizeTimer = setTimeout(() => {
+    if (state.openKey && backgroundOf(state.openKey)?.photo) applyChatBackground();
+  }, 300);
+}).observe(document.getElementById('chat-pane'));
+
+function setBackground(key, bg) {
+  if (bg) state.view.backgrounds.set(key, bg);
+  else state.view.backgrounds.delete(key);
+  saveView();
+  applyChatBackground();
+}
+
+// Free photos from Unsplash, served by picsum.photos: [id, photographer, width,
+// height of the original]. All are large (about 5000 px), chosen to look good
+// both whole (a wide window) and cut down the middle (the phone). Only the photo's
+// number is saved; the picture is fetched at exactly the size of the chat on this
+// screen, cut from the original, so it is sharp everywhere and nothing big is stored.
+const WEB_PHOTOS = [
+  ['1022', "Vashishtha Jogi", 5000, 2813],
+  ['1002', "NASA", 4312, 2868],
+  ['1041', "Tim Marshall", 5000, 2813],
+  ['994', "Jonathan Bean", 5000, 3337],
+  ['987', "Sebastien Gabriel", 5000, 3333],
+  ['184', "Tim de Groot", 4288, 2848],
+  ['213', "Kelly Sikkema", 4928, 3264],
+  ['385', "Griffin Keller", 5000, 3333],
+  ['1019', "Patrick Fore", 5000, 3333],
+  ['412', "Samuel Rohl", 5000, 3337],
+  ['110', "Kenneth Thewissen", 5000, 3333],
+  ['1015', "Alexey Topolyanskiy", 5000, 3333],
+  ['1036', "Wolfgang Lutz", 4608, 3072],
+  ['327', "Ryan Schroeder", 4442, 2961],
+  ['381', "Nick West", 5000, 3419],
+  ['218', "Monika Majkowska", 4752, 3168],
+  ['1043', "Christian Joudrey", 5000, 3333],
+  ['989', "Paul Jarvis", 4896, 3264],
+  ['990', "Joseph Barrientos", 5000, 3334],
+  ['1039', "Andrew Coelho", 5000, 3337],
+  ['1051', "Ales Krivec", 4928, 3264],
+  ['1057', "Stefan Kunze", 5000, 3338],
+  ['223', "Maria Carrasco", 4912, 3264],
+  ['235', "Paul E. Harrer", 5000, 3333],
+  ['251', "Tiago Gerken", 5000, 3333],
+  ['279', "Taylor Leopold", 5000, 3333],
+  ['350', "Forrest Cavale", 5000, 3338],
+  ['368', "Tyssul Patel", 4896, 3264],
+  ['377', "Martin Stan\u011bk", 4884, 3256],
+  ['384', "Griffin Keller", 5000, 3333],
+  ['392', "Chris Brignola", 5000, 3333],
+  ['423', "Gabriel Santiago", 5000, 3333],
+  ['432', "Michael Hull", 5000, 3333],
+  ['465', "Paula Vermeulen", 4928, 3264],
+  ['472', "Dustin Scarpitti", 5000, 3333],
+  ['476', "Mr. Marco", 5000, 3333],
+  ['477', "Jasper van der Meij", 4919, 3258],
+  ['482', "Danny Froese", 5000, 3333],
+  ['499', "Gabriel Santiago", 5000, 3333],
+  ['509', "Jeff Sheldon", 4608, 3456],
+  ['525', "Luca Zanon", 5000, 3333],
+  ['543', "Ali Inay", 5000, 3333],
+  ['558', "Ales Krivec", 4928, 3264],
+  ['666', "Jason Ortego", 5000, 3333],
+  ['676', "Drew Patrick Miller", 5000, 3324],
+  ['705', "Breno Machado", 5000, 3333],
+  ['723', "Blair Fraser", 5000, 3333],
+  ['724', "Nelly Volkovich", 5000, 3333],
+  ['730', "Ryan Pohanic", 5000, 3333],
+  ['733', "Dominik Schr\u00f6der", 5000, 3334],
+  ['765', "Grant McIver", 4586, 3439],
+  ['774', "Alex Wigan", 5000, 3333],
+  ['779', "John Kutcher", 4844, 3219],
+  ['787', "Sebastien Gabriel", 5000, 3333],
+  ['794', "Lauren Coleman", 5000, 3333],
+  ['809', "Namphuong Van", 5000, 3333],
+  ['813', "Roger Burkhard", 4896, 3264],
+  ['814', "Ales Krivec", 5000, 3272],
+  ['825', "Michael Hull", 5000, 3333],
+  ['830', "Luca Zanon", 5000, 3333],
+  ['831', "Luke Pamer", 5000, 3333],
+  ['848', "Stefanus Martanto Setyo Husodo", 4912, 3264],
+  ['857', "Dmitry Sytnik", 5000, 3088],
+  ['866', "Samuel Zeller", 4704, 3136],
+  ['871', "Stefan Kunze", 5000, 3338],
+  ['872', "Brandon Lam", 4608, 3072],
+  ['877', "Sebastian Unrau", 5000, 3014],
+  ['894', "Paula Porto", 5000, 3333],
+  ['896', "Jenna Beekhuis", 5000, 3333],
+  ['905', "Caitlin Wynne", 5000, 3333],
+  ['907', "Pierre Bouillot", 5000, 3259],
+  ['912', "Clem Onojeghuo", 5000, 3333],
+  ['913', "Mikkel Schmidt", 4522, 3015],
+  ['925', "Patrick Fore", 5000, 3333],
+  ['929', "Tiago Muraro", 5000, 3333],
+  ['933', "Gian-Reto Tarnutzer", 4943, 3307],
+  ['950', "Nitish Kadam", 5000, 3333],
+  ['967', "NASA", 4928, 3280],
+  ['973', "Cameron Kirby", 5000, 3334],
+  ['980', "Ales Krivec", 5000, 3509],
+  ['985', "Hide Obara", 5000, 3333],
+];
+const webPhotoUrl = (id, w, hgt) => `https://picsum.photos/id/${id}/${w}/${hgt}`;
+
+// The photo at this chat pane's size in device pixels (in steps, so small
+// resizes reuse the same download), never larger than the original.
+function photoBgUrl(id) {
+  const pane = $('#chat-pane');
+  const dpr = window.devicePixelRatio || 1;
+  let w = Math.ceil(((pane.clientWidth || 1200) * dpr) / 256) * 256;
+  let hgt = Math.ceil(((pane.clientHeight || 800) * dpr) / 256) * 256;
+  const [, , ow = 5000, oh = 3333] = WEB_PHOTOS.find(p => p[0] === id) || [];
+  const over = Math.max(w / ow, hgt / oh);
+  if (over > 1) {
+    w = Math.floor(w / over);
+    hgt = Math.floor(hgt / over);
+  }
+  return webPhotoUrl(id, w, hgt);
+}
+
+function openPhotoGallery(key, done) {
+  const modal = h('div', { class: 'modal', onclick: e => e.target === modal && close() });
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    e.stopImmediatePropagation(); // just this window, not the dialog underneath
+    close();
+  };
+  const close = () => {
+    modal.remove();
+    window.removeEventListener('keydown', onKey, true);
+  };
+  const current = state.view.backgrounds.get(key)?.photo;
+  const grid = h('div', { class: 'photo-grid' }, ...WEB_PHOTOS.map(([id, author]) => h('button', {
+    type: 'button',
+    class: `photo-tile${current === id ? ' picked' : ''}`,
+    title: `Photo by ${author} (Unsplash)`,
+    onclick: () => {
+      setBackground(key, { photo: id });
+      close();
+      done();
+    },
+  }, h('img', { src: webPhotoUrl(id, 240, 150), alt: '', loading: 'lazy' }))));
+  modal.append(h('div', { class: 'dialog photo-dialog' },
+    h('h2', {}, 'Photos'),
+    h('p', {}, `${WEB_PHOTOS.length} free photos from Unsplash, each sharp at any window size and on the phone. Hover one to see who took it.`),
+    grid,
+    h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: close }, 'Cancel'))));
+  window.addEventListener('keydown', onKey, true);
+  document.body.append(modal);
+}
+
+// A picture as a background: at most 1600 px across, as a JPEG, so it stays small to save and sync.
+async function backgroundFromFile(file) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const canvas = h('canvas', { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.82);
+}
+
+// The choices as small tiles. key: a chat, or "*" for all chats.
+function bgTiles(key, rerender) {
+  const own = state.view.backgrounds.get(key);
+  const pick = bg => {
+    setBackground(key, bg);
+    rerender();
+  };
+  const file = h('input', {
+    type: 'file',
+    accept: 'image/*',
+    hidden: true,
+    onchange: async () => {
+      const f = file.files[0];
+      file.value = '';
+      if (!f) return;
+      try {
+        pick({ image: await backgroundFromFile(f) });
+      } catch {
+        toast("Couldn't read that picture; try a PNG or JPEG");
+      }
+    },
+  });
+  const tile = (label, cls, on, onclick, style = null) =>
+    h('button', { type: 'button', class: `bg-tile ${cls}${on ? ' on' : ''}`, title: label, 'aria-label': label, style, onclick }, h('span', {}, label));
+  return h('div', { class: 'bg-tiles' },
+    key === '*'
+      ? tile('None', 'bg-none', !own, () => pick(null))
+      : tile('Same as all chats', 'bg-default-tile', !own, () => pick(null)),
+    key === '*' ? null : tile('None', 'bg-none', own?.preset === 'none', () => pick({ preset: 'none' })),
+    ...BACKGROUNDS.map(b => tile(b.name, `bg-${b.id}`, own?.preset === b.id, () => pick({ preset: b.id }))),
+    own?.image ? tile('Your picture', 'bg-image-tile on', true, () => file.click(), `background-image:url("${own.image}")`) : null,
+    own?.photo ? tile('Photo', 'bg-image-tile on', true, () => openPhotoGallery(key, rerender), `background-image:url("${webPhotoUrl(own.photo, 128, 128)}")`) : null,
+    tile('More photos…', 'bg-web', false, () => openPhotoGallery(key, rerender), `background-image:url("${webPhotoUrl('1022', 128, 128)}")`),
+    tile(own?.image ? 'Change picture…' : 'Your picture…', 'bg-upload', false, () => file.click()),
+    file);
+}
+
+function backgroundSection(key, rerender) {
+  return h('section', {},
+    h('h3', {}, 'Background'),
+    h('p', {}, 'Shown behind this chat, only in Switchboard. The one for all chats is in Settings → Appearance.'),
+    bgTiles(key, rerender));
+}
+
 async function pictureFromFile(file) {
   const bmp = await createImageBitmap(file);
   const side = Math.min(bmp.width, bmp.height);
@@ -1740,6 +2118,7 @@ function openPersonDialog(convKey, author, chat = null, conv = null) {
           h('h2', { style: !chat && look.color ? `color:${look.color}` : null }, author.name),
           h('p', {}, 'Only you see these changes.'))),
       conv ? tagSection(conv, render) : null,
+      conv ? backgroundSection(conv.key, render) : null,
       chat ? null : h('section', {},
         h('h3', {}, 'Name color'),
         h('div', { class: 'swatches' },
@@ -1788,6 +2167,12 @@ function closeGifPanel() {
 function openGifPanel() {
   const panel = $('#gif-panel');
   if (!panel.hidden) return closeGifPanel();
+  panel.replaceChildren(...gifPicker(sendGif, closeGifPanel));
+  panel.hidden = false;
+}
+
+// The search box and results; onPick(gif) when one is clicked. Used by the chat and the thread.
+function gifPicker(onPick, onClose) {
   const grid = h('div', { class: 'gif-grid' });
   const input = h('input', { type: 'search', placeholder: 'Search GIFs', spellcheck: 'false' });
   const load = async query => {
@@ -1796,7 +2181,7 @@ function openGifPanel() {
       const gifs = await sb.searchGifs(query);
       if (input.value.trim() !== query) return; // a newer search is on its way
       grid.replaceChildren(...(gifs.length ? gifs.slice(0, 40).map(g => {
-        const video = h('video', { src: g.preview, loop: true, autoplay: true, playsinline: true, title: 'Send this GIF', onclick: () => sendGif(g) });
+        const video = h('video', { src: g.preview, loop: true, autoplay: true, playsinline: true, title: 'Send this GIF', onclick: () => onPick(g) });
         video.muted = true;
         return video;
       }) : [h('div', { class: 'placeholder' }, 'No GIFs found')]));
@@ -1809,15 +2194,21 @@ function openGifPanel() {
     gifSearchTimer = setTimeout(() => load(input.value.trim()), 350);
   });
   input.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      closeGifPanel();
-    }
+    e.stopPropagation();
+    if (e.key === 'Escape') onClose();
   });
-  panel.replaceChildren(h('div', { class: 'gif-head' }, input, h('button', { class: 'icon-btn', title: 'Close', onclick: closeGifPanel }, '✕')), grid);
-  panel.hidden = false;
-  if (!MOBILE) input.focus();
+  if (!MOBILE) setTimeout(() => input.focus());
   load('');
+  return [h('div', { class: 'gif-head' }, input, h('button', { class: 'icon-btn', title: 'Close', onclick: onClose }, '✕')), grid];
+}
+
+// Sends a GIF (as a reply with opts.replyTo) and returns the message, drawn as the GIF.
+async function postGif(key, g, opts) {
+  const discord = state.convs.get(key)?.service === 'discord';
+  const message = await sb.send(key, discord ? g.url : g.gif, opts);
+  message.text = '';
+  message.attachments = [discord ? { name: 'GIF', url: g.preview, isVideo: true } : { name: 'GIF', url: g.gif, isImage: true }];
+  return message;
 }
 
 // Discord embeds its own Tenor links; elsewhere the direct .gif link previews as an image.
@@ -1826,16 +2217,243 @@ async function sendGif(g) {
   const conv = state.convs.get(key);
   if (!conv) return;
   closeGifPanel();
-  const discord = conv.service === 'discord';
   try {
-    const message = await sb.send(key, discord ? g.url : g.gif);
-    message.text = '';
-    message.attachments = [discord ? { name: 'GIF', url: g.preview, isVideo: true } : { name: 'GIF', url: g.gif, isImage: true }];
-    onMessage({ key, message });
+    onMessage({ key, message: await postGif(key, g) });
     scrollToBottom();
   } catch (e) {
     toast(cleanError(e));
   }
+}
+
+// ----- threads, like iMessage: the original and its replies over a blurred
+// chat, with a box to reply. Replies that also show in the chat (Mattermost,
+// Discord) arrive there as usual; Slack keeps them in the thread. -----
+
+let thread = null; // { key, rootId, add(message), close() } while one is open
+
+// The message a reply joins: the thread's root (Mattermost, Slack), or the
+// message itself, which then becomes the start of a thread (Discord).
+const threadRootOf = m => m.threadRoot || m.replyTo?.id || m.id;
+
+async function openThread(key, rootId, { reply = false } = {}) {
+  thread?.close();
+  closePopover?.();
+  const conv = state.convs.get(key);
+  if (!conv || !rootId) return;
+  const group = conv.kind !== 'dm' || state.view.dmNames;
+  let messages = [];
+  const list = h('div', { class: 'thread-list' }, h('div', { class: 'placeholder' }, 'Loading…'));
+  const input = h('textarea', { class: 'thread-input', rows: 1, placeholder: 'Reply', spellcheck: 'true' });
+  const send = h('button', { class: 'send-btn', type: 'button', 'aria-label': 'Send reply', title: 'Send reply' }, '↑');
+  // Files and GIFs, like the chat's own box: 📎, GIF, paste, or drop on the thread.
+  let staged = [];
+  const tray = h('div', { class: 'staged thread-staged', hidden: true });
+  const gifBox = h('div', { class: 'gif-panel thread-gifs', hidden: true });
+  const fileInput = h('input', { type: 'file', multiple: true, hidden: true });
+  const attach = h('button', { type: 'button', class: 'attach-btn', title: 'Send files in this thread', 'aria-label': 'Send files' }, '📎');
+  const gifBtn = h('button', { type: 'button', class: 'gif-btn', title: 'Send a GIF in this thread' }, 'GIF');
+  const panel = h('div', { class: 'thread-panel' },
+    h('div', { class: 'thread-head' },
+      h('span', {}, 'Thread'),
+      h('span', { class: 'thread-where' }, displayTitle(conv)),
+      h('button', { class: 'thread-close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => close() }, '✕')),
+    list,
+    gifBox,
+    tray,
+    h('div', { class: 'composer thread-composer' }, attach, fileInput, gifBtn, input, send));
+  const overlay = h('div', { class: 'thread-overlay', onclick: e => e.target === overlay && close() }, panel);
+
+  const draw = () => {
+    if (!messages.length) return list.replaceChildren(h('div', { class: 'placeholder' }, 'The original message is no longer available.'));
+    list.replaceChildren(...messages.map((m, i) => {
+      const prev = messages[i - 1];
+      const first = !sameRun(prev, m);
+      const row = bubbleEl(m, {
+        key,
+        last: !sameRun(m, messages[i + 1]),
+        showName: group && !m.isSelf && first,
+        showAvatar: group && !m.isSelf,
+        quote: false,
+      });
+      if (first) row.classList.add('first');
+      if (i === 0) {
+        row.classList.add('thread-root');
+        row.title = 'Show it in the chat';
+        row.addEventListener('click', e => {
+          if (e.target.closest('a, img, video, button, .msg-author')) return;
+          close();
+          jumpToMessage(m.id, m.ts);
+        });
+      }
+      return row;
+    }), ...(messages.length === 1 ? [h('div', { class: 'thread-empty' }, 'No replies yet')] : []));
+    list.scrollTop = list.scrollHeight;
+  };
+
+  // Esc closes the GIF search, then drops waiting files, then closes the thread.
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (!gifBox.hidden) closeGifs();
+    else if (staged.length) {
+      staged = [];
+      drawStaged();
+    } else close();
+  };
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey, true);
+    if (thread?.close === close) thread = null;
+  };
+  thread = {
+    key,
+    rootId,
+    close,
+    add(message) {
+      if (messages.some(m => m.id === message.id)) return;
+      messages.push(message);
+      draw();
+    },
+  };
+
+  const drawStaged = () => {
+    tray.hidden = !staged.length;
+    tray.replaceChildren(...staged.map(f => stagedFileEl(f, () => {
+      staged = staged.filter(x => x !== f);
+      drawStaged();
+    })));
+  };
+  const stage = fileList => {
+    const files = [...(fileList || [])];
+    const big = files.find(f => f.size > 50 * 1024 * 1024);
+    if (big) return toast(`${big.name || 'That file'} is too large (50 MB at most)`);
+    staged = [...staged, ...files];
+    drawStaged();
+    input.focus();
+  };
+  const closeGifs = () => {
+    gifBox.hidden = true;
+    gifBox.replaceChildren();
+  };
+
+  // A reply that was sent: into the thread, and into the chat where the service shows replies there.
+  const deliver = async message => {
+    const root = (state.messages.get(key) || []).find(m => m.id === rootId);
+    if (!message || message.inThread) {
+      if (root) {
+        root.replyCount = (root.replyCount || 0) + 1;
+        if (state.openKey === key) renderMessages(key);
+      }
+    }
+    if (!message) {
+      // Slack sends files without returning the message: read the thread again.
+      const fresh = await sb.thread(key, rootId).catch(() => null);
+      if (fresh && thread?.close === close) {
+        messages = fresh;
+        draw();
+      }
+      return;
+    }
+    if (!message.inThread) onMessage({ key, message }); // shows in the chat too (and in here, via onMessage)
+    thread?.add(message);
+  };
+
+  const submit = async () => {
+    const text = input.value.trim();
+    const files = staged;
+    if (!text && !files.length) return;
+    input.value = '';
+    input.style.height = 'auto';
+    staged = [];
+    drawStaged();
+    try {
+      if (files.length) {
+        toast(`Sending ${files.length === 1 ? files[0].name || 'image' : `${files.length} files`}…`);
+        await deliver(await sb.upload(key, await filePayload(files), text, { replyTo: rootId }));
+        toast('Sent');
+      } else {
+        await deliver(await sb.send(key, text, { replyTo: rootId }));
+      }
+    } catch (e) {
+      if (!input.value) input.value = text;
+      if (files.length && !staged.length) {
+        staged = files; // put them back to retry
+        drawStaged();
+      }
+      toast(cleanError(e));
+    }
+  };
+  attach.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    stage(fileInput.files);
+    fileInput.value = '';
+  });
+  gifBtn.addEventListener('click', () => {
+    if (!gifBox.hidden) return closeGifs();
+    gifBox.replaceChildren(...gifPicker(async g => {
+      closeGifs();
+      try {
+        await deliver(await postGif(key, g, { replyTo: rootId }));
+      } catch (e) {
+        toast(cleanError(e));
+      }
+    }, closeGifs));
+    gifBox.hidden = false;
+  });
+  input.addEventListener('paste', e => {
+    if (e.clipboardData?.files?.length) {
+      e.preventDefault();
+      stage(e.clipboardData.files);
+    }
+  });
+  panel.addEventListener('dragover', e => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    panel.classList.add('file-drop');
+  });
+  panel.addEventListener('dragleave', e => {
+    if (!panel.contains(e.relatedTarget)) panel.classList.remove('file-drop');
+  });
+  panel.addEventListener('drop', e => {
+    if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    panel.classList.remove('file-drop');
+    stage(e.dataTransfer.files);
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+  });
+  input.addEventListener('keydown', e => {
+    e.stopPropagation(); // keep the chat's shortcuts out of the reply box
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE) {
+      e.preventDefault();
+      submit();
+    }
+  });
+  send.addEventListener('mousedown', e => e.preventDefault()); // keep the keyboard up
+  send.addEventListener('click', submit);
+
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(overlay);
+  if (reply || !MOBILE) setTimeout(() => input.focus(), 50);
+
+  // The service's own thread when it has one; otherwise the loaded messages that reply to it.
+  const loaded = state.messages.get(key) || [];
+  const fromLoaded = () => {
+    const root = loaded.find(m => m.id === rootId);
+    return root ? [root, ...loaded.filter(m => m.id !== rootId && threadRootOf(m) === rootId)] : [];
+  };
+  try {
+    messages = (await sb.thread(key, rootId)) || fromLoaded();
+  } catch {
+    messages = fromLoaded();
+  }
+  if (thread?.close !== close) return; // closed or replaced meanwhile
+  draw();
 }
 
 const findRow = id => id && [...document.querySelectorAll('#messages .msg-row')].find(el => el.dataset.id === id);
@@ -1897,11 +2515,18 @@ function renderMessages(key) {
   hideReactTip();
   const list = state.messages.get(key) || [];
   if (!list.length) return showPlaceholder('No messages yet');
-  const group = state.convs.get(key)?.kind !== 'dm'; // names and avatars only where several people talk
+  // Names and pictures where several people talk, and in direct messages too unless turned off.
+  const group = state.convs.get(key)?.kind !== 'dm' || state.view.dmNames;
   const nodes = [];
   if (state.exhausted.has(key)) nodes.push(h('div', { class: 'history-start' }, 'Beginning of conversation'));
   const mark = state.newMark?.key === key ? state.newMark : null;
   const markId = mark && (mark.id || list[Math.max(0, list.length - mark.count)]?.id);
+  // Replies counted among the loaded messages (Discord has no count of its own).
+  const replyCounts = new Map();
+  for (const m of list) {
+    const root = m.threadRoot || m.replyTo?.id;
+    if (root) replyCounts.set(root, (replyCounts.get(root) || 0) + 1);
+  }
   list.forEach((m, i) => {
     const prev = list[i - 1];
     if (markId && m.id === markId) nodes.push(h('div', { class: 'new-sep' }, h('span', {}, 'New')));
@@ -1920,6 +2545,7 @@ function renderMessages(key) {
       showAvatar: group && !m.isSelf,
       // Several messages in a row answering the same one show its quote once.
       quote: !(m.replyTo?.id && !first && prev?.replyTo?.id === m.replyTo.id),
+      replies: Math.max(m.replyCount || 0, replyCounts.get(m.id) || 0),
     }));
     if (first) nodes[nodes.length - 1].classList.add('first');
   });
@@ -1969,6 +2595,12 @@ function onMessage({ key, message, counts, quiet = false }) {
   const list = state.messages.get(key);
   const isNew = !list?.some(m => m.id === message.id);
   if (list && isNew) list.push(message);
+  const rootId = message.threadRoot || message.replyTo?.id;
+  if (isNew && rootId) {
+    const root = list?.find(m => m.id === rootId);
+    if (root && root.replyCount) root.replyCount += 1;
+    if (thread?.key === key && thread.rootId === rootId) thread.add(message);
+  }
 
   if (isNew && !message.isSelf && key === state.openKey && !document.hasFocus() && state.newMark?.key !== key) {
     state.newMark = { key, id: message.id };
@@ -2371,6 +3003,7 @@ function sizeRow(label, field, steps) {
 function appearanceSection() {
   return h('section', {},
     h('h3', {}, 'Appearance'),
+    h('div', { class: 'bg-default' }, h('span', { class: 'size-label' }, 'Background for all chats'), bgTiles('*', () => renderSettings())),
     sizeRow(MOBILE ? 'Text size' : 'Size of everything', 'zoom', ZOOM_STEPS),
     sizeRow('Message text', 'chatText', CHAT_TEXT_STEPS),
     MOBILE ? null : h('p', {}, 'Shortcuts: ⌘+ bigger, ⌘− smaller, ⌘0 actual size. Message text sizes the chat on top of that.'),
@@ -2383,6 +3016,12 @@ function appearanceSection() {
     h('label', { class: 'edit-new' },
       h('input', { type: 'checkbox', checked: state.view.bigPictures, onchange: e => setBigPictures(e.target.checked) }),
       'Bigger pictures next to messages'),
+    h('label', { class: 'edit-new' },
+      h('input', { type: 'checkbox', checked: state.view.dmNames, onchange: e => setDmNames(e.target.checked) }),
+      'Names and pictures in direct messages too'),
+    h('label', { class: 'edit-new' },
+      h('input', { type: 'checkbox', checked: state.view.showTimes, onchange: e => setShowTimes(e.target.checked) }),
+      'Times under messages'),
     MOBILE
       ? h('p', {}, 'Long-press a chat to put it in a group, rename it or hide it.')
       : h('p', {}, 'Organize the list by right-clicking a chat (Move to group), dragging a chat onto a group, or clicking + New group at the bottom of the list.'),
@@ -2544,8 +3183,9 @@ function hotkey(action) {
   else if (action === 'back') {
     // Android back button: close whatever is on top, else leave the app.
     if (closePopover) closePopover();
-    else if (document.querySelector('.lightbox')) document.querySelector('.lightbox').remove();
+    else if (document.querySelector('.lightbox')) document.querySelector('.lightbox').click(); // its own close
     else if (closeChannelInfo) closeChannelInfo();
+    else if (thread) thread.close();
     else if (!$('#settings').hidden) closeSettings();
     else if (state.renamingConv || state.renaming) document.activeElement?.blur();
     else if (state.editing) setEditing(false);
@@ -2771,8 +3411,11 @@ function viewFrom(v = {}) {
     compact: !!v.compact,
     flat: !!v.flat,
     bigPictures: v.bigPictures !== false, // on unless turned off
+    dmNames: v.dmNames !== false,
+    showTimes: v.showTimes !== false,
     tags: Array.isArray(v.tags) ? v.tags : [],
     tagOf: new Map(Object.entries(v.tagOf || {})),
+    backgrounds: new Map(Object.entries(v.backgrounds || {})),
   };
 }
 
@@ -2824,6 +3467,7 @@ async function init() {
   sb.on('settings', s => {
     state.settings = s;
     state.view = viewFrom(s.view);
+    applyChatBackground();
     syncWebviews();
     scheduleRender();
     if (state.openKey && state.messages.has(state.openKey)) {

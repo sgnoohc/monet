@@ -430,8 +430,14 @@ class DiscordProvider extends EventEmitter {
     return list.reverse().map(m => this.toMessage(m));
   }
 
-  async send(convId, text) {
-    const m = await this.api('POST', `/channels/${convId}/messages`, { content: text, tts: false, nonce: makeNonce() });
+  // opts.replyTo: a message to answer (Discord's "reply", which quotes it).
+  async send(convId, text, opts = {}) {
+    const m = await this.api('POST', `/channels/${convId}/messages`, {
+      content: text,
+      tts: false,
+      nonce: makeNonce(),
+      ...(opts.replyTo ? { message_reference: { message_id: opts.replyTo }, allowed_mentions: { replied_user: true } } : {}),
+    });
     return this.toMessage(m);
   }
 
@@ -450,11 +456,13 @@ class DiscordProvider extends EventEmitter {
 
   // Discord's own GIF search (Tenor), as used by its GIF picker.
   // files: [{ name, type, data: Uint8Array }]; text goes along as the message.
-  async upload(convId, files, text) {
+  // opts.replyTo: send the files as a reply to that message.
+  async upload(convId, files, text, opts = {}) {
     const form = new FormData();
     form.append('payload_json', JSON.stringify({
       content: text || '',
       nonce: makeNonce(),
+      ...(opts.replyTo ? { message_reference: { message_id: opts.replyTo }, allowed_mentions: { replied_user: true } } : {}),
       attachments: files.map((f, i) => ({ id: i, filename: f.name })),
     }));
     files.forEach((f, i) => form.append(`files[${i}]`, new File([f.data], f.name, { type: f.type || 'application/octet-stream' })));

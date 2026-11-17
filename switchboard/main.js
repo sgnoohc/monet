@@ -228,10 +228,20 @@ function cleanView(view = {}) {
   const tagIds = new Set(tags.map(t => t.id));
   const tagOf = {};
   for (const [key, id] of Object.entries(view.tagOf || {}).slice(0, 5000)) if (tagIds.has(id)) tagOf[String(key).slice(0, 200)] = id;
+  // Chat backgrounds: a preset name, a picture (sized down when chosen), or a photo's
+  // number in the app's list (fetched at the window's size). "*" is every chat's default.
+  const backgrounds = {};
+  for (const [key, b] of Object.entries(view.backgrounds || {}).slice(0, 500)) {
+    const preset = typeof b?.preset === 'string' && /^[a-z-]{1,20}$/.test(b.preset) ? b.preset : undefined;
+    const image = typeof b?.image === 'string' && b.image.length < 1500000 && /^data:image\/(webp|jpeg|png);base64,[\w+/=]+$/.test(b.image) ? b.image : undefined;
+    const photo = typeof b?.photo === 'string' && /^\d{1,5}$/.test(b.photo) ? b.photo : undefined;
+    if (preset || image || photo) backgrounds[String(key).slice(0, 200)] = image ? { image } : photo ? { photo } : { preset };
+  }
   return {
     nicknames,
     people,
     tags,
+    backgrounds,
     tagOf,
     mode: view.mode === 'selected' ? 'selected' : 'all',
     keys: [...new Set((view.keys || []).map(String))],
@@ -242,6 +252,8 @@ function cleanView(view = {}) {
     compact: !!view.compact,
     flat: !!view.flat,
     bigPictures: view.bigPictures !== false,
+    dmNames: view.dmNames !== false,
+    showTimes: view.showTimes !== false,
   };
 }
 
@@ -335,16 +347,22 @@ function registerIpc() {
     return provider.fetchMessages(convId, before);
   });
 
-  ipcMain.handle('messages:send', (_e, key, text) => {
+  ipcMain.handle('messages:send', (_e, key, text, opts) => {
     const { provider, convId } = route(key);
-    return provider.send(convId, text);
+    return provider.send(convId, text, { replyTo: opts?.replyTo ? String(opts.replyTo) : undefined });
   });
 
-  ipcMain.handle('messages:upload', (_e, key, files, text) => {
+  // A thread's messages, or null where the service has no threads to fetch (Discord).
+  ipcMain.handle('messages:thread', (_e, key, rootId) => {
+    const { provider, convId } = route(key);
+    return provider.thread ? provider.thread(convId, String(rootId)) : null;
+  });
+
+  ipcMain.handle('messages:upload', (_e, key, files, text, opts) => {
     const { provider, convId } = route(key);
     if (!provider.upload) throw new Error('Sending files is not supported here');
     if (files.some(f => f.data.length > 50 * 1024 * 1024)) throw new Error('Files over 50 MB are not supported');
-    return provider.upload(convId, files.map(f => ({ name: String(f.name), type: String(f.type || ''), data: f.data })), text);
+    return provider.upload(convId, files.map(f => ({ name: String(f.name), type: String(f.type || ''), data: f.data })), text, { replyTo: opts?.replyTo ? String(opts.replyTo) : undefined });
   });
 
   // Files that need the account's login (Mattermost, Slack) to download.
@@ -389,16 +407,23 @@ function registerIpc() {
     return provider.reactors ? provider.reactors(convId, messageId, reactionKey) : [];
   });
 
+  ipcMain.handle('messages:members', (_e, key) => {
+    const { provider, convId } = route(key);
+    if (!provider.members) throw new Error('Not available for this chat');
+    return provider.members(convId);
+  });
+
   ipcMain.handle('messages:pinned', (_e, key) => {
     const { provider, convId } = route(key);
     return provider.pinned ? provider.pinned(convId) : [];
   });
 
   // GIF search goes through Discord's GIF picker API, whichever chat it is for.
+  // GIF search through Discord's picker, or Mattermost's (Giphy) when Discord isn't connected.
   ipcMain.handle('gifs:search', (_e, query) => {
-    const discord = providers.get('discord');
-    if (!discord) throw new Error('GIF search uses your Discord account. Connect Discord in Settings to use it.');
-    return discord.searchGifs(query);
+    const source = providers.get('discord') || providers.get('mattermost');
+    if (!source?.searchGifs) throw new Error('GIF search needs Discord or Mattermost. Connect one in Settings.');
+    return source.searchGifs(query);
   });
 
   ipcMain.handle('conv:markRead', (_e, key) => {
