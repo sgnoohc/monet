@@ -612,7 +612,7 @@ function registerIpc() {
     return sync.status();
   });
   ipcMain.handle('sync:now', async () => {
-    await sync.poll();
+    await sync.syncNow();
     return sync.status();
   });
 

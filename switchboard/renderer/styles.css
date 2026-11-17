@@ -1119,3 +1119,20 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
 /* The time under the last message of each run */
 .msg-time { font-size: calc(10.5px * var(--chat-scale, 1)); color: var(--faint); margin: 1px 12px 0; font-variant-numeric: tabular-nums; }
 #chat-pane.has-bg .msg-time { width: fit-content; padding: 0 6px; border-radius: 6px; color: var(--muted); background: color-mix(in srgb, var(--bg) 72%, transparent); }
+
+/* Sync between Macs */
+.sync-table { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 12.5px; line-height: 1.4; }
+.sync-what { font-weight: 600; }
+.sync-file { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.sync-run { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 12.5px; line-height: 1.45; }
+.sync-run.done { background: color-mix(in srgb, #30a46c 12%, transparent); }
+.sync-run.failed { background: color-mix(in srgb, #e5484d 12%, transparent); }
+.sync-bar { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--accent) 18%, transparent); overflow: hidden; }
+.sync-bar span { display: block; height: 100%; width: 6%; border-radius: 3px; background: var(--accent); transition: width .35s ease; }
+.sync-step { margin-top: 6px; color: var(--muted); }
+.sync-head { font-weight: 600; margin-bottom: 4px; }
+.sync-run.done .sync-head { color: #30a46c; }
+.sync-run.failed .sync-head { color: #e5484d; }
+.sync-line { display: flex; gap: 8px; }
+.sync-icon { width: 12px; flex: none; text-align: center; font-weight: 700; }
+.sync-note { color: var(--muted); font-size: 11.5px; margin-top: 6px; }

@@ -3128,6 +3128,82 @@ async function runSync(btn, fn) {
   }
 }
 
+// "Sync now" shows each step in a bar, then what went where.
+const syncUi = { busy: false, running: null, bar: null, label: null };
+
+function showSyncProgress(running) {
+  syncUi.running = running || { step: 3, steps: 3, label: 'Done' };
+  const { step, steps, label } = syncUi.running;
+  if (syncUi.bar?.isConnected) {
+    syncUi.bar.style.width = `${Math.max(6, Math.round((step / steps) * 100))}%`;
+    syncUi.label.textContent = step >= steps ? 'Finishing…' : `Step ${step + 1} of ${steps} · ${label}`;
+  }
+}
+
+async function runSyncNow(btn) {
+  syncUi.busy = true;
+  syncUi.running = { step: 0, steps: 3, label: 'Starting…' };
+  renderSettings();
+  const started = Date.now();
+  let st = null;
+  try {
+    st = await sb.syncNow();
+  } catch (e) {
+    toast(cleanError(e));
+  }
+  showSyncProgress(null);
+  // Long enough to see the bar fill, even when the folder answers at once.
+  await new Promise(r => setTimeout(r, Math.max(0, 900 - (Date.now() - started))));
+  syncUi.busy = false;
+  state.sync = st || await sb.syncStatus().catch(() => state.sync);
+  renderSettings();
+}
+
+const syncWho = (st, from) => (from === st.device ? 'this Mac' : from || 'another Mac');
+
+function syncFileLine(st, f) {
+  return f ? `last written by ${syncWho(st, f.from)}, ${formatListTime(f.at)}` : 'not in the folder yet';
+}
+
+// One line of the "Sync now" report: ↓ taken, ↑ sent, = same.
+function syncResultLine(st, run, part, name) {
+  const r = run[part];
+  if (!r) return null;
+  const list = r.changes?.length ? `: ${r.changes.join(', ')}` : '';
+  const [icon, text] = {
+    received: ['↓', `taken from ${syncWho(st, r.from)} (saved there ${formatListTime(r.at)})${list}`],
+    sent: ['↑', `sent from this Mac to ${syncPlace(run.folder)}${list}`],
+    same: ['=', r.from ? `already the same as the copy from ${syncWho(st, r.from)} (${formatListTime(r.at)})` : 'already the same'],
+    off: ['–', 'not synced: no passphrase on this Mac (see below)'],
+  }[r.action] || ['', ''];
+  return h('div', { class: `sync-line ${r.action}` },
+    h('span', { class: 'sync-icon' }, icon),
+    h('span', {}, h('b', {}, name), ` ${text}`));
+}
+
+function syncRunBox(st) {
+  if (syncUi.busy) {
+    syncUi.bar = h('span');
+    syncUi.label = h('div', { class: 'sync-step' });
+    const box = h('div', { class: 'sync-run' }, h('div', { class: 'sync-bar' }, syncUi.bar), syncUi.label);
+    showSyncProgress(st.running || syncUi.running);
+    return box;
+  }
+  const run = st.lastRun;
+  if (!run) return null;
+  if (run.error) {
+    return h('div', { class: 'sync-run failed' },
+      h('div', { class: 'sync-head' }, `✕ Sync stopped at ${formatTime(run.at)}`),
+      h('div', { class: 'sync-line' }, run.error));
+  }
+  const sent = run.settings?.action === 'sent' || run.logins?.action === 'sent';
+  return h('div', { class: 'sync-run done' },
+    h('div', { class: 'sync-head' }, `✓ All synced at ${formatTime(run.at)}`),
+    syncResultLine(st, run, 'settings', 'Settings'),
+    syncResultLine(st, run, 'logins', 'Logins'),
+    sent ? h('div', { class: 'sync-note' }, 'OneDrive uploads the files in the background. Your other Mac takes them within 20 seconds of getting them, or as soon as you switch to Switchboard there.') : null);
+}
+
 function syncSection() {
   const st = state.sync;
   const title = h('h3', {}, 'Sync between Macs');
@@ -3136,29 +3212,45 @@ function syncSection() {
     const on = h('button', { class: 'btn primary', onclick: () => runSync(on, () => sb.syncEnable()) }, 'Turn on with OneDrive');
     const choose = h('button', { class: 'btn', onclick: () => runSync(choose, () => sb.syncChoose()) }, 'Choose folder…');
     return h('section', {}, title,
-      h('p', {}, "Keeps groups, pins, nicknames, hidden chats, people's colors and pictures, and web apps the same on your Macs, through a folder both of them sync. If the folder already has your other Mac's settings, this Mac switches to them."),
+      h('p', {}, "Keeps groups, pins, nicknames, color tags, backgrounds, people's colors and pictures, and web apps the same on your Macs, through a folder both of them sync. If the folder already has your other Mac's settings, this Mac switches to them."),
       h('div', { class: 'row' }, st.suggested ? on : null, choose),
       h('p', {}, st.suggested ? `Folder: ${syncPlace(st.suggested)}` : 'No OneDrive folder found on this Mac; choose a folder that syncs.'));
   }
+  const files = st.files || {};
+  const table = h('div', { class: 'sync-table' },
+    h('div', { class: 'sync-what' }, 'Settings'),
+    h('div', {},
+      h('div', {}, "Groups, pins, nicknames, color tags, backgrounds, people's colors and pictures, shown and hidden chats, list options, web apps"),
+      h('div', { class: 'sync-file' }, `layout.json · ${syncFileLine(st, files.layout)}`)),
+    h('div', { class: 'sync-what' }, 'Logins'),
+    h('div', {},
+      h('div', {}, 'Discord, Mattermost and Slack sign-ins, encrypted with your passphrase'),
+      h('div', { class: 'sync-file' }, st.hasPassphrase ? `logins.json · ${syncFileLine(st, files.logins)}` : 'Off on this Mac: no passphrase yet')),
+    h('div', { class: 'sync-what' }, 'Not synced'),
+    h('div', {}, 'Sizes and zoom (each screen differs), Teams sign-in, and messages, which come from each service'));
+
+  const now = h('button', { class: 'btn primary', disabled: syncUi.busy, onclick: () => runSyncNow(now) }, syncUi.busy ? 'Syncing…' : 'Sync now');
+  const change = h('button', { class: 'btn', disabled: syncUi.busy, onclick: () => runSync(change, () => sb.syncChoose()) }, 'Change folder…');
+  const off = h('button', { class: 'btn danger', disabled: syncUi.busy, onclick: () => runSync(off, () => sb.syncDisable()) }, 'Turn off');
+
   const last = st.lastSync;
+  const what = last && (last.what === 'logins' ? 'logins' : 'settings');
   const lastText = last
-    ? `Last synced ${formatListTime(last.at)}: ${last.what} ${last.from === st.device ? 'sent from this Mac' : `from ${last.from}`}.`
+    ? `Last change: ${what}${last.changes?.length ? ` (${last.changes.join(', ')})` : ''} ${last.from === st.device ? 'sent from this Mac' : `taken from ${last.from}`}, ${formatListTime(last.at)}.`
     : 'Nothing synced yet.';
-  const now = h('button', { class: 'btn', onclick: () => runSync(now, () => sb.syncNow()) }, 'Sync now');
-  const change = h('button', { class: 'btn', onclick: () => runSync(change, () => sb.syncChoose()) }, 'Change folder…');
-  const off = h('button', { class: 'btn danger', onclick: () => runSync(off, () => sb.syncDisable()) }, 'Turn off');
   const items = [title,
-    h('p', {}, `Syncing through ${syncPlace(st.folder)}. ${lastText}`),
-    st.error ? h('p', { style: 'color:#e5484d' }, st.error) : null,
-    h('div', { class: 'row' }, now, change, off)];
-  if (st.hasPassphrase) {
-    items.push(h('p', {}, 'Logins sync too, encrypted with your passphrase. Signing in or out here does the same on your other Mac.'));
-  } else {
+    h('p', {}, `This Mac is “${st.device}”. Both Macs share the folder ${syncPlace(st.folder)}.`),
+    table,
+    h('div', { class: 'row' }, now, change, off),
+    syncRunBox(st),
+    st.error && !st.lastRun?.error ? h('p', { style: 'color:#e5484d' }, st.error) : null,
+    h('p', { class: 'sync-note' }, `Automatic too: changes here are sent right away, and the folder is checked every 20 seconds and when you switch to Switchboard. The newer copy wins. ${lastText}`)];
+  if (!st.hasPassphrase) {
     const pass = h('input', { type: 'password', placeholder: 'Passphrase, the same on each Mac', autocomplete: 'new-password' });
     const save = h('button', { class: 'btn', onclick: () => runSync(save, () => sb.syncPassphrase(pass.value)) }, 'Sync logins');
     pass.addEventListener('keydown', e => e.key === 'Enter' && save.click());
     items.push(
-      h('p', {}, "Logins can sync too. They're stored in the folder encrypted with a passphrase; type the same one on your other Mac. Teams signs in separately on each Mac."),
+      h('p', {}, "To sync logins too, type a passphrase; use the same one on your other Mac. Teams signs in separately on each Mac."),
       h('div', { class: 'row' }, pass, save));
   }
   return h('section', {}, ...items);
@@ -3480,6 +3572,7 @@ async function init() {
   });
   sb.on('sync', st => {
     state.sync = st;
+    if (syncUi.busy) return st.running && showSyncProgress(st.running); // redrawn when done
     if (!$('#settings').hidden) renderSettings();
   });
 
