@@ -24,7 +24,7 @@ const state = {
   filter: 'all',
   query: '',
   loadingOlder: false,
-  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), people: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false },
+  view: { mode: 'all', keys: new Set(), groups: [], assign: new Map(), nicknames: new Map(), people: new Map(), pins: [], otherCollapsed: false, compact: false, flat: false, bigPictures: true, tags: [], tagOf: new Map() },
   editing: false,
   editTab: 'show', // Edit chooses which chats to 'show' or to 'pin'
   dragKey: null, // chat being dragged onto a group
@@ -78,14 +78,38 @@ function initials(name) {
 }
 
 // look: a person's chosen color/picture (see lookOf); tint puts the color on the picture too.
-function avatarEl(name, url, cls = '', look = null) {
+// base: the color when no picture or color was chosen (else one from the name).
+// url may be "ref:<account>:<ref>": a picture that needs the login (Mattermost
+// profile pictures); initials show until it has loaded.
+const avatarUrls = new Map(); // ref -> blob: URL, once loaded
+const avatarFailed = new Map(); // ref -> when it failed; not retried for a while
+function avatarEl(name, url, cls = '', look = null, base = null) {
   const tint = look?.tint ? look.color : null;
-  const fallback = () => h('div', { class: `avatar ${cls}`, style: `background:${tint || hashColor(name)}` }, initials(name));
-  const src = look?.image || url;
+  const fallback = () => h('div', { class: `avatar ${cls}`, style: `background:${tint || base || hashColor(name)}` }, initials(name));
+  let src = look?.image || url;
   if (!src) return fallback();
-  const img = h('img', { class: `avatar ${cls}`, src, alt: '', style: tint ? `box-shadow:0 0 0 2px ${tint}` : null });
-  img.addEventListener('error', () => img.replaceWith(fallback()), { once: true });
-  return img;
+  const img = () => {
+    const el = h('img', { class: `avatar ${cls}`, src, alt: '', style: tint ? `box-shadow:0 0 0 2px ${tint}` : null });
+    el.addEventListener('error', () => el.replaceWith(fallback()), { once: true });
+    return el;
+  };
+  if (src.startsWith('ref:')) {
+    const [, account, ref] = src.match(/^ref:([^:]+):(.+)$/) || [];
+    if (!ref) return fallback();
+    if (avatarUrls.has(ref)) {
+      src = avatarUrls.get(ref);
+      return img();
+    }
+    const placeholder = fallback();
+    if (Date.now() - (avatarFailed.get(ref) || 0) < 5 * 60000) return placeholder;
+    mediaUrl(`${account}:avatar`, ref).then(blobUrl => {
+      avatarUrls.set(ref, blobUrl);
+      src = blobUrl;
+      if (placeholder.isConnected) placeholder.replaceWith(img());
+    }, () => avatarFailed.set(ref, Date.now()));
+    return placeholder;
+  }
+  return img();
 }
 
 const dayKey = ts => new Date(ts).toDateString();
@@ -109,16 +133,17 @@ function formatListTime(ts) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+// Bare links, and Markdown ones ("[notes](https://...)") showing just their text.
 function linkify(text) {
   const out = [];
-  const re = /https?:\/\/[^\s<>"')\]]+/g;
+  const re = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>"')\]]+/g;
   let last = 0;
   let m;
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(text.slice(last, m.index));
-    const url = m[0];
-    out.push(h('a', { href: '#', onclick: e => { e.preventDefault(); sb.openExternal(url); } }, url));
-    last = m.index + url.length;
+    const url = m[2] || m[0];
+    out.push(h('a', { href: '#', title: url, onclick: e => { e.preventDefault(); e.stopPropagation(); sb.openExternal(url); } }, m[1] || url));
+    last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
   return out;
@@ -199,6 +224,9 @@ function saveView() {
     otherCollapsed: v.otherCollapsed,
     compact: v.compact,
     flat: v.flat,
+    bigPictures: v.bigPictures,
+    tags: v.tags,
+    tagOf: Object.fromEntries(v.tagOf),
   }).catch(e => toast(cleanError(e)));
 }
 
@@ -235,6 +263,12 @@ function setFlat(on, announce = false) {
   saveView();
   renderSidebar();
   if (!$('#settings').hidden) renderSettings();
+}
+
+function setBigPictures(on) {
+  state.view.bigPictures = on;
+  document.body.classList.toggle('big-pictures', on);
+  saveView();
 }
 
 function setCompact(on) {
@@ -395,10 +429,19 @@ async function convMenu(c) {
       { id: 'pin-up', label: 'Move pin up', enabled: pinIndex > 0 },
       { id: 'pin-down', label: 'Move pin down', enabled: pinIndex < pins.length - 1 },
     ]),
+    {
+      label: 'Tag',
+      submenu: [
+        ...state.view.tags.map(t => ({ id: `tag:${t.id}`, label: `${tagEmoji(t.color)}  ${t.name}`, checked: state.view.tagOf.get(c.key) === t.id })),
+        ...(state.view.tags.length ? [{ type: 'separator' }] : []),
+        { id: 'tag:new', label: 'New tag…' },
+        ...(state.view.tagOf.has(c.key) ? [{ id: 'tag:', label: 'Remove tag' }] : []),
+      ],
+    },
     { type: 'separator' },
     { id: 'rename', label: 'Rename (only you see this)…' },
     ...(state.view.nicknames.has(c.key) ? [{ id: 'reset', label: `Reset name to "${c.title}"` }] : []),
-    ...(c.peerId ? [{ id: 'look', label: 'Color and picture…' }] : []),
+    { id: 'look', label: c.peerId ? 'Tag, color and picture…' : 'Tag and picture…' },
     { type: 'separator' },
     ...(c.unread || c.mentions ? [{ id: 'read', label: 'Mark as read' }] : []),
     isVisible(c) ? { id: 'hide', label: 'Hide from list' } : { id: 'keep', label: 'Keep in list' },
@@ -412,7 +455,14 @@ async function convMenu(c) {
   else if (choice === 'hide') setVisible([c.key], false);
   else if (choice === 'keep') setVisible([c.key], true);
   else if (choice === 'rename') startRenameConv(c.key);
-  else if (choice === 'look') openPersonDialog(c.key, { id: c.peerId, name: c.title, avatar: c.avatar });
+  else if (choice === 'look') openLookDialog(c);
+  else if (choice === 'tag:new') {
+    openLookDialog(c);
+    setTimeout(() => document.querySelector('.tag-new')?.focus(), 50);
+  } else if (choice.startsWith('tag:')) {
+    const id = choice.slice(4);
+    setTag([c.key], id && state.view.tagOf.get(c.key) !== id ? id : null);
+  }
   else if (choice === 'reset') {
     setNickname(c.key, '');
     scheduleRender();
@@ -512,7 +562,7 @@ function scheduleRender() {
   requestAnimationFrame(() => {
     renderQueued = false;
     // Re-rendering mid-drag or mid-rename would destroy what the user is holding.
-    if (state.dragKey || state.renaming || state.renamingConv) {
+    if (state.dragKey || state.renaming || state.renamingConv || state.renamingTag) {
       state.renderPending = true;
       return;
     }
@@ -528,19 +578,56 @@ function filteredConvs() {
       if (!state.editing && !isListed(c)) return false;
       if (state.filter === 'unread' && !(c.unread || c.mentions)) return false;
       if (SERVICES[state.filter] && c.service !== state.filter) return false;
+      if (state.filter.startsWith('tag:') && tagFor(c)?.id !== state.filter.slice(4)) return false;
+      if (state.dmOnly && c.kind !== 'dm' && c.kind !== 'group') return false;
       if (q && !`${displayTitle(c)} ${c.title} ${c.subtitle}`.toLowerCase().includes(q)) return false;
       return true;
     })
     .sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0));
 }
 
+function setDmOnly(on) {
+  state.dmOnly = on;
+  try {
+    localStorage.setItem('dmOnly', on ? '1' : '');
+  } catch {}
+  renderSidebar();
+}
+
 function renderFilters() {
   const present = new Set([...state.convs.values()].map(c => c.service));
   const chips = [['all', 'All'], ['unread', 'Unread']];
   for (const s of ['discord', 'mattermost', 'slack']) if (present.has(s)) chips.push([s, SERVICES[s].name]);
+  if (state.filter.startsWith('tag:') && !tagById(state.filter.slice(4))) state.filter = 'all';
+  syncTagMenu();
   $('#filters').replaceChildren(
     ...chips.map(([id, label]) =>
       h('button', { class: `chip${state.filter === id ? ' on' : ''}`, onclick: () => { state.filter = id; renderSidebar(); } }, label)),
+    // A toggle on top of the other filters: e.g. Unread + DMs, or a tag + DMs.
+    h('button', {
+      class: `chip dm-toggle${state.dmOnly ? ' on' : ''}`,
+      title: state.dmOnly ? 'Showing only direct and group messages; click to show channels too' : 'Show only direct and group messages (no channels)',
+      onclick: () => setDmOnly(!state.dmOnly),
+    }, 'DMs'),
+    ...state.view.tags.map(t => (state.renamingTag === t.id
+      ? h('span', { class: 'chip tag-filter on', style: `--tag:${t.color}` }, h('span', { class: 'tag-dot' }),
+        inlineInput('tag-rename', t.name, v => {
+          state.renamingTag = null;
+          if (v != null && v.trim()) updateTag(t.id, { name: v.trim().slice(0, 40) });
+          renderSidebar();
+        }))
+      : h('button', {
+        class: `chip tag-filter${state.filter === `tag:${t.id}` ? ' on' : ''}`,
+        style: `--tag:${t.color}`,
+        title: MOBILE ? 'Long-press to rename or recolor'
+          : `${state.view.tags.indexOf(t) < 9 ? `⌘${state.view.tags.indexOf(t) + 1} · ` : ''}Right-click or double-click to rename or recolor`,
+        onclick: () => { state.filter = state.filter === `tag:${t.id}` ? 'all' : `tag:${t.id}`; renderSidebar(); },
+        ondblclick: MOBILE ? null : () => startRenameTag(t.id),
+        oncontextmenu: e => {
+          e.preventDefault();
+          tagMenu(t);
+        },
+      }, h('span', { class: 'tag-dot' }), t.name))),
   );
 }
 
@@ -614,8 +701,8 @@ function convRow(c) {
     },
   },
   editing ? h('span', { class: `check${checked ? ' on' : ''}`, 'aria-hidden': 'true' }, checked ? '✓' : '') : null,
-  h('div', { class: 'conv-avatar' },
-    avatarEl(name, c.avatar, '', convLook(c)),
+  h('div', { class: `conv-avatar${tagFor(c) ? ' tagged' : ''}`, style: tagFor(c) ? `--tag:${tagFor(c).color}` : null, title: tagFor(c)?.name || null },
+    avatarEl(name, c.avatar, '', convLook(c), chatBase(c)),
     h('span', { class: `svc-badge svc-${c.service}` }, SERVICES[c.service]?.letter || '?')),
   state.view.compact
     ? h('div', { class: 'conv-main' },
@@ -653,6 +740,7 @@ function appRow(app) {
 
 function renderSidebar() {
   document.body.classList.toggle('compact', state.view.compact);
+  document.body.classList.toggle('big-pictures', state.view.bigPictures);
   $('#compact-btn').classList.toggle('on', state.view.compact);
   $('#flat-btn').classList.toggle('on', state.view.flat);
   $('#flat-btn').hidden = !state.view.groups.length;
@@ -665,7 +753,7 @@ function renderSidebar() {
   const box = $('#convs');
   const scroll = box.scrollTop;
   const rows = [];
-  const expandAll = state.editing || !!state.query.trim() || state.filter !== 'all';
+  const expandAll = state.editing || !!state.query.trim() || state.filter !== 'all' || state.dmOnly;
 
   if (state.view.groups.length && !state.view.flat) {
     const buckets = new Map([...state.view.groups.map(g => [g.id, []]), ['', []]]);
@@ -688,7 +776,7 @@ function renderSidebar() {
     const connected = Object.values(state.statuses).some(s => s.state !== 'off');
     const hiddenAll = !state.editing && state.convs.size > 0;
     rows.push(h('div', { class: 'list-note' },
-      state.query || state.filter !== 'all' ? 'Nothing matches'
+      state.query || state.filter !== 'all' || state.dmOnly ? 'Nothing matches'
         : hiddenAll ? 'No chats chosen yet. Click Edit to pick some.'
           : connected ? 'Loading conversations…' : 'Connect an account in Settings'));
   }
@@ -746,11 +834,12 @@ function renderHeader(c) {
   const svc = SERVICES[c.service];
   $('#chat-header').replaceChildren(
     ...(MOBILE ? [h('button', { class: 'back-btn', 'aria-label': 'Back', onclick: closeConversation }, '‹')] : []),
-    c.peerId ? h('button', {
-      class: 'person-btn',
-      title: 'Choose a color or picture for this person',
-      onclick: () => openPersonDialog(c.key, { id: c.peerId, name: c.title, avatar: c.avatar }),
-    }, avatarEl(displayTitle(c), c.avatar, '', convLook(c))) : avatarEl(displayTitle(c), c.avatar),
+    h('button', {
+      class: `person-btn${tagFor(c) ? ' tagged' : ''}`,
+      style: tagFor(c) ? `--tag:${tagFor(c).color}` : null,
+      title: `${tagFor(c) ? `Tag: ${tagFor(c).name}. ` : ''}Tag this chat, or choose a ${c.peerId ? 'color or picture for this person' : 'picture for it'}`,
+      onclick: () => openLookDialog(c),
+    }, avatarEl(displayTitle(c), c.avatar, '', convLook(c), chatBase(c))),
     h('div', { class: 'chat-titles' },
       h('div', { class: 'chat-title' },
         h('span', {}, displayTitle(c)),
@@ -766,11 +855,74 @@ function renderHeader(c) {
             }));
           },
         }, '✎')),
-      h('div', { class: 'chat-sub' }, displayTitle(c) !== c.title ? `${c.title} · ${c.subtitle}` : c.subtitle)),
+      c.topic
+        ? h('div', { class: 'chat-sub chat-topic', title: 'Channel header and pinned messages', onclick: () => openChannelInfo(c) }, ...linkify(c.topic.replace(/\s*\n\s*/g, ' · ')))
+        : h('div', { class: 'chat-sub' }, displayTitle(c) !== c.title ? `${c.title} · ${c.subtitle}` : c.subtitle)),
+    c.hasPins ? pinButton(c) : null,
     h('span', { class: `svc-tag svc-${c.service}` }, svc?.name || c.service),
   );
   $('#composer-input').placeholder = `Message ${displayTitle(c)}`;
 }
+
+// Pinned messages, fetched when a chat opens and kept for a couple of minutes.
+const pinCache = new Map(); // key -> { at, list: Promise<message[]> }
+function pinsOf(key, fresh = false) {
+  const hit = pinCache.get(key);
+  if (hit && !fresh && Date.now() - hit.at < 120000) return hit.list;
+  const list = sb.pinned(key).catch(() => []);
+  pinCache.set(key, { at: Date.now(), list });
+  return list;
+}
+
+// "📌 3" in the header when the chat has pinned messages; opens the info panel.
+function pinButton(c) {
+  const btn = h('button', { class: 'pin-btn', hidden: true, title: 'Pinned messages', onclick: () => openChannelInfo(c) });
+  pinsOf(c.key).then(list => {
+    btn.textContent = `📌 ${list.length}`;
+    btn.hidden = !list.length;
+  });
+  return btn;
+}
+
+// The channel header in full, then the pinned messages (newest first). Tapping
+// one jumps to it in the chat.
+function openChannelInfo(c) {
+  const modal = h('div', { class: 'modal', onclick: e => e.target === modal && close() });
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    close();
+  };
+  const close = () => {
+    modal.remove();
+    document.removeEventListener('keydown', onKey, true);
+    if (closeChannelInfo === close) closeChannelInfo = null;
+  };
+  closeChannelInfo = close;
+  const list = h('div', { class: 'pin-list' }, h('p', {}, 'Loading…'));
+  modal.append(h('div', { class: 'dialog info-dialog' },
+    h('h2', {}, displayTitle(c)),
+    c.topic ? h('section', {}, h('h3', {}, 'Header'), h('div', { class: 'info-topic' }, ...richText(c.topic))) : null,
+    h('section', {}, h('h3', {}, 'Pinned messages'), list),
+    h('div', { class: 'row end' }, h('button', { class: 'btn', onclick: () => close() }, 'Close'))));
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(modal);
+  pinsOf(c.key, true).then(pins => {
+    if (!pins.length) return list.replaceChildren(h('p', {}, 'Nothing is pinned in this chat.'));
+    list.replaceChildren(...pins.map(m => h('div', {
+      class: 'pin-item',
+      onclick: e => {
+        if (e.target.closest('a, img, video, .file-chip')) return;
+        close();
+        jumpToMessage(m.id, m.ts);
+      },
+    },
+      h('div', { class: 'pin-meta' }, h('b', {}, m.isSelf ? 'You' : m.author.name), ` · ${formatDay(m.ts)} ${formatTime(m.ts)}`),
+      m.text ? h('div', { class: 'pin-text' }, ...richText(m.text, m.customEmoji)) : null,
+      ...(m.attachments || []).map(mediaEl))));
+  });
+}
+let closeChannelInfo = null;
 
 async function openConversation(key) {
   const conv = state.convs.get(key);
@@ -784,6 +936,7 @@ async function openConversation(key) {
   document.body.classList.add('chat-open');
   renderHeader(conv);
   renderStaged();
+  if (state.share) deliverShare();
   state.floatKey = !conv.muted && (conv.unread || conv.mentions) ? key : null;
   state.newMark = unreadOf(conv) > 0 ? { key, count: unreadOf(conv) } : null;
   if (conv.unread || conv.mentions) {
@@ -838,7 +991,7 @@ function mergeMessages(old = [], fresh) {
   ];
 }
 
-const signature = list => JSON.stringify((list || []).map(m => [m.id, m.text, m.reactions?.map(r => [r.key, r.count, r.me])]));
+const signature = list => JSON.stringify((list || []).map(m => [m.id, m.text, m.replyTo?.id, m.reactions?.map(r => [r.key, r.count, r.me])]));
 
 // Re-reads the open chat quietly: after waking up, and on the phone every few
 // seconds as a safety net for live updates that Android may have frozen.
@@ -1135,7 +1288,7 @@ function reactionChips(m, convKey) {
   h('span', {}, r.count))));
 }
 
-function bubbleEl(m, { key, last, showName, showAvatar }) {
+function bubbleEl(m, { key, last, showName, showAvatar, quote = true }) {
   const look = showName || showAvatar ? lookOf(personKey(key, m.author)) : null;
   const parts = [];
   if (m.text) {
@@ -1151,14 +1304,14 @@ function bubbleEl(m, { key, last, showName, showAvatar }) {
     onclick: e => { e.stopPropagation(); openPersonDialog(key, m.author); },
   }, m.author.name) : null;
   const label = author || m.isReply ? [author, author && m.isReply ? ' · ' : null, m.isReply ? 'reply in thread' : null] : null;
-  if (m.replyTo) {
+  if (m.replyTo && quote) {
     parts.unshift(h('div', {
       class: 'reply-quote',
       title: m.replyTo.id ? 'Show the original message' : null,
-      onclick: () => jumpToMessage(m.replyTo.id),
+      onclick: () => jumpToMessage(m.replyTo.id, m.replyTo.ts),
     },
-    m.replyTo.author ? h('span', { class: 'reply-author' }, `↪ ${m.replyTo.author} `) : '↪ ',
-    m.replyTo.text));
+    h('div', { class: 'reply-author' }, `↪ ${m.replyTo.author || 'Reply'}`),
+    m.replyTo.text ? h('div', { class: 'reply-text' }, m.replyTo.text.replace(/\s+/g, ' ').trim()) : null));
   }
   const stack = h('div', {
     class: 'msg-stack',
@@ -1349,7 +1502,175 @@ function showReactTip(convKey, m, r, anchor) {
 const PERSON_COLORS = ['#e5484d', '#f76b15', '#c99400', '#30a46c', '#12a594', '#0090ff', '#3e63dd', '#8e4ec6', '#d6409f', '#8d8d86'];
 const personKey = (convKey, author) => `${state.convs.get(convKey)?.provider || convKey.split(':')[0]}:${author.id}`;
 const lookOf = pkey => state.view.people.get(pkey) || null;
-const convLook = c => (c.peerId ? lookOf(`${c.provider}:${c.peerId}`) : null);
+// A direct message uses the person's look; a group or channel has its own.
+const chatLookKey = c => `chat:${c.key}`;
+const convLook = c => (c.peerId ? lookOf(`${c.provider}:${c.peerId}`) : { image: lookOf(chatLookKey(c))?.image });
+// Groups and channels are gray unless tagged; people keep a color from their name.
+const CHAT_GRAY = '#7a7a80';
+const chatBase = c => (c.peerId ? null : tagFor(c)?.color || CHAT_GRAY);
+
+// ----- color tags: named colors on any chat, or on a whole server (Mattermost
+// team, Discord server, Slack workspace). A chat's own tag wins over its
+// server's. Tagged chats get a ring in the tag's color, and each tag is a
+// filter above the list. -----
+
+const COLOR_NAMES = { '#e5484d': 'Red', '#f76b15': 'Orange', '#c99400': 'Yellow', '#30a46c': 'Green', '#12a594': 'Teal', '#0090ff': 'Blue', '#3e63dd': 'Indigo', '#8e4ec6': 'Purple', '#d6409f': 'Pink', '#8d8d86': 'Gray' };
+const serverTagKey = c => (c.server ? `server:${c.provider}:${c.server.id}` : null);
+const tagById = id => (id && state.view.tags.find(t => t.id === id)) || null;
+const tagFor = c => tagById(state.view.tagOf.get(c.key)) || (c.server ? tagById(state.view.tagOf.get(serverTagKey(c))) : null);
+
+function setTag(keys, id) {
+  for (const key of keys) {
+    if (id) state.view.tagOf.set(key, id);
+    else state.view.tagOf.delete(key);
+  }
+  saveView();
+  scheduleRender();
+  const open = state.convs.get(state.openKey);
+  if (open) renderHeader(open);
+}
+
+function createTag(name) {
+  const used = new Set(state.view.tags.map(t => t.color));
+  const color = PERSON_COLORS.find(c => !used.has(c)) || PERSON_COLORS[state.view.tags.length % PERSON_COLORS.length];
+  const tag = { id: `t${Date.now().toString(36)}`, name: name.trim().slice(0, 40) || 'Tag', color };
+  state.view.tags.push(tag);
+  saveView();
+  renderFilters();
+  return tag;
+}
+
+function updateTag(id, changes) {
+  Object.assign(tagById(id) || {}, changes);
+  saveView();
+  scheduleRender();
+  const open = state.convs.get(state.openKey);
+  if (open) renderHeader(open);
+}
+
+function moveTag(i, delta) {
+  const list = state.view.tags;
+  const j = i + delta;
+  if (j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  saveView();
+  scheduleRender();
+}
+
+// ⌘1–⌘9: just the chats with that tag; the same key again shows everything.
+function showTag(n) {
+  const tag = state.view.tags[n - 1];
+  if (!tag) return toast(`There is no tag ${n} yet`);
+  state.filter = state.filter === `tag:${tag.id}` ? 'all' : `tag:${tag.id}`;
+  renderSidebar();
+}
+
+let menuTags = '';
+function syncTagMenu() {
+  const names = JSON.stringify(state.view.tags.map(t => t.name));
+  if (names === menuTags || !sb.setTagNames) return;
+  menuTags = names;
+  sb.setTagNames(state.view.tags.map(t => t.name));
+}
+
+function startRenameTag(id) {
+  state.renamingTag = id;
+  renderSidebar();
+}
+
+async function tagMenu(t) {
+  const count = [...state.convs.values()].filter(c => tagFor(c)?.id === t.id).length;
+  const choice = await sb.popupMenu([
+    { id: 'rename', label: 'Rename…' },
+    {
+      label: 'Color',
+      submenu: PERSON_COLORS.map(color => ({ id: `color:${color}`, label: `${tagEmoji(color)}  ${COLOR_NAMES[color]}`, checked: t.color === color })),
+    },
+    { type: 'separator' },
+    { id: 'delete', label: `Delete "${t.name}" (${count} chat${count === 1 ? '' : 's'} untagged)` },
+  ]);
+  if (choice === 'rename') startRenameTag(t.id);
+  else if (choice?.startsWith('color:')) updateTag(t.id, { color: choice.slice(6) });
+  else if (choice === 'delete') deleteTag(t.id);
+}
+
+function deleteTag(id) {
+  state.view.tags = state.view.tags.filter(t => t.id !== id);
+  for (const [key, tid] of state.view.tagOf) if (tid === id) state.view.tagOf.delete(key);
+  if (state.filter === `tag:${id}`) state.filter = 'all';
+  saveView();
+  scheduleRender();
+  const open = state.convs.get(state.openKey);
+  if (open) renderHeader(open);
+}
+
+// For menus, which can't show colors: the nearest colored circle.
+function tagEmoji(color) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  if (max - min < 0.12) return max > 0.8 ? '⚪' : max < 0.25 ? '⚫' : '⚪';
+  let hue = max === r ? ((g - b) / (max - min)) % 6 : max === g ? (b - r) / (max - min) + 2 : (r - g) / (max - min) + 4;
+  hue = (hue * 60 + 360) % 360;
+  return hue < 15 || hue >= 330 ? '🔴' : hue < 40 ? '🟠' : hue < 70 ? '🟡' : hue < 170 ? '🟢' : hue < 265 ? '🔵' : '🟣';
+}
+
+// Colors put on single chats before tags existed become tags named after the color.
+function migrateChatColors() {
+  if (state.view.tags.length) return;
+  const byColor = new Map();
+  for (const [key, look] of state.view.people) {
+    if (!key.startsWith('chat:') || !look.color) continue;
+    if (!byColor.has(look.color)) byColor.set(look.color, []);
+    byColor.get(look.color).push(key.slice(5));
+    const { color, tint, ...rest } = look;
+    if (rest.image) state.view.people.set(key, rest);
+    else state.view.people.delete(key);
+  }
+  if (!byColor.size) return;
+  for (const [color, keys] of byColor) {
+    const tag = { id: `t-${color.slice(1).toLowerCase()}`, name: COLOR_NAMES[color.toLowerCase()] || color, color };
+    state.view.tags.push(tag);
+    for (const key of keys) state.view.tagOf.set(key, tag.id);
+  }
+  saveView();
+}
+
+// The tag chips in a chat's dialog: its own tag, and for a channel its server's.
+function tagSection(conv, rerender) {
+  const chips = (key, current) => state.view.tags.map(t => h('button', {
+    class: `tag-chip${current === t.id ? ' on' : ''}`,
+    style: `--tag:${t.color}`,
+    onclick: () => {
+      setTag([key], current === t.id ? null : t.id);
+      rerender();
+    },
+  }, h('span', { class: 'tag-dot' }), t.name));
+  const add = h('input', {
+    class: 'tag-new',
+    placeholder: '+ New tag',
+    maxlength: '40',
+    onkeydown: e => {
+      if (e.key !== 'Enter' || !add.value.trim()) return;
+      e.preventDefault();
+      setTag([conv.key], createTag(add.value).id);
+      rerender();
+    },
+  });
+  const serverKey = serverTagKey(conv);
+  return h('section', {},
+    h('h3', {}, 'Tag'),
+    h('p', {}, 'Rings this chat in the tag\'s color; each tag is also a filter above the chat list.'),
+    h('div', { class: 'tag-chips' }, ...chips(conv.key, state.view.tagOf.get(conv.key)), add),
+    serverKey && state.view.tags.length ? h('p', {}, `Or tag everything in ${conv.server.name}:`) : null,
+    serverKey && state.view.tags.length ? h('div', { class: 'tag-chips' }, ...chips(serverKey, state.view.tagOf.get(serverKey))) : null);
+}
+
+// Color and picture for a chat: the person's for a direct message, else the chat's.
+function openLookDialog(c) {
+  if (c.peerId) openPersonDialog(c.key, { id: c.peerId, name: c.title, avatar: c.avatar }, null, c);
+  else openPersonDialog(c.key, { name: displayTitle(c), avatar: c.avatar }, c, c);
+}
 
 function setLook(pkey, changes) {
   const next = { ...lookOf(pkey), ...changes };
@@ -1376,8 +1697,10 @@ async function pictureFromFile(file) {
   return canvas.toDataURL('image/webp', 0.85);
 }
 
-function openPersonDialog(convKey, author) {
-  const pkey = personKey(convKey, author);
+// chat: set for a group or channel (a picture, no name color). conv: the chat
+// this was opened for, which gets the tag section.
+function openPersonDialog(convKey, author, chat = null, conv = null) {
+  const pkey = chat ? chatLookKey(chat) : personKey(convKey, author);
   const modal = h('div', { class: 'modal', onclick: e => e.target === modal && close() });
   const onKey = e => {
     if (e.key !== 'Escape') return;
@@ -1397,8 +1720,7 @@ function openPersonDialog(convKey, author) {
       file.value = '';
       if (!f) return;
       try {
-        setLook(pkey, { image: await pictureFromFile(f) });
-        render();
+        change({ image: await pictureFromFile(f) });
       } catch {
         toast("Couldn't read that picture; try a PNG or JPEG");
       }
@@ -1407,16 +1729,18 @@ function openPersonDialog(convKey, author) {
   const change = changes => {
     setLook(pkey, changes);
     render();
+    if (conv && convKey === state.openKey) renderHeader(conv);
   };
   const render = () => {
     const look = lookOf(pkey) || {};
     modal.replaceChildren(h('div', { class: 'dialog person-dialog' },
       h('div', { class: 'person-head' },
-        avatarEl(author.name, author.avatar, 'person-preview', look),
+        avatarEl(author.name, author.avatar, 'person-preview', chat ? { image: look.image } : look, chat ? chatBase(chat) : null),
         h('div', {},
-          h('h2', { style: look.color ? `color:${look.color}` : null }, author.name),
+          h('h2', { style: !chat && look.color ? `color:${look.color}` : null }, author.name),
           h('p', {}, 'Only you see these changes.'))),
-      h('section', {},
+      conv ? tagSection(conv, render) : null,
+      chat ? null : h('section', {},
         h('h3', {}, 'Name color'),
         h('div', { class: 'swatches' },
           h('button', { class: `swatch none${look.color ? '' : ' on'}`, title: 'Default', onclick: () => change({ color: null }) }),
@@ -1433,12 +1757,14 @@ function openPersonDialog(convKey, author) {
             value: look.color || '#888888',
             onchange: e => change({ color: e.target.value }),
           })),
-        h('label', { class: 'edit-new' },
+        chat ? null : h('label', { class: 'edit-new' },
           h('input', { type: 'checkbox', checked: !!look.tint, disabled: !look.color, onchange: e => change({ tint: e.target.checked || null }) }),
           'Use it for their picture too')),
       h('section', {},
         h('h3', {}, 'Picture'),
-        h('p', {}, look.image ? 'Your picture replaces theirs in Switchboard.' : 'Upload a picture to use instead of theirs.'),
+        h('p', {}, chat
+          ? look.image ? 'Shown as this chat\'s icon in Switchboard.' : 'Upload a picture to use as this chat\'s icon.'
+          : look.image ? 'Your picture replaces theirs in Switchboard.' : 'Upload a picture to use instead of theirs.'),
         h('div', { class: 'row' },
           h('button', { class: 'btn', onclick: () => file.click() }, look.image ? 'Change picture…' : 'Upload picture…'),
           look.image ? h('button', { class: 'btn danger', onclick: () => change({ image: null }) }, 'Remove picture') : null)),
@@ -1512,11 +1838,56 @@ async function sendGif(g) {
   }
 }
 
-function jumpToMessage(id) {
-  const row = id && [...document.querySelectorAll('#messages .msg-row')].find(el => el.dataset.id === id);
+const findRow = id => id && [...document.querySelectorAll('#messages .msg-row')].find(el => el.dataset.id === id);
+const JUMP_PAGES = 30; // how far back a reply's original is looked for: about 1,500 messages
+
+// Scrolls to a message, loading earlier history first when it isn't loaded yet.
+// ts (when the provider knows it) stops the search once history passes that
+// time. Switching chats or scrolling stops it too.
+async function jumpToMessage(id, ts) {
+  const key = state.openKey;
+  const list = state.messages.get(key);
+  let row = findRow(id);
+  if (!row && key && list?.length && !state.loadingOlder) {
+    state.loadingOlder = true;
+    const started = Date.now();
+    toast('Finding the original message…');
+    let pages = 0;
+    try {
+      while (pages < JUMP_PAGES && !state.exhausted.has(key) && !list.some(m => m.id === id)) {
+        if (ts && list[0].ts < ts) break; // already past it: the original was deleted
+        const older = await sb.fetchMessages(key, list[0].id);
+        pages++;
+        if (older.length < PAGE) state.exhausted.add(key);
+        const ids = new Set(list.map(m => m.id));
+        list.unshift(...older.filter(m => !ids.has(m.id)));
+        if (state.openKey !== key || (userScrolling() && userScrollAt > started)) break;
+      }
+    } catch (e) {
+      toast(cleanError(e));
+    } finally {
+      state.loadingOlder = false;
+    }
+    if (state.openKey !== key) return;
+    if (pages) {
+      const box = $('#messages');
+      const fromBottom = box.scrollHeight - box.scrollTop;
+      renderMessages(key);
+      box.scrollTop = box.scrollHeight - fromBottom;
+    }
+    row = findRow(id);
+    if (row) $('#toast').hidden = true;
+    else if (userScrollAt > started) return;
+    else if (ts && list[0].ts < ts) return toast('The original message was deleted');
+    else if (state.exhausted.has(key)) return toast("Couldn't find the original message");
+    else return toast(`The original is more than ${(list.length / 1000).toFixed(1).replace('.0', '')}k messages back`);
+  }
   if (!row) return toast('The original message is further back; scroll up to load it');
   stickToBottom = false; // stay on the quoted message even if pictures below finish loading
-  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  jumpedAt = Date.now();
+  const box = $('#messages');
+  const far = Math.abs(row.getBoundingClientRect().top - box.getBoundingClientRect().top) > 3 * box.clientHeight;
+  row.scrollIntoView({ block: 'center', behavior: far ? 'auto' : 'smooth' });
   row.classList.remove('flash');
   void row.offsetWidth; // restart the animation
   row.classList.add('flash');
@@ -1547,6 +1918,8 @@ function renderMessages(key) {
       last: !sameRun(m, list[i + 1]),
       showName: group && !m.isSelf && first,
       showAvatar: group && !m.isSelf,
+      // Several messages in a row answering the same one show its quote once.
+      quote: !(m.replyTo?.id && !first && prev?.replyTo?.id === m.replyTo.id),
     }));
     if (first) nodes[nodes.length - 1].classList.add('first');
   });
@@ -1563,6 +1936,7 @@ function scrollToBottom() {
 // scrollbar). Scrolls without that are the page settling: pictures loading,
 // a re-render. Those must not unstick the chat from the bottom.
 let userScrollAt = 0;
+let jumpedAt = 0; // a jump to a quoted message; its scrolling must not re-stick to the bottom
 const userScrolling = () => Date.now() - userScrollAt < 1000;
 
 async function loadOlder() {
@@ -1621,6 +1995,56 @@ function onMessage({ key, message, counts, quiet = false }) {
     }
   }
   scheduleRender();
+}
+
+// ----- sharing from other apps (phone): "Send 1 picture to…" over the chat
+// list; the chat you tap gets the files in its composer, ready to send. -----
+
+function startShare(share) {
+  if (share.failed) toast(`${share.failed === 1 ? 'One file' : `${share.failed} files`} couldn't be read from the other app`);
+  else if (share.tooLarge) toast(`${share.tooLarge === 1 ? 'One file is' : `${share.tooLarge} files are`} too large to share (50 MB at most)`);
+  if (!share.files.length && !share.text) return;
+  state.share = share;
+  if (!$('#settings').hidden) closeSettings();
+  if (state.openKey) closeConversation();
+  renderShareBar();
+}
+
+function shareLabel({ files, text }) {
+  if (!files.length) return /^https?:\/\/\S+$/.test(text.trim()) ? 'a link' : 'text';
+  const kind = files.every(f => f.type.startsWith('image/')) ? 'picture' : files.every(f => f.type.startsWith('video/')) ? 'video' : 'file';
+  return files.length === 1 ? `1 ${kind}` : `${files.length} ${kind}s`;
+}
+
+function renderShareBar() {
+  let bar = $('#share-bar');
+  if (!state.share) return bar?.remove();
+  if (!bar) {
+    bar = h('div', { id: 'share-bar', class: 'share-bar' });
+    $('#sidebar .drag').after(bar);
+  }
+  bar.replaceChildren(
+    h('span', {}, `Send ${shareLabel(state.share)} to…`),
+    h('button', { class: 'link-btn', onclick: () => cancelShare() }, 'Cancel'));
+}
+
+function cancelShare() {
+  state.share = null;
+  renderShareBar();
+}
+
+// Called when a chat opens while something is waiting to be shared.
+function deliverShare() {
+  const { files, text } = state.share;
+  state.share = null;
+  renderShareBar();
+  if (files.length) stageFiles(files);
+  if (text) {
+    const input = $('#composer-input');
+    input.value = input.value ? `${input.value} ${text}` : text;
+    autosize();
+    input.focus();
+  }
 }
 
 function closeConversation() {
@@ -1895,15 +2319,70 @@ function phoneSection() {
     box);
 }
 
+function tagsSection() {
+  const tags = state.view.tags;
+  return h('section', {},
+    h('h3', {}, 'Tags'),
+    h('p', {}, tags.length
+      ? `Rename, recolor or delete tags here, or ${MOBILE ? 'long-press' : 'right-click'} a tag above the chat list. Put a tag on a chat from its menu (Tag) or by clicking its picture at the top of the chat.${MOBILE ? '' : ' ⌘1–⌘9 show just the 1st–9th tag; the same key again shows everything.'}`
+      : (MOBILE ? 'Long-press' : 'Right-click') + ' a chat → Tag → New tag… to make your first tag, e.g. "CMS" or "Students".'),
+    ...tags.map((t, i) => h('div', { class: 'row tag-row' },
+      MOBILE ? null : h('span', { class: 'tag-key' }, i < 9 ? `⌘${i + 1}` : ''),
+      h('input', { type: 'color', class: 'swatch-custom', value: t.color, title: 'Tag color', onchange: e => { updateTag(t.id, { color: e.target.value }); renderSettings(); } }),
+      h('input', { value: t.name, maxlength: '40', placeholder: 'Tag name', oninput: e => e.target.value.trim() && updateTag(t.id, { name: e.target.value.trim() }) }),
+      h('span', { class: 'edit-count' }, `${[...state.convs.values()].filter(c => tagFor(c)?.id === t.id).length} chats`),
+      h('button', { class: 'btn small', title: 'Move up', disabled: i === 0, onclick: () => { moveTag(i, -1); renderSettings(); } }, '↑'),
+      h('button', { class: 'btn small', title: 'Move down', disabled: i === tags.length - 1, onclick: () => { moveTag(i, 1); renderSettings(); } }, '↓'),
+      h('button', { class: 'btn danger small', onclick: () => { deleteTag(t.id); renderSettings(); } }, 'Delete'))));
+}
+
+// ----- size: the whole app (zoom) and message text (chatText) -----
+
+const ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const CHAT_TEXT_STEPS = [0.85, 1, 1.15, 1.3, 1.5];
+
+function applyDisplay() {
+  document.body.style.setProperty('--chat-scale', String(state.display?.chatText || 1));
+}
+
+function stepDisplay(field, steps, dir) {
+  const now = state.display[field];
+  const i = steps.indexOf(now);
+  const next = dir === 0 ? 1 : steps[Math.min(steps.length - 1, Math.max(0, (i === -1 ? steps.indexOf(1) : i) + dir))];
+  if (next === now) return;
+  sb.setDisplay({ [field]: next }).then(d => {
+    state.display = d;
+    applyDisplay();
+    renderSettings();
+    if (field === 'chatText' && stickToBottom) scrollToBottom();
+  }).catch(e => toast(cleanError(e)));
+}
+
+function sizeRow(label, field, steps) {
+  const value = state.display[field];
+  return h('div', { class: 'row size-row' },
+    h('span', { class: 'size-label' }, label),
+    h('button', { class: 'btn small', disabled: value <= steps[0], 'aria-label': `${label} smaller`, onclick: () => stepDisplay(field, steps, -1) }, '−'),
+    h('span', { class: 'size-value' }, `${Math.round(value * 100)}%`),
+    h('button', { class: 'btn small', disabled: value >= steps[steps.length - 1], 'aria-label': `${label} bigger`, onclick: () => stepDisplay(field, steps, 1) }, '+'),
+    value !== 1 ? h('button', { class: 'link-btn', onclick: () => stepDisplay(field, steps, 0) }, 'Reset') : null);
+}
+
 function appearanceSection() {
   return h('section', {},
     h('h3', {}, 'Appearance'),
+    sizeRow(MOBILE ? 'Text size' : 'Size of everything', 'zoom', ZOOM_STEPS),
+    sizeRow('Message text', 'chatText', CHAT_TEXT_STEPS),
+    MOBILE ? null : h('p', {}, 'Shortcuts: ⌘+ bigger, ⌘− smaller, ⌘0 actual size. Message text sizes the chat on top of that.'),
     h('label', { class: 'edit-new' },
       h('input', { type: 'checkbox', checked: state.view.compact, onchange: e => setCompact(e.target.checked) }),
       'Compact chat list'),
     h('label', { class: 'edit-new' },
       h('input', { type: 'checkbox', checked: state.view.flat, onchange: e => setFlat(e.target.checked) }),
       'Latest first (ignore groups; newest message at the top)'),
+    h('label', { class: 'edit-new' },
+      h('input', { type: 'checkbox', checked: state.view.bigPictures, onchange: e => setBigPictures(e.target.checked) }),
+      'Bigger pictures next to messages'),
     MOBILE
       ? h('p', {}, 'Long-press a chat to put it in a group, rename it or hide it.')
       : h('p', {}, 'Organize the list by right-clicking a chat (Move to group), dragging a chat onto a group, or clicking + New group at the bottom of the list.'),
@@ -1959,12 +2438,23 @@ function phoneAccountsSection() {
 }
 
 function renderSettings() {
+  // Redrawing (an account reconnecting, sync finishing) would wipe what is being
+  // typed, so wait until the field is left.
+  const typing = document.activeElement;
+  if ($('#settings').contains(typing) && typing.matches('input:not([type=color]):not([type=checkbox]), textarea')) {
+    if (!typing.dataset.redrawLater) {
+      typing.dataset.redrawLater = '1';
+      typing.addEventListener('blur', () => setTimeout(() => !$('#settings').hidden && renderSettings()), { once: true });
+    }
+    return;
+  }
   const s = state.settings;
   const children = [h('h2', {}, MOBILE ? 'Settings' : 'Accounts')];
   if (MOBILE) children.push(phoneAccountsSection());
   else if (s.demo) children.push(h('p', {}, 'Demo mode: showing sample conversations. Run the app normally to connect real accounts.'));
   else children.push(discordSection(), mattermostSection(), slackSection(), webAppsSection(), syncSection(), phoneSection());
   children.push(appearanceSection());
+  children.push(tagsSection());
   children.push(h('div', { class: 'dialog-actions' }, h('button', { class: 'btn', onclick: closeSettings }, 'Done')));
   $('#settings .dialog').replaceChildren(...children);
 }
@@ -2050,13 +2540,16 @@ function hotkey(action) {
   else if (action === 'prev') navigate(-1);
   else if (action === 'flat') setFlat(!state.view.flat, true);
   else if (action === 'refresh') refreshOpen();
+  else if (action.startsWith('tag:')) showTag(Number(action.slice(4)));
   else if (action === 'back') {
     // Android back button: close whatever is on top, else leave the app.
     if (closePopover) closePopover();
     else if (document.querySelector('.lightbox')) document.querySelector('.lightbox').remove();
+    else if (closeChannelInfo) closeChannelInfo();
     else if (!$('#settings').hidden) closeSettings();
     else if (state.renamingConv || state.renaming) document.activeElement?.blur();
     else if (state.editing) setEditing(false);
+    else if (state.share) cancelShare();
     else if (state.openKey) closeConversation();
     else sb.exit?.();
   }
@@ -2173,8 +2666,10 @@ function bindUi() {
   }
   $('#messages').addEventListener('scroll', e => {
     const box = e.target;
-    if (box.scrollHeight - box.scrollTop - box.clientHeight < 60) stickToBottom = true;
-    else if (userScrolling()) stickToBottom = false;
+    const jumping = Date.now() - jumpedAt < 1500 && !userScrolling();
+    if (box.scrollHeight - box.scrollTop - box.clientHeight < 60) {
+      if (!jumping) stickToBottom = true;
+    } else if (userScrolling()) stickToBottom = false;
     if (box.scrollTop < 150) loadOlder();
   });
   // Pictures, GIFs and custom emoji only get their height once loaded. When
@@ -2275,6 +2770,9 @@ function viewFrom(v = {}) {
     otherCollapsed: !!v.otherCollapsed,
     compact: !!v.compact,
     flat: !!v.flat,
+    bigPictures: v.bigPictures !== false, // on unless turned off
+    tags: Array.isArray(v.tags) ? v.tags : [],
+    tagOf: new Map(Object.entries(v.tagOf || {})),
   };
 }
 
@@ -2285,13 +2783,22 @@ async function init() {
   }
   const initial = await sb.getState();
   state.settings = initial.settings;
+  try {
+    state.dmOnly = localStorage.getItem('dmOnly') === '1'; // remembered on this computer only
+  } catch {}
+  state.display = initial.settings.display || { zoom: 1, chatText: 1 };
+  applyDisplay();
   state.statuses = initial.statuses;
   state.view = viewFrom(initial.settings.view);
+  migrateChatColors();
   for (const c of initial.conversations) state.convs.set(c.key, c);
 
   sb.on('conversations', ({ provider, list }) => {
+    const before = state.convs.get(state.openKey);
     for (const [key, c] of state.convs) if (c.provider === provider) state.convs.delete(key);
     for (const c of list) state.convs.set(c.key, c);
+    const now = state.convs.get(state.openKey);
+    if (before && now && (now.topic !== before.topic || now.title !== before.title)) renderHeader(now);
     if (state.openKey && !state.convs.has(state.openKey)) {
       state.openKey = null;
       showPane('empty');
@@ -2306,6 +2813,13 @@ async function init() {
   sb.on('message', onMessage);
   sb.on('reaction', ({ key, messageId, reaction, mine, delta }) => applyReaction(key, messageId, reaction, mine, delta));
   sb.on('hotkey', hotkey); // pressed while a web app had focus
+  sb.on('shared', startShare); // phone: shared from another app
+  // Size changed with ⌘+ / ⌘− / ⌘0 (or in Settings).
+  sb.on('display', d => {
+    state.display = d;
+    applyDisplay();
+    if (!$('#settings').hidden) renderSettings();
+  });
   // Settings changed by the other Mac (sync) or by signing in there.
   sb.on('settings', s => {
     state.settings = s;

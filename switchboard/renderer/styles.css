@@ -85,10 +85,9 @@ input, textarea { font: inherit; color: inherit; }
 
 .filters {
   display: flex;
+  flex-wrap: wrap; /* tags add chips; wrap rather than hide them off the edge */
   gap: 2px;
   padding: 0 12px 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .filters::-webkit-scrollbar { display: none; }
 .chip {
@@ -313,6 +312,36 @@ button.list-note { display: block; width: 100%; }
 }
 .header-rename { font-size: 14px; width: 320px; }
 .chat-sub { color: var(--muted); font-size: 12px; }
+.chat-topic {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-topic a { color: inherit; text-decoration: underline; text-decoration-color: var(--faint); }
+.chat-titles { flex: 1; }
+.pin-btn {
+  -webkit-app-region: no-drag;
+  flex: none;
+  border: none;
+  background: var(--hover);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pin-btn:hover { color: var(--text); }
+.pin-btn[hidden] { display: none; }
+.info-topic { margin-top: 8px; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pin-list { margin-top: 6px; }
+.pin-item { padding: 8px 10px; margin: 0 -10px; border-radius: 8px; cursor: pointer; }
+.pin-item:hover { background: var(--hover); }
+.pin-meta { color: var(--muted); font-size: 11px; }
+.pin-meta b { color: var(--text); font-weight: 600; }
+.pin-text { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 2px; }
+.pin-item .bubble-image { display: block; margin-top: 6px; max-width: 240px; max-height: 180px; border-radius: 10px; }
 .svc-tag {
   margin-left: auto;
   font-size: 11px;
@@ -334,6 +363,7 @@ button.list-note { display: block; width: 100%; }
 .msg-row.first { margin-top: 10px; }
 .msg-row.me { justify-content: flex-end; }
 .msg-avatar { width: 28px; height: 28px; flex: none; font-size: 11px; }
+.big-pictures .msg-avatar { width: 36px; height: 36px; font-size: 13px; }
 .msg-stack { display: flex; flex-direction: column; gap: 2px; max-width: min(70%, 560px); min-width: 0; }
 .msg-row.me .msg-stack { align-items: flex-end; }
 .msg-row.them .msg-stack { align-items: flex-start; }
@@ -342,7 +372,7 @@ button.list-note { display: block; width: 100%; }
 .bubble {
   padding: 7px 12px;
   border-radius: 18px;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--chat-scale, 1));
   line-height: 1.35;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -376,27 +406,27 @@ button.list-note { display: block; width: 100%; }
 }
 .reply-quote {
   max-width: 100%;
+  min-width: 0;
   padding: 4px 10px;
-  margin-bottom: 1px;
+  margin: 4px 0 1px; /* a little space above, so it reads as part of the message below it */
   border-left: 3px solid var(--faint);
   border-radius: 6px;
   background: var(--input);
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--chat-scale, 1));
   line-height: 1.35;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
   cursor: pointer;
 }
+.reply-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .reply-quote:hover { color: var(--text); }
-.reply-author { font-weight: 600; color: var(--text); }
+.reply-author { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes flash { from { background: var(--active); } to { background: transparent; } }
 .msg-row.flash { animation: flash 1.6s ease-out; }
-.bubble.emoji { background: none !important; padding: 0 2px; font-size: 34px; line-height: 1.15; }
+.bubble.emoji { background: none !important; padding: 0 2px; font-size: calc(34px * var(--chat-scale, 1)); line-height: 1.15; }
 .emoji-inline { width: 1.4em; height: 1.4em; vertical-align: -0.35em; object-fit: contain; }
 .bubble.emoji .emoji-inline { width: 44px; height: 44px; vertical-align: middle; }
 
@@ -792,3 +822,64 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
 .swatch-custom { background: conic-gradient(#e5484d, #c99400, #30a46c, #0090ff, #8e4ec6, #e5484d); padding: 3px; }
 .swatch-custom::-webkit-color-swatch-wrapper { padding: 0; }
 .swatch-custom::-webkit-color-swatch { border: 2px solid var(--surface); border-radius: 50%; }
+.row.end { justify-content: flex-end; }
+
+/* Phone: "Send 1 picture to…" while choosing a chat for something shared */
+.share-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.share-bar .link-btn { color: #fff; text-decoration: underline; }
+
+/* Color tags: a ring around a tagged chat's picture, chips in its dialog and filters */
+.conv-avatar.tagged .avatar { box-shadow: 0 0 0 2px var(--sidebar), 0 0 0 4px var(--tag); }
+.person-btn.tagged .avatar { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--tag); }
+.tag-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--tag); margin-right: 5px; flex: none; }
+.chip.tag-filter { display: inline-flex; align-items: center; white-space: nowrap; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.tag-chip.on { border-color: var(--tag); background: color-mix(in srgb, var(--tag) 22%, transparent); font-weight: 600; }
+.tag-new {
+  width: 110px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.tag-new:focus { border-color: var(--accent); border-style: solid; }
+.tag-row input:not([type=color]) { flex: 1; }
+.tag-rename {
+  width: 90px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+  outline: 1px solid var(--accent);
+}
+.size-row { gap: 8px; }
+.size-label { flex: 1; font-size: 13px; }
+.size-value { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.tag-key { width: 26px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }

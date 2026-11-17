@@ -141,6 +141,7 @@ class SlackProvider extends EventEmitter {
       subtitle,
       kind,
       peerId: c.is_im ? c.user : null,
+      server: kind === 'channel' ? { id: 'workspace', name: this.teamName } : null,
       avatar: c.is_im ? this.users.get(c.user)?.avatar || null : null,
       muted: false,
       lastActivity: latest ? tsToMs(latest) : (c.created || 0) * 1000,

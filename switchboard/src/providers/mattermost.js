@@ -120,15 +120,18 @@ class MattermostProvider extends EventEmitter {
     let subtitle = this.teams.get(c.team_id)?.display_name || '';
     let kind = 'channel';
     let peerId = null;
+    let server = c.team_id ? { id: c.team_id, name: subtitle } : null; // the team; channels share its color
     if (c.type === 'D') {
       peerId = this.otherUser(c);
       title = this.displayName(this.users.get(this.otherUser(c)));
       subtitle = 'Direct message';
       kind = 'dm';
+      server = null;
     } else if (c.type === 'G') {
       title = c.display_name;
       subtitle = 'Group';
       kind = 'group';
+      server = null;
     }
     const muted = member?.notify_props?.mark_unread === 'mention';
     this.convs.set(c.id, {
@@ -140,12 +143,16 @@ class MattermostProvider extends EventEmitter {
       subtitle,
       kind,
       peerId,
-      avatar: null,
+      server,
+      avatar: peerId ? this.avatarOf(peerId) : null,
       muted,
       lastActivity: c.last_post_at || c.create_at,
       unread: !muted && !!member && c.total_msg_count > member.msg_count,
       unreadCount: !muted && member ? Math.max(0, c.total_msg_count - member.msg_count) : 0,
       mentions: member?.mention_count || 0,
+      // The channel header (often links: zoom, notes, overleaf), shown under the title.
+      topic: replaceShortcodes(c.header || c.purpose || '').trim(),
+      hasPins: true,
     });
   }
 
@@ -190,8 +197,18 @@ class MattermostProvider extends EventEmitter {
     this.connect(); // reloads channels, so missed messages show as unread
   }
 
+  // A person's own profile picture, as a ref the interface loads with fetchMedia
+  // (it needs the login). None for people who never uploaded one: Mattermost
+  // would only draw their initials, which Switchboard already does.
+  avatarOf(userId) {
+    const u = this.users.get(userId);
+    return u?.last_picture_update > 0 ? `ref:${this.id}:users/${userId}/image?_=${u.last_picture_update}` : null;
+  }
+
+  // ref: a file id (attachments) or "users/<id>/image..." (profile pictures).
   async fetchMedia(ref) {
-    const res = await fetch(`${this.base}/api/v4/files/${ref}`, { headers: { Authorization: `Bearer ${this.token}` } });
+    const path = /^users\/\w+\/image(\?_=\d+)?$/.test(ref) ? ref : `files/${ref}`;
+    const res = await fetch(`${this.base}/api/v4/${path}`, { headers: { Authorization: `Bearer ${this.token}` } });
     if (!res.ok) throw new Error(`Mattermost: couldn't fetch the file (HTTP ${res.status})`);
     return { data: new Uint8Array(await res.arrayBuffer()), type: res.headers.get('content-type') || '' };
   }
@@ -247,6 +264,7 @@ class MattermostProvider extends EventEmitter {
       const conv = this.convs.get(post.channel_id);
       if (!conv) return;
       await this.ensureUsers([post.user_id]);
+      await this.loadRoots([post]);
       const mentions = ev.data.mentions ? JSON.parse(ev.data.mentions) : [];
       const message = this.toMessage(post, mentions.includes(this.me.id));
       conv.lastActivity = post.create_at;
@@ -267,6 +285,12 @@ class MattermostProvider extends EventEmitter {
         mine: r.user_id === this.me.id,
         delta: ev.event === 'reaction_added' ? 1 : -1,
       });
+    } else if (ev.event === 'channel_updated') {
+      const c = JSON.parse(ev.data.channel);
+      const conv = this.convs.get(c.id);
+      if (!conv) return;
+      conv.topic = replaceShortcodes(c.header || c.purpose || '').trim();
+      this.emit('conversations', this.conversations());
     } else if (
       ev.event === 'direct_added' ||
       ev.event === 'group_added' ||
@@ -283,12 +307,16 @@ class MattermostProvider extends EventEmitter {
     return {
       id: p.id,
       ts: p.create_at,
-      author: { id: p.user_id, name: p.props?.override_username || this.displayName(this.users.get(p.user_id)), avatar: null },
+      author: {
+        id: p.user_id,
+        name: p.props?.override_username || this.displayName(this.users.get(p.user_id)),
+        avatar: p.props?.override_username ? null : this.avatarOf(p.user_id),
+      },
       isSelf: p.user_id === this.me.id,
       mentionsMe,
       isReply: !!p.root_id && !root,
       replyTo: root
-        ? { id: root.id, author: this.displayName(this.users.get(root.user_id)), text: root.message || (root.metadata?.files?.length ? '📎 Attachment' : '') }
+        ? { id: root.id, ts: root.create_at, author: this.displayName(this.users.get(root.user_id)), text: root.message || (root.metadata?.files?.length ? '📎 Attachment' : '') }
         : null,
       system: (p.type || '').startsWith('system_'),
       text: this.postText(p),
@@ -347,13 +375,31 @@ class MattermostProvider extends EventEmitter {
     return ids.map(id => (id === this.me.id ? 'You' : this.displayName(this.users.get(id))));
   }
 
+  // Fetches the posts that replies answer when they aren't known yet (a reply
+  // arriving live to an older message), so the reply can quote and link to it.
+  async loadRoots(posts) {
+    const missing = [...new Set(posts.map(p => p.root_id).filter(id => id && !this.posts.has(id)))].slice(0, 10);
+    const roots = await Promise.all(missing.map(id => this.api('GET', `/posts/${id}`).catch(() => null)));
+    for (const root of roots) if (root && !root.delete_at) this.posts.set(root.id, root);
+    await this.ensureUsers(roots.filter(Boolean).map(root => root.user_id));
+  }
+
   async fetchMessages(convId, before) {
     const r = await this.api('GET', `/channels/${convId}/posts?per_page=50${before ? `&before=${before}` : ''}`);
     const posts = r.order.map(id => r.posts[id]).filter(p => !p.delete_at).reverse();
     // The response also carries thread roots that fall outside this page.
     for (const p of Object.values(r.posts)) if (!p.delete_at) this.posts.set(p.id, p);
     await this.ensureUsers(Object.values(r.posts).map(p => p.user_id));
+    await this.loadRoots(posts);
     return posts.map(p => this.toMessage(p));
+  }
+
+  // The channel's pinned posts, newest first.
+  async pinned(convId) {
+    const r = await this.api('GET', `/channels/${convId}/pinned`);
+    const posts = (r.order || []).map(id => r.posts[id]).filter(p => p && !p.delete_at);
+    await this.ensureUsers(posts.map(p => p.user_id));
+    return posts.sort((a, b) => b.create_at - a.create_at).map(p => this.toMessage(p));
   }
 
   async send(convId, text) {

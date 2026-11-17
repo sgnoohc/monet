@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-const EVENTS = new Set(['status', 'conversations', 'message', 'reaction', 'hotkey', 'settings', 'sync']);
+const EVENTS = new Set(['status', 'conversations', 'message', 'reaction', 'hotkey', 'settings', 'sync', 'display']);
 
 contextBridge.exposeInMainWorld('sb', {
   platform: 'mac',
@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('sb', {
   markRead: key => ipcRenderer.invoke('conv:markRead', key),
   react: (key, messageId, value, add) => ipcRenderer.invoke('messages:react', key, messageId, value, add),
   reactors: (key, messageId, reactionKey) => ipcRenderer.invoke('messages:reactors', key, messageId, reactionKey),
+  pinned: key => ipcRenderer.invoke('messages:pinned', key),
+  setDisplay: patch => ipcRenderer.invoke('display:set', patch),
+  setTagNames: names => ipcRenderer.send('menu:tags', names),
   searchGifs: query => ipcRenderer.invoke('gifs:search', query),
   upload: (key, files, text) => ipcRenderer.invoke('messages:upload', key, files, text),
   fetchMedia: (key, ref) => ipcRenderer.invoke('media:fetch', key, ref),

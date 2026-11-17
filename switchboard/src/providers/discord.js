@@ -262,6 +262,7 @@ class DiscordProvider extends EventEmitter {
         title: `#${ch.name}`,
         subtitle: name,
         kind: 'channel',
+        server: { id: g.id, name },
         avatar: icon ? `https://cdn.discordapp.com/icons/${g.id}/${icon}.png?size=64` : null,
         muted: guildMuted || this.muted.channels.has(ch.id) || this.muted.channels.has(ch.parent_id),
       });
@@ -379,6 +380,7 @@ class DiscordProvider extends EventEmitter {
     if (!ref) return { id: null, author: '', text: 'Original message was deleted' };
     return {
       id: ref.id,
+      ts: ref.timestamp ? Date.parse(ref.timestamp) : null,
       author: ref.member?.nick || userName(ref.author),
       text: this.renderText(ref) || (ref.attachments?.length ? '📎 Attachment' : ''),
     };

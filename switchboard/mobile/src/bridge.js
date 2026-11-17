@@ -1,7 +1,7 @@
 // Phone version of the desktop preload: provides `window.sb` with the same
 // API, but runs the providers right here in the page. Accounts arrive by
 // scanning the setup QR code shown by the Mac app.
-import { registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Preferences } from '@capacitor/preferences';
 import { BarcodeScanner, BarcodeFormat } from '@capacitor-mlkit/barcode-scanning';
@@ -10,7 +10,7 @@ import MattermostProvider from '../../src/providers/mattermost';
 import SlackProvider from '../../src/providers/slack';
 import DemoProvider from '../../src/providers/demo';
 
-const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, people: {}, pins: [], otherCollapsed: false, compact: false, flat: false };
+const DEFAULT_VIEW = { mode: 'all', keys: [], groups: [], assign: {}, nicknames: {}, people: {}, pins: [], otherCollapsed: false, compact: false, flat: false, bigPictures: true, tags: [], tagOf: {} };
 
 // Stored in the app's private storage (not readable by other apps; backups are off).
 let config = { mattermost: { url: '' }, slack: [], view: { ...DEFAULT_VIEW } };
@@ -63,6 +63,23 @@ async function addMacPictures() {
 
 // Native helper in android/.../FileViewerPlugin.java.
 const FileViewer = registerPlugin('FileViewer');
+
+// Things shared to Switchboard from other apps (android/.../ShareInPlugin.java):
+// files copied into the app's cache, read back here as File objects. Held
+// until the interface is listening, then handed over as a 'shared' event.
+const ShareIn = registerPlugin('ShareIn');
+let heldShare = null;
+async function takeShare() {
+  const { files = [], text = '', tooLarge = 0, failed = 0 } = await ShareIn.take().catch(() => ({}));
+  if (!files.length && !text && !tooLarge && !failed) return;
+  const list = await Promise.all(files.map(async f => {
+    const blob = await (await fetch(Capacitor.convertFileSrc(f.path))).blob();
+    return new File([blob], f.name, { type: f.type || blob.type });
+  }));
+  const share = { files: list, text, tooLarge, failed };
+  if (listeners.shared?.length) emit('shared', share);
+  else heldShare = share;
+}
 
 const toBase64 = blob => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -167,9 +184,21 @@ function settings() {
     slack: config.slack,
     webApps: [],
     view: config.view,
+    display: display(),
     userAgent: '',
   };
 }
+
+// How big things are on the phone. zoom scales all text (Android's text zoom,
+// via DisplayPlugin.java); chatText scales message text on top of that.
+const ZOOMS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const CHAT_TEXT = [0.85, 1, 1.15, 1.3, 1.5];
+const Display = registerPlugin('Display');
+function display() {
+  const d = config.display || {};
+  return { zoom: ZOOMS.includes(d.zoom) ? d.zoom : 1, chatText: CHAT_TEXT.includes(d.chatText) ? d.chatText : 1 };
+}
+const applyZoom = () => Display.setTextZoom({ percent: Math.round(display().zoom * 100) }).catch(() => {});
 
 function route(key) {
   const i = key.indexOf(':');
@@ -238,15 +267,16 @@ function actionSheet(items) {
 }
 
 // Long-press on a chat or group header opens its menu. Native long-press
-// events are swallowed so only ours (untrusted) reach the app.
+// events are swallowed so only ours (untrusted) reach the app, except in text
+// fields, where the phone's own Paste / Select all bar has to keep working.
 function enableLongPress() {
   let timer = null;
   let suppressClickUntil = 0;
   document.addEventListener('contextmenu', e => {
-    if (e.isTrusted) e.preventDefault();
+    if (e.isTrusted && !e.target.closest?.('textarea, input, [contenteditable]')) e.preventDefault();
   }, true);
   document.addEventListener('touchstart', e => {
-    const target = e.target.closest('#convs .conv, #convs .group-head, #messages .msg-stack');
+    const target = e.target.closest('#convs .conv, #convs .group-head, #messages .msg-stack, #filters .tag-filter');
     if (!target) return;
     const { clientX, clientY } = e.touches[0];
     timer = setTimeout(() => {
@@ -272,7 +302,10 @@ function enableLongPress() {
 
 // index.html?demo shows sample conversations, for checking the layout.
 const DEMO = new URLSearchParams(location.search).has('demo');
-const ready = load().then(() => (DEMO ? startProvider(new DemoProvider()) : startAll()));
+const ready = load().then(() => {
+  applyZoom();
+  return DEMO ? startProvider(new DemoProvider()) : startAll();
+});
 
 App.addListener('backButton', () => emit('hotkey', 'back'));
 // Android freezes the app in the background; sockets come back dead.
@@ -281,6 +314,8 @@ App.addListener('resume', () => {
   emit('hotkey', 'refresh');
 });
 enableLongPress();
+ShareIn.addListener('shared', () => takeShare());
+takeShare();
 
 window.sb = {
   platform: 'android',
@@ -307,6 +342,18 @@ window.sb = {
   async reactors(key, messageId, reactionKey) {
     const { provider, convId } = route(key);
     return provider.reactors ? provider.reactors(convId, messageId, reactionKey) : [];
+  },
+  async setDisplay(patch) {
+    const next = { ...display(), ...patch };
+    config.display = { zoom: ZOOMS.includes(next.zoom) ? next.zoom : 1, chatText: CHAT_TEXT.includes(next.chatText) ? next.chatText : 1 };
+    await saveConfig();
+    applyZoom();
+    emit('display', config.display);
+    return config.display;
+  },
+  async pinned(key) {
+    const { provider, convId } = route(key);
+    return provider.pinned ? provider.pinned(convId) : [];
   },
   async upload(key, files, text) {
     const { provider, convId } = route(key);
@@ -400,5 +447,10 @@ window.sb = {
   exit: () => App.minimizeApp(),
   on(event, fn) {
     (listeners[event] ||= []).push(fn);
+    if (event === 'shared' && heldShare) {
+      const share = heldShare;
+      heldShare = null;
+      setTimeout(() => fn(share));
+    }
   },
 };

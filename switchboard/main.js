@@ -82,6 +82,59 @@ function startSlack(account) {
   }));
 }
 
+// How big things are on this Mac (not synced: the other Mac's screen may differ).
+// zoom: the whole window, like ⌘+ in a browser; chatText: message text on top of that.
+const ZOOMS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const CHAT_TEXT = [0.85, 1, 1.15, 1.3, 1.5];
+function display() {
+  const d = store.getConfig().display || {};
+  return { zoom: ZOOMS.includes(d.zoom) ? d.zoom : 1, chatText: CHAT_TEXT.includes(d.chatText) ? d.chatText : 1 };
+}
+
+function setDisplay(patch) {
+  const next = { ...display(), ...patch };
+  if (!ZOOMS.includes(next.zoom)) next.zoom = 1;
+  if (!CHAT_TEXT.includes(next.chatText)) next.chatText = 1;
+  store.setConfig({ display: next });
+  if (win && !win.isDestroyed()) win.webContents.setZoomFactor(next.zoom);
+  sendToUi('display', next);
+  return next;
+}
+
+function zoomStep(dir) {
+  const i = ZOOMS.indexOf(display().zoom);
+  setDisplay({ zoom: dir === 0 ? 1 : ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, i + dir))] });
+}
+
+// The standard menus, with View's zoom items wired to the saved size, and
+// ⌘1–⌘9 showing just the chats with that color tag (the window sends the names).
+let tagNames = [];
+function buildMenu() {
+  const tagItems = tagNames.slice(0, 9).map((name, i) => ({
+    label: `Show ${name}`,
+    accelerator: `CmdOrCtrl+${i + 1}`,
+    click: () => sendToUi('hotkey', `tag:${i + 1}`),
+  }));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { label: 'Bigger', accelerator: 'CmdOrCtrl+=', click: () => zoomStep(1) },
+        { label: 'Bigger', accelerator: 'CmdOrCtrl+Plus', visible: false, acceleratorWorksWhenHidden: true, click: () => zoomStep(1) },
+        { label: 'Smaller', accelerator: 'CmdOrCtrl+-', click: () => zoomStep(-1) },
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoomStep(0) },
+        ...(tagItems.length ? [{ type: 'separator' }, ...tagItems] : []),
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+        { role: 'toggleDevTools' },
+      ],
+    },
+    { role: 'windowMenu' },
+  ]));
+}
+
 function settings() {
   const cfg = store.getConfig();
   return {
@@ -92,6 +145,7 @@ function settings() {
     slack: cfg.slack.map(a => ({ id: a.id, name: a.name })),
     webApps: DEMO ? [] : cfg.webApps,
     view: cfg.view,
+    display: display(),
     userAgent: USER_AGENT,
   };
 }
@@ -165,9 +219,20 @@ function cleanView(view = {}) {
     const image = typeof p?.image === 'string' && p.image.length < 100000 && /^data:image\/(webp|jpeg|png);base64,[\w+/=]+$/.test(p.image) ? p.image : undefined;
     if (color || image) people[String(key).slice(0, 200)] = { color, tint: !!(color && p.tint), image };
   }
+  // Color tags: named colors put on chats, or on a whole server ("server:..." keys).
+  const tags = (Array.isArray(view.tags) ? view.tags : []).slice(0, 50).map(t => ({
+    id: String(t.id).replace(/[^\w-]/g, '').slice(0, 40),
+    name: String(t.name || 'Tag').slice(0, 40),
+    color: /^#[0-9a-f]{6}$/i.test(t.color) ? t.color : '#8d8d86',
+  })).filter(t => t.id);
+  const tagIds = new Set(tags.map(t => t.id));
+  const tagOf = {};
+  for (const [key, id] of Object.entries(view.tagOf || {}).slice(0, 5000)) if (tagIds.has(id)) tagOf[String(key).slice(0, 200)] = id;
   return {
     nicknames,
     people,
+    tags,
+    tagOf,
     mode: view.mode === 'selected' ? 'selected' : 'all',
     keys: [...new Set((view.keys || []).map(String))],
     groups,
@@ -176,6 +241,7 @@ function cleanView(view = {}) {
     otherCollapsed: !!view.otherCollapsed,
     compact: !!view.compact,
     flat: !!view.flat,
+    bigPictures: view.bigPictures !== false,
   };
 }
 
@@ -323,6 +389,11 @@ function registerIpc() {
     return provider.reactors ? provider.reactors(convId, messageId, reactionKey) : [];
   });
 
+  ipcMain.handle('messages:pinned', (_e, key) => {
+    const { provider, convId } = route(key);
+    return provider.pinned ? provider.pinned(convId) : [];
+  });
+
   // GIF search goes through Discord's GIF picker API, whichever chat it is for.
   ipcMain.handle('gifs:search', (_e, query) => {
     const discord = providers.get('discord');
@@ -409,6 +480,15 @@ function registerIpc() {
     sync.layoutChanged();
     return settings();
   });
+
+  ipcMain.on('menu:tags', (_e, names) => {
+    const next = (Array.isArray(names) ? names : []).slice(0, 9).map(n => String(n).slice(0, 40));
+    if (JSON.stringify(next) === JSON.stringify(tagNames)) return;
+    tagNames = next;
+    buildMenu();
+  });
+
+  ipcMain.handle('display:set', (_e, patch) => setDisplay({ zoom: Number(patch?.zoom ?? display().zoom), chatText: Number(patch?.chatText ?? display().chatText) }));
 
   ipcMain.handle('view:set', (_e, view) => {
     store.setConfig({ view: cleanView(view) });
@@ -622,6 +702,7 @@ function createWindow() {
   });
 
   win.on('focus', () => sync.poll()); // pick up the other Mac's changes as soon as you're back
+  win.webContents.on('did-finish-load', () => win.webContents.setZoomFactor(display().zoom));
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
   if (CAPTURE) {
@@ -652,6 +733,7 @@ app.whenReady().then(() => {
   powerMonitor.on('unlock-screen', reconnectAll);
   hardenContents();
   registerIpc();
+  buildMenu();
   createWindow();
   if (DEMO) {
     startProvider(new DemoProvider());

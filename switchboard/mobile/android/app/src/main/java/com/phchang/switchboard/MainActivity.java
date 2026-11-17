@@ -6,7 +6,10 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        registerPlugin(FileViewerPlugin.class); // before super, so the page can use it at once
+        // Before super, so the page can use them at once
+        registerPlugin(FileViewerPlugin.class);
+        registerPlugin(ShareInPlugin.class);
+        registerPlugin(DisplayPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }
