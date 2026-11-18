@@ -25,7 +25,7 @@ Choose **Online** in the setup screen. One person creates a room and sends the f
 - If someone drops out, anyone can hand their seat to the computer. They can take it back when they return, or a newcomer can take the empty seat.
 - Refreshing the page rejoins the same room and seat.
 
-Rooms live in the Realtime Database of the `spaceattack-88bd3` Firebase project, under `lanternHarbor/rooms/<CODE>`. The rules in `../spaceattack/database.rules.json` let anyone who knows a room code read and write that room, and nothing else. Changes to that file only take effect once they're published in the Firebase console (Realtime Database → Rules).
+Rooms live in the Realtime Database of the game's own Firebase project, `lantern-harbor`, under `lanternHarbor/rooms/<CODE>`. The rules in `database.rules.json` let anyone who knows a room code read and write that room, and nothing else. Changes to that file only take effect once they're published in the Firebase console (Realtime Database → Rules).
 
 Each change to a game is written as the whole game state with a revision number, inside a transaction, so two screens can never both apply a move. The screen that owns the acting seat applies the move. Computer seats are run by the first connected human player's screen.
 
