@@ -7,30 +7,6 @@
         ".indexOn": ["score"]
       }
     },
-    "lanternHarbor": {
-      "rooms": {
-        "$room": {
-          ".read": "$room.matches(/^[A-Z2-9]{5}$/)",
-          ".write": "$room.matches(/^[A-Z2-9]{5}$/)",
-          "lobby": {
-            ".validate": "newData.isString() && newData.val().length < 20000"
-          },
-          "game": {
-            ".validate": "newData.hasChildren(['rev', 'json']) && newData.child('rev').isNumber() && newData.child('json').isString() && newData.child('json').val().length < 400000"
-          },
-          "chat": {
-            "$msg": {
-              ".validate": "newData.hasChildren(['name', 'text', 't']) && newData.child('text').isString() && newData.child('text').val().length <= 300"
-            }
-          },
-          "presence": {
-            "$cid": {
-              ".validate": "newData.hasChildren(['name'])"
-            }
-          }
-        }
-      }
-    },
     ".read": false,
     ".write": false
   }
